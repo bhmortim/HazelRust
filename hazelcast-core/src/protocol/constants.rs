@@ -169,3 +169,21 @@ pub const TOPIC_ADD_MESSAGE_LISTENER: i32 = 0x040200;
 
 /// Topic remove message listener request.
 pub const TOPIC_REMOVE_MESSAGE_LISTENER: i32 = 0x040300;
+
+/// CP AtomicLong get request.
+pub const CP_ATOMIC_LONG_GET: i32 = 0x090100;
+
+/// CP AtomicLong set request.
+pub const CP_ATOMIC_LONG_SET: i32 = 0x090200;
+
+/// CP AtomicLong get and set request.
+pub const CP_ATOMIC_LONG_GET_AND_SET: i32 = 0x090300;
+
+/// CP AtomicLong compare and set request.
+pub const CP_ATOMIC_LONG_COMPARE_AND_SET: i32 = 0x090400;
+
+/// CP AtomicLong add and get request.
+pub const CP_ATOMIC_LONG_ADD_AND_GET: i32 = 0x090500;
+
+/// CP AtomicLong get and add request.
+pub const CP_ATOMIC_LONG_GET_AND_ADD: i32 = 0x090600;

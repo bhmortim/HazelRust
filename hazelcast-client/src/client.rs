@@ -6,7 +6,7 @@ use hazelcast_core::{Deserializable, Result, Serializable};
 
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
-use crate::proxy::{IList, IMap, IQueue, ISet, ITopic, MultiMap};
+use crate::proxy::{AtomicLong, IList, IMap, IQueue, ISet, ITopic, MultiMap};
 
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
@@ -159,6 +159,16 @@ impl HazelcastClient {
         T: Serializable + Deserializable + Send + Sync + 'static,
     {
         ITopic::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed atomic long proxy for the given name.
+    ///
+    /// The atomic long proxy allows performing atomic counter operations on the CP subsystem.
+    /// The actual atomic long is created on the cluster lazily when first accessed.
+    ///
+    /// Note: AtomicLong requires the CP subsystem to be enabled on the Hazelcast cluster.
+    pub fn get_atomic_long(&self, name: &str) -> AtomicLong {
+        AtomicLong::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.

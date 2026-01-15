@@ -1,5 +1,6 @@
 //! Distributed data structure proxies.
 
+mod atomic_long;
 mod list;
 mod map;
 mod multimap;
@@ -7,6 +8,7 @@ mod queue;
 mod set;
 mod topic;
 
+pub use atomic_long::AtomicLong;
 pub use list::IList;
 pub use map::IMap;
 pub use multimap::MultiMap;
