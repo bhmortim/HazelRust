@@ -1,10 +1,13 @@
 //! Executor service for distributed task execution.
 //!
 //! This module provides types for submitting tasks to Hazelcast cluster members
-//! for remote execution.
+//! for remote execution, including scheduled execution with delays and periodic
+//! repetition.
 
+mod scheduled;
 mod service;
 
+pub use scheduled::{ScheduledExecutorService, ScheduledFuture, ScheduleType, TimeUnit};
 pub use service::ExecutorFuture;
 
 use std::marker::PhantomData;

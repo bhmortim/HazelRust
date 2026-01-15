@@ -346,3 +346,39 @@ pub const EXECUTOR_CANCEL_ON_PARTITION: i32 = 0x0E0500;
 
 /// Executor cancel on member request.
 pub const EXECUTOR_CANCEL_ON_MEMBER: i32 = 0x0E0600;
+
+/// Scheduled executor submit to partition request.
+pub const SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x1A0100;
+
+/// Scheduled executor submit to member request.
+pub const SCHEDULED_EXECUTOR_SUBMIT_TO_MEMBER: i32 = 0x1A0200;
+
+/// Scheduled executor shutdown request.
+pub const SCHEDULED_EXECUTOR_SHUTDOWN: i32 = 0x1A0400;
+
+/// Scheduled executor dispose request.
+pub const SCHEDULED_EXECUTOR_DISPOSE: i32 = 0x1A0500;
+
+/// Scheduled executor cancel from partition request.
+pub const SCHEDULED_EXECUTOR_CANCEL_FROM_PARTITION: i32 = 0x1A0600;
+
+/// Scheduled executor cancel from member request.
+pub const SCHEDULED_EXECUTOR_CANCEL_FROM_MEMBER: i32 = 0x1A0700;
+
+/// Scheduled executor is done from partition request.
+pub const SCHEDULED_EXECUTOR_IS_DONE_FROM_PARTITION: i32 = 0x1A0800;
+
+/// Scheduled executor is done from member request.
+pub const SCHEDULED_EXECUTOR_IS_DONE_FROM_MEMBER: i32 = 0x1A0900;
+
+/// Scheduled executor get delay from partition request.
+pub const SCHEDULED_EXECUTOR_GET_DELAY_FROM_PARTITION: i32 = 0x1A0A00;
+
+/// Scheduled executor get delay from member request.
+pub const SCHEDULED_EXECUTOR_GET_DELAY_FROM_MEMBER: i32 = 0x1A0B00;
+
+/// Scheduled executor get result from partition request.
+pub const SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION: i32 = 0x1A0C00;
+
+/// Scheduled executor is shutdown request.
+pub const SCHEDULED_EXECUTOR_IS_SHUTDOWN: i32 = 0x1A0E00;
