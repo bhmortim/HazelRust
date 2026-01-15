@@ -2,6 +2,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::cache::NearCacheConfig;
@@ -586,11 +587,23 @@ impl Permissions {
 }
 
 /// Security configuration for authentication.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct SecurityConfig {
     username: Option<String>,
     password: Option<String>,
     token: Option<String>,
+    authenticator: Option<Arc<dyn crate::security::Authenticator>>,
+}
+
+impl std::fmt::Debug for SecurityConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecurityConfig")
+            .field("username", &self.username)
+            .field("password", &self.password)
+            .field("token", &self.token)
+            .field("authenticator", &self.authenticator.is_some())
+            .finish()
+    }
 }
 
 impl SecurityConfig {
@@ -621,16 +634,33 @@ impl SecurityConfig {
 
     /// Returns true if any authentication method is configured.
     pub fn is_authenticated(&self) -> bool {
-        self.has_credentials() || self.has_token()
+        self.has_credentials() || self.has_token() || self.authenticator.is_some()
+    }
+
+    /// Returns the custom authenticator if configured.
+    pub fn authenticator(&self) -> Option<&Arc<dyn crate::security::Authenticator>> {
+        self.authenticator.as_ref()
     }
 }
 
 /// Builder for `SecurityConfig`.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct SecurityConfigBuilder {
     username: Option<String>,
     password: Option<String>,
     token: Option<String>,
+    authenticator: Option<Arc<dyn crate::security::Authenticator>>,
+}
+
+impl std::fmt::Debug for SecurityConfigBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecurityConfigBuilder")
+            .field("username", &self.username)
+            .field("password", &self.password)
+            .field("token", &self.token)
+            .field("authenticator", &self.authenticator.is_some())
+            .finish()
+    }
 }
 
 impl SecurityConfigBuilder {
@@ -665,6 +695,30 @@ impl SecurityConfigBuilder {
         self
     }
 
+    /// Sets a custom authenticator for authentication.
+    ///
+    /// Custom authenticators allow implementing non-standard authentication
+    /// mechanisms such as LDAP, Kerberos, or custom token validation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::security::DefaultAuthenticator;
+    /// use std::sync::Arc;
+    ///
+    /// let config = SecurityConfigBuilder::new()
+    ///     .custom_authenticator(Arc::new(DefaultAuthenticator))
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn custom_authenticator(
+        mut self,
+        authenticator: Arc<dyn crate::security::Authenticator>,
+    ) -> Self {
+        self.authenticator = Some(authenticator);
+        self
+    }
+
     /// Builds the security configuration, returning an error if validation fails.
     ///
     /// # Errors
@@ -689,6 +743,7 @@ impl SecurityConfigBuilder {
             username: self.username,
             password: self.password,
             token: self.token,
+            authenticator: self.authenticator,
         })
     }
 }
@@ -1393,6 +1448,30 @@ mod tests {
     fn test_network_config_ws_url_default_none() {
         let config = NetworkConfigBuilder::new().build().unwrap();
         assert!(config.ws_url().is_none());
+    }
+
+    #[test]
+    fn test_security_custom_authenticator() {
+        use crate::security::DefaultAuthenticator;
+
+        let config = SecurityConfigBuilder::new()
+            .custom_authenticator(Arc::new(DefaultAuthenticator))
+            .build()
+            .unwrap();
+
+        assert!(config.authenticator().is_some());
+    }
+
+    #[test]
+    fn test_security_custom_authenticator_is_authenticated() {
+        use crate::security::DefaultAuthenticator;
+
+        let config = SecurityConfigBuilder::new()
+            .custom_authenticator(Arc::new(DefaultAuthenticator))
+            .build()
+            .unwrap();
+
+        assert!(config.is_authenticated());
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub mod executor;
 pub mod listener;
 pub mod proxy;
 pub mod query;
+pub mod security;
 pub mod sql;
 pub mod transaction;
 
@@ -43,4 +44,7 @@ pub use sql::{
 pub use transaction::{
     TransactionContext, TransactionOptions, TransactionState, TransactionType,
     TransactionalList, TransactionalMap, TransactionalQueue, TransactionalSet,
+};
+pub use security::{
+    AuthError, AuthResponse, Authenticator, Credentials, CustomCredentials, DefaultAuthenticator,
 };
