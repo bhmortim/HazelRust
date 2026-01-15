@@ -12,6 +12,7 @@ aws = ["aws-config", "aws-sdk-ec2"]
 kubernetes = ["kube", "k8s-openapi"]
 cloud = ["reqwest"]
 azure = ["azure_identity", "azure_core", "reqwest", "serde_json"]
+gcp = ["reqwest", "serde_json"]
 websocket = ["tokio-tungstenite", "url"]
 
 [dependencies]

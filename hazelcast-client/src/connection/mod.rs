@@ -16,6 +16,9 @@ mod cloud;
 #[cfg(feature = "azure")]
 mod azure;
 
+#[cfg(feature = "gcp")]
+mod gcp;
+
 #[cfg(feature = "websocket")]
 mod websocket;
 
@@ -34,6 +37,9 @@ pub use cloud::{CloudDiscovery, CloudDiscoveryConfig};
 
 #[cfg(feature = "azure")]
 pub use azure::{AzureDiscovery, AzureDiscoveryConfig};
+
+#[cfg(feature = "gcp")]
+pub use gcp::{GcpDiscovery, GcpDiscoveryConfig};
 
 #[cfg(feature = "websocket")]
 pub use websocket::WebSocketConnection;
