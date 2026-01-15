@@ -7,7 +7,7 @@ use hazelcast_core::{Deserializable, Result, Serializable};
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::listener::{Member, MemberEvent};
-use crate::proxy::{AtomicLong, IList, IMap, IQueue, ISet, ITopic, MultiMap};
+use crate::proxy::{AtomicLong, IList, IMap, IQueue, ISet, ITopic, MultiMap, ReplicatedMap};
 
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
@@ -170,6 +170,24 @@ impl HazelcastClient {
     /// Note: AtomicLong requires the CP subsystem to be enabled on the Hazelcast cluster.
     pub fn get_atomic_long(&self, name: &str) -> AtomicLong {
         AtomicLong::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed replicated map proxy for the given name.
+    ///
+    /// The replicated map proxy provides an eventually-consistent, fully replicated
+    /// map where data is stored on all cluster members for faster reads.
+    /// The actual replicated map is created on the cluster lazily when first accessed.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `K`: The key type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    /// - `V`: The value type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    pub fn get_replicated_map<K, V>(&self, name: &str) -> ReplicatedMap<K, V>
+    where
+        K: Serializable + Deserializable + Send + Sync,
+        V: Serializable + Deserializable + Send + Sync,
+    {
+        ReplicatedMap::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.

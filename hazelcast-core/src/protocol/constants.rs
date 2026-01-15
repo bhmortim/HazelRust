@@ -199,3 +199,36 @@ pub const CLIENT_ADD_MEMBERSHIP_LISTENER: i32 = 0x000300;
 
 /// Client remove membership listener request.
 pub const CLIENT_REMOVE_MEMBERSHIP_LISTENER: i32 = 0x000301;
+
+/// ReplicatedMap put request.
+pub const REPLICATED_MAP_PUT: i32 = 0x0D0100;
+
+/// ReplicatedMap get request.
+pub const REPLICATED_MAP_GET: i32 = 0x0D0200;
+
+/// ReplicatedMap remove request.
+pub const REPLICATED_MAP_REMOVE: i32 = 0x0D0300;
+
+/// ReplicatedMap size request.
+pub const REPLICATED_MAP_SIZE: i32 = 0x0D0400;
+
+/// ReplicatedMap is empty request.
+pub const REPLICATED_MAP_IS_EMPTY: i32 = 0x0D0500;
+
+/// ReplicatedMap contains key request.
+pub const REPLICATED_MAP_CONTAINS_KEY: i32 = 0x0D0600;
+
+/// ReplicatedMap contains value request.
+pub const REPLICATED_MAP_CONTAINS_VALUE: i32 = 0x0D0700;
+
+/// ReplicatedMap clear request.
+pub const REPLICATED_MAP_CLEAR: i32 = 0x0D0800;
+
+/// ReplicatedMap key set request.
+pub const REPLICATED_MAP_KEY_SET: i32 = 0x0D0900;
+
+/// ReplicatedMap values request.
+pub const REPLICATED_MAP_VALUES: i32 = 0x0D0A00;
+
+/// ReplicatedMap entry set request.
+pub const REPLICATED_MAP_ENTRY_SET: i32 = 0x0D0B00;
