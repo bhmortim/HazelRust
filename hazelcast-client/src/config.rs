@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::cache::NearCacheConfig;
+use crate::listener::Member;
 
 /// Configuration for a WAN replication target cluster.
 #[derive(Debug, Clone)]
@@ -846,6 +847,225 @@ impl TlsConfigBuilder {
     }
 }
 
+/// The type of operations protected by a quorum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QuorumType {
+    /// Protects read operations only.
+    Read,
+    /// Protects write operations only.
+    Write,
+    /// Protects both read and write operations.
+    ReadWrite,
+}
+
+impl QuorumType {
+    /// Returns `true` if this quorum type protects read operations.
+    pub fn protects_reads(&self) -> bool {
+        matches!(self, QuorumType::Read | QuorumType::ReadWrite)
+    }
+
+    /// Returns `true` if this quorum type protects write operations.
+    pub fn protects_writes(&self) -> bool {
+        matches!(self, QuorumType::Write | QuorumType::ReadWrite)
+    }
+}
+
+/// A function for custom quorum evaluation.
+///
+/// Implement this trait to provide custom logic for determining whether
+/// a quorum is present based on the current cluster members.
+pub trait QuorumFunction: Send + Sync {
+    /// Returns `true` if the quorum is present given the current cluster members.
+    fn is_present(&self, members: &[Member]) -> bool;
+}
+
+impl std::fmt::Debug for dyn QuorumFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("QuorumFunction")
+    }
+}
+
+/// Configuration for split-brain protection (quorum).
+///
+/// Quorum configuration defines the minimum cluster size required for
+/// operations to proceed. This helps prevent split-brain scenarios where
+/// a partitioned cluster might accept conflicting updates.
+#[derive(Clone)]
+pub struct QuorumConfig {
+    name: String,
+    min_cluster_size: usize,
+    quorum_type: QuorumType,
+    quorum_function: Option<Arc<dyn QuorumFunction>>,
+}
+
+impl std::fmt::Debug for QuorumConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuorumConfig")
+            .field("name", &self.name)
+            .field("min_cluster_size", &self.min_cluster_size)
+            .field("quorum_type", &self.quorum_type)
+            .field("quorum_function", &self.quorum_function.is_some())
+            .finish()
+    }
+}
+
+impl QuorumConfig {
+    /// Creates a new builder for `QuorumConfig`.
+    pub fn builder(name: impl Into<String>) -> QuorumConfigBuilder {
+        QuorumConfigBuilder::new(name)
+    }
+
+    /// Returns the name pattern for this quorum configuration.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the minimum cluster size required for quorum.
+    pub fn min_cluster_size(&self) -> usize {
+        self.min_cluster_size
+    }
+
+    /// Returns the type of operations protected by this quorum.
+    pub fn quorum_type(&self) -> QuorumType {
+        self.quorum_type
+    }
+
+    /// Returns the custom quorum function, if configured.
+    pub fn quorum_function(&self) -> Option<&Arc<dyn QuorumFunction>> {
+        self.quorum_function.as_ref()
+    }
+
+    /// Returns `true` if the given data structure name matches this quorum configuration.
+    ///
+    /// Supports wildcard patterns:
+    /// - `*` matches any sequence of characters
+    /// - Exact match if no wildcards
+    pub fn matches(&self, data_structure_name: &str) -> bool {
+        if self.name.contains('*') {
+            let pattern = &self.name;
+            if pattern == "*" {
+                return true;
+            }
+            if let Some(prefix) = pattern.strip_suffix('*') {
+                return data_structure_name.starts_with(prefix);
+            }
+            if let Some(suffix) = pattern.strip_prefix('*') {
+                return data_structure_name.ends_with(suffix);
+            }
+            false
+        } else {
+            self.name == data_structure_name
+        }
+    }
+
+    /// Checks if the quorum is present given the current cluster members.
+    ///
+    /// Returns `true` if:
+    /// - A custom quorum function is configured and returns `true`, or
+    /// - The number of members is at least `min_cluster_size`
+    pub fn check_quorum(&self, members: &[Member]) -> bool {
+        if let Some(ref func) = self.quorum_function {
+            func.is_present(members)
+        } else {
+            members.len() >= self.min_cluster_size
+        }
+    }
+
+    /// Returns `true` if this quorum protects the given operation type.
+    pub fn protects_operation(&self, is_read: bool) -> bool {
+        if is_read {
+            self.quorum_type.protects_reads()
+        } else {
+            self.quorum_type.protects_writes()
+        }
+    }
+}
+
+/// Builder for `QuorumConfig`.
+#[derive(Clone)]
+pub struct QuorumConfigBuilder {
+    name: String,
+    min_cluster_size: Option<usize>,
+    quorum_type: Option<QuorumType>,
+    quorum_function: Option<Arc<dyn QuorumFunction>>,
+}
+
+impl std::fmt::Debug for QuorumConfigBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuorumConfigBuilder")
+            .field("name", &self.name)
+            .field("min_cluster_size", &self.min_cluster_size)
+            .field("quorum_type", &self.quorum_type)
+            .field("quorum_function", &self.quorum_function.is_some())
+            .finish()
+    }
+}
+
+impl QuorumConfigBuilder {
+    /// Creates a new quorum configuration builder.
+    ///
+    /// The name can be a specific data structure name or a pattern with wildcards.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            min_cluster_size: None,
+            quorum_type: None,
+            quorum_function: None,
+        }
+    }
+
+    /// Sets the minimum cluster size required for quorum.
+    ///
+    /// Operations will fail if the cluster has fewer members than this value.
+    pub fn min_cluster_size(mut self, size: usize) -> Self {
+        self.min_cluster_size = Some(size);
+        self
+    }
+
+    /// Sets the type of operations protected by this quorum.
+    ///
+    /// Defaults to `QuorumType::ReadWrite` if not specified.
+    pub fn quorum_type(mut self, quorum_type: QuorumType) -> Self {
+        self.quorum_type = Some(quorum_type);
+        self
+    }
+
+    /// Sets a custom quorum function for evaluating quorum presence.
+    ///
+    /// When set, this function is used instead of the simple member count check.
+    pub fn quorum_function(mut self, func: Arc<dyn QuorumFunction>) -> Self {
+        self.quorum_function = Some(func);
+        self
+    }
+
+    /// Builds the quorum configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if:
+    /// - The name is empty
+    /// - `min_cluster_size` is 0 and no custom quorum function is set
+    pub fn build(self) -> Result<QuorumConfig, ConfigError> {
+        if self.name.is_empty() {
+            return Err(ConfigError::new("quorum config name must not be empty"));
+        }
+
+        let min_cluster_size = self.min_cluster_size.unwrap_or(2);
+        if min_cluster_size == 0 && self.quorum_function.is_none() {
+            return Err(ConfigError::new(
+                "min_cluster_size must be at least 1 when no quorum function is set",
+            ));
+        }
+
+        Ok(QuorumConfig {
+            name: self.name,
+            min_cluster_size,
+            quorum_type: self.quorum_type.unwrap_or(QuorumType::ReadWrite),
+            quorum_function: self.quorum_function,
+        })
+    }
+}
+
 /// Permission actions that can be granted to a client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PermissionAction {
@@ -1287,6 +1507,7 @@ pub struct ClientConfig {
     retry: RetryConfig,
     security: SecurityConfig,
     near_caches: Vec<NearCacheConfig>,
+    quorum_configs: Vec<QuorumConfig>,
     diagnostics: DiagnosticsConfig,
 }
 
@@ -1326,6 +1547,16 @@ impl ClientConfig {
         self.near_caches.iter().find(|nc| nc.matches(map_name))
     }
 
+    /// Returns the quorum configurations.
+    pub fn quorum_configs(&self) -> &[QuorumConfig] {
+        &self.quorum_configs
+    }
+
+    /// Finds a quorum configuration matching the given data structure name.
+    pub fn find_quorum_config(&self, name: &str) -> Option<&QuorumConfig> {
+        self.quorum_configs.iter().find(|qc| qc.matches(name))
+    }
+
     /// Returns the diagnostics configuration.
     pub fn diagnostics(&self) -> &DiagnosticsConfig {
         &self.diagnostics
@@ -1346,6 +1577,7 @@ pub struct ClientConfigBuilder {
     retry: RetryConfigBuilder,
     security: SecurityConfigBuilder,
     near_caches: Vec<NearCacheConfig>,
+    quorum_configs: Vec<QuorumConfig>,
     diagnostics: DiagnosticsConfigBuilder,
 }
 
@@ -1421,6 +1653,33 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Adds a quorum configuration for split-brain protection.
+    ///
+    /// Quorum configurations define the minimum cluster size required for
+    /// operations on matching data structures. Multiple configurations can
+    /// be added with different name patterns.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::config::{QuorumConfig, QuorumType};
+    ///
+    /// let quorum = QuorumConfig::builder("important-*")
+    ///     .min_cluster_size(3)
+    ///     .quorum_type(QuorumType::ReadWrite)
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// let config = ClientConfigBuilder::new()
+    ///     .add_quorum_config(quorum)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn add_quorum_config(mut self, config: QuorumConfig) -> Self {
+        self.quorum_configs.push(config);
+        self
+    }
+
     /// Configures diagnostics settings using a builder function.
     pub fn diagnostics<F>(mut self, f: F) -> Self
     where
@@ -1457,6 +1716,7 @@ impl ClientConfigBuilder {
             retry,
             security,
             near_caches: self.near_caches,
+            quorum_configs: self.quorum_configs,
             diagnostics,
         })
     }
@@ -2624,6 +2884,280 @@ mod tests {
     fn test_wan_replication_ref_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<WanReplicationRef>();
+    }
+
+    #[test]
+    fn test_quorum_type_protects_reads() {
+        assert!(QuorumType::Read.protects_reads());
+        assert!(!QuorumType::Write.protects_reads());
+        assert!(QuorumType::ReadWrite.protects_reads());
+    }
+
+    #[test]
+    fn test_quorum_type_protects_writes() {
+        assert!(!QuorumType::Read.protects_writes());
+        assert!(QuorumType::Write.protects_writes());
+        assert!(QuorumType::ReadWrite.protects_writes());
+    }
+
+    #[test]
+    fn test_quorum_config_builder_defaults() {
+        let config = QuorumConfig::builder("test-*")
+            .build()
+            .unwrap();
+
+        assert_eq!(config.name(), "test-*");
+        assert_eq!(config.min_cluster_size(), 2);
+        assert_eq!(config.quorum_type(), QuorumType::ReadWrite);
+        assert!(config.quorum_function().is_none());
+    }
+
+    #[test]
+    fn test_quorum_config_builder_custom() {
+        let config = QuorumConfig::builder("important-map")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.name(), "important-map");
+        assert_eq!(config.min_cluster_size(), 3);
+        assert_eq!(config.quorum_type(), QuorumType::Write);
+    }
+
+    #[test]
+    fn test_quorum_config_empty_name_fails() {
+        let result = QuorumConfig::builder("").build();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("name must not be empty"));
+    }
+
+    #[test]
+    fn test_quorum_config_zero_size_fails() {
+        let result = QuorumConfig::builder("test")
+            .min_cluster_size(0)
+            .build();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("min_cluster_size must be at least 1"));
+    }
+
+    #[test]
+    fn test_quorum_config_matches_exact() {
+        let config = QuorumConfig::builder("my-map")
+            .build()
+            .unwrap();
+
+        assert!(config.matches("my-map"));
+        assert!(!config.matches("other-map"));
+        assert!(!config.matches("my-map-extra"));
+    }
+
+    #[test]
+    fn test_quorum_config_matches_wildcard_suffix() {
+        let config = QuorumConfig::builder("user-*")
+            .build()
+            .unwrap();
+
+        assert!(config.matches("user-sessions"));
+        assert!(config.matches("user-data"));
+        assert!(config.matches("user-"));
+        assert!(!config.matches("admin-user"));
+        assert!(!config.matches("users"));
+    }
+
+    #[test]
+    fn test_quorum_config_matches_wildcard_prefix() {
+        let config = QuorumConfig::builder("*-cache")
+            .build()
+            .unwrap();
+
+        assert!(config.matches("user-cache"));
+        assert!(config.matches("product-cache"));
+        assert!(config.matches("-cache"));
+        assert!(!config.matches("cache"));
+        assert!(!config.matches("cache-data"));
+    }
+
+    #[test]
+    fn test_quorum_config_matches_all_wildcard() {
+        let config = QuorumConfig::builder("*")
+            .build()
+            .unwrap();
+
+        assert!(config.matches("anything"));
+        assert!(config.matches(""));
+        assert!(config.matches("some-map-name"));
+    }
+
+    #[test]
+    fn test_quorum_config_check_quorum_simple() {
+        let config = QuorumConfig::builder("test")
+            .min_cluster_size(3)
+            .build()
+            .unwrap();
+
+        let member1 = Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
+        let member2 = Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap());
+        let member3 = Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5703".parse().unwrap());
+
+        assert!(!config.check_quorum(&[]));
+        assert!(!config.check_quorum(&[member1.clone()]));
+        assert!(!config.check_quorum(&[member1.clone(), member2.clone()]));
+        assert!(config.check_quorum(&[member1.clone(), member2.clone(), member3.clone()]));
+    }
+
+    #[test]
+    fn test_quorum_config_protects_operation() {
+        let read_config = QuorumConfig::builder("test")
+            .quorum_type(QuorumType::Read)
+            .build()
+            .unwrap();
+
+        let write_config = QuorumConfig::builder("test")
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let rw_config = QuorumConfig::builder("test")
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        assert!(read_config.protects_operation(true));
+        assert!(!read_config.protects_operation(false));
+
+        assert!(!write_config.protects_operation(true));
+        assert!(write_config.protects_operation(false));
+
+        assert!(rw_config.protects_operation(true));
+        assert!(rw_config.protects_operation(false));
+    }
+
+    #[test]
+    fn test_quorum_config_with_custom_function() {
+        struct AlwaysTrueQuorum;
+        impl QuorumFunction for AlwaysTrueQuorum {
+            fn is_present(&self, _members: &[Member]) -> bool {
+                true
+            }
+        }
+
+        let config = QuorumConfig::builder("test")
+            .min_cluster_size(0)
+            .quorum_function(Arc::new(AlwaysTrueQuorum))
+            .build()
+            .unwrap();
+
+        assert!(config.check_quorum(&[]));
+    }
+
+    #[test]
+    fn test_quorum_config_custom_function_overrides_size() {
+        struct RequireSpecificMember {
+            required_port: u16,
+        }
+        impl QuorumFunction for RequireSpecificMember {
+            fn is_present(&self, members: &[Member]) -> bool {
+                members.iter().any(|m| m.address().port() == self.required_port)
+            }
+        }
+
+        let config = QuorumConfig::builder("test")
+            .min_cluster_size(10)
+            .quorum_function(Arc::new(RequireSpecificMember { required_port: 5701 }))
+            .build()
+            .unwrap();
+
+        let member = Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
+        assert!(config.check_quorum(&[member]));
+
+        let other_member = Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap());
+        assert!(!config.check_quorum(&[other_member]));
+    }
+
+    #[test]
+    fn test_quorum_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<QuorumConfig>();
+    }
+
+    #[test]
+    fn test_quorum_config_clone() {
+        let config = QuorumConfig::builder("test-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let cloned = config.clone();
+        assert_eq!(cloned.name(), config.name());
+        assert_eq!(cloned.min_cluster_size(), config.min_cluster_size());
+        assert_eq!(cloned.quorum_type(), config.quorum_type());
+    }
+
+    #[test]
+    fn test_client_config_with_quorum() {
+        let quorum = QuorumConfig::builder("important-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        let config = ClientConfig::builder()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.quorum_configs().len(), 1);
+        assert!(config.find_quorum_config("important-data").is_some());
+        assert!(config.find_quorum_config("other-data").is_none());
+    }
+
+    #[test]
+    fn test_client_config_multiple_quorum_configs() {
+        let quorum1 = QuorumConfig::builder("critical-*")
+            .min_cluster_size(5)
+            .build()
+            .unwrap();
+
+        let quorum2 = QuorumConfig::builder("standard-*")
+            .min_cluster_size(2)
+            .build()
+            .unwrap();
+
+        let config = ClientConfig::builder()
+            .add_quorum_config(quorum1)
+            .add_quorum_config(quorum2)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.quorum_configs().len(), 2);
+
+        let critical = config.find_quorum_config("critical-map");
+        assert!(critical.is_some());
+        assert_eq!(critical.unwrap().min_cluster_size(), 5);
+
+        let standard = config.find_quorum_config("standard-map");
+        assert!(standard.is_some());
+        assert_eq!(standard.unwrap().min_cluster_size(), 2);
+    }
+
+    #[test]
+    fn test_client_config_default_no_quorum() {
+        let config = ClientConfig::default();
+        assert!(config.quorum_configs().is_empty());
+    }
+
+    #[test]
+    fn test_quorum_type_is_copy() {
+        fn assert_copy<T: Copy>() {}
+        assert_copy::<QuorumType>();
     }
 
     #[test]

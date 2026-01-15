@@ -26,10 +26,11 @@ pub use executor::{
 };
 pub use config::{
     ClientConfig, ClientConfigBuilder, ConfigError, DiagnosticsConfig, DiagnosticsConfigBuilder,
-    NetworkConfig, NetworkConfigBuilder, PermissionAction, Permissions, RetryConfig,
-    RetryConfigBuilder, SecurityConfig, SecurityConfigBuilder, WanReplicationConfig,
-    WanReplicationConfigBuilder, WanReplicationRef, WanReplicationRefBuilder,
-    WanTargetClusterConfig, WanTargetClusterConfigBuilder,
+    NetworkConfig, NetworkConfigBuilder, PermissionAction, Permissions, QuorumConfig,
+    QuorumConfigBuilder, QuorumFunction, QuorumType, RetryConfig, RetryConfigBuilder,
+    SecurityConfig, SecurityConfigBuilder, WanReplicationConfig, WanReplicationConfigBuilder,
+    WanReplicationRef, WanReplicationRefBuilder, WanTargetClusterConfig,
+    WanTargetClusterConfigBuilder,
 };
 pub use diagnostics::{OperationTracker, SlowOperationDetector};
 #[cfg(feature = "metrics")]

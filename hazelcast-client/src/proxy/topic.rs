@@ -109,12 +109,17 @@ impl<T> ITopic<T>
 where
     T: Serializable + Deserializable + Send + Sync + 'static,
 {
+    async fn check_quorum(&self, is_read: bool) -> Result<()> {
+        self.connection_manager.check_quorum(&self.name, is_read).await
+    }
+
     /// Publishes a message to all subscribers of this topic.
     ///
     /// The message is serialized and sent to the cluster, which then
     /// distributes it to all registered listeners.
     pub async fn publish(&self, message: T) -> Result<()> {
         self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
         let message_data = Self::serialize_value(&message)?;
 
         let mut msg = ClientMessage::create_for_encode_any_partition(TOPIC_PUBLISH);

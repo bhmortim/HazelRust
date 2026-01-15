@@ -373,6 +373,38 @@ impl ConnectionManager {
         self.config.security().effective_permissions()
     }
 
+    /// Checks if quorum is present for the given data structure and operation type.
+    ///
+    /// Returns `Ok(())` if:
+    /// - No quorum configuration matches the data structure name
+    /// - The quorum type doesn't protect this operation type
+    /// - The quorum is present (enough cluster members)
+    ///
+    /// Returns `Err(HazelcastError::QuorumNotPresent)` if quorum is not met.
+    pub async fn check_quorum(&self, name: &str, is_read_operation: bool) -> Result<()> {
+        if let Some(quorum_config) = self.config.find_quorum_config(name) {
+            if quorum_config.protects_operation(is_read_operation) {
+                let members = self.members().await;
+                if !quorum_config.check_quorum(&members) {
+                    let op_type = if is_read_operation { "read" } else { "write" };
+                    return Err(HazelcastError::QuorumNotPresent(format!(
+                        "{} operation on '{}' requires quorum of {} members, but only {} present",
+                        op_type,
+                        name,
+                        quorum_config.min_cluster_size(),
+                        members.len()
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns the quorum configuration for the given data structure, if any.
+    pub fn find_quorum_config(&self, name: &str) -> Option<&crate::config::QuorumConfig> {
+        self.config.find_quorum_config(name)
+    }
+
     /// Returns the configured permissions, if any.
     pub fn permissions(&self) -> Option<&Permissions> {
         self.config.security().permissions()

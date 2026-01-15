@@ -54,11 +54,16 @@ impl<T> ISet<T>
 where
     T: Serializable + Deserializable + Send + Sync,
 {
+    async fn check_quorum(&self, is_read: bool) -> Result<()> {
+        self.connection_manager.check_quorum(&self.name, is_read).await
+    }
+
     /// Adds the specified element to this set if it is not already present.
     ///
     /// Returns `true` if the set did not already contain the element.
     pub async fn add(&self, item: T) -> Result<bool> {
         self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(SET_ADD);
@@ -74,6 +79,7 @@ where
     /// Returns `true` if the set contained the element.
     pub async fn remove(&self, item: &T) -> Result<bool> {
         self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
         let item_data = Self::serialize_value(item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(SET_REMOVE);
@@ -87,6 +93,7 @@ where
     /// Returns `true` if this set contains the specified element.
     pub async fn contains(&self, item: &T) -> Result<bool> {
         self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
         let item_data = Self::serialize_value(item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(SET_CONTAINS);
@@ -100,6 +107,7 @@ where
     /// Returns the number of elements in this set.
     pub async fn size(&self) -> Result<usize> {
         self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(SET_SIZE);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -115,6 +123,7 @@ where
     /// Removes all elements from this set.
     pub async fn clear(&self) -> Result<()> {
         self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(SET_CLEAR);
         message.add_frame(Self::string_frame(&self.name));
 

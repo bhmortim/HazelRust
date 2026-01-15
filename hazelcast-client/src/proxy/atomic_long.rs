@@ -46,9 +46,14 @@ impl AtomicLong {
         Ok(())
     }
 
+    async fn check_quorum(&self, is_read: bool) -> Result<()> {
+        self.connection_manager.check_quorum(&self.name, is_read).await
+    }
+
     /// Gets the current value.
     pub async fn get(&self) -> Result<i64> {
         self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -59,6 +64,7 @@ impl AtomicLong {
     /// Sets the value to the given value.
     pub async fn set(&self, value: i64) -> Result<()> {
         self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_SET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(value));
@@ -70,6 +76,7 @@ impl AtomicLong {
     /// Atomically sets the value to the given value and returns the old value.
     pub async fn get_and_set(&self, value: i64) -> Result<i64> {
         self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET_AND_SET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(value));
@@ -83,6 +90,7 @@ impl AtomicLong {
     /// Returns `true` if successful, `false` if the actual value was not equal to the expected value.
     pub async fn compare_and_set(&self, expected: i64, update: i64) -> Result<bool> {
         self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_COMPARE_AND_SET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(expected));
@@ -115,6 +123,7 @@ impl AtomicLong {
     /// Atomically adds the given delta to the current value and returns the updated value.
     pub async fn add_and_get(&self, delta: i64) -> Result<i64> {
         self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_ADD_AND_GET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(delta));
@@ -126,6 +135,7 @@ impl AtomicLong {
     /// Atomically adds the given delta to the current value and returns the old value.
     pub async fn get_and_add(&self, delta: i64) -> Result<i64> {
         self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET_AND_ADD);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(delta));

@@ -55,11 +55,16 @@ impl<T> IQueue<T>
 where
     T: Serializable + Deserializable + Send + Sync,
 {
+    async fn check_quorum(&self, is_read: bool) -> Result<()> {
+        self.connection_manager.check_quorum(&self.name, is_read).await
+    }
+
     /// Inserts the specified element into this queue.
     ///
     /// Returns `true` if the element was added successfully.
     pub async fn offer(&self, item: T) -> Result<bool> {
         self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_OFFER);
@@ -74,6 +79,7 @@ where
     /// Retrieves and removes the head of this queue, or returns `None` if empty.
     pub async fn poll(&self) -> Result<Option<T>> {
         self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_POLL);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(0)); // timeout: 0 for non-blocking
@@ -88,6 +94,7 @@ where
     /// Returns `None` if the timeout expires before an element is available.
     pub async fn poll_timeout(&self, timeout: Duration) -> Result<Option<T>> {
         self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
         let timeout_ms = timeout.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_POLL);
@@ -119,6 +126,7 @@ where
     /// Returns `None` if the queue is empty.
     pub async fn peek(&self) -> Result<Option<T>> {
         self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_PEEK);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -129,6 +137,7 @@ where
     /// Returns the number of elements in this queue.
     pub async fn size(&self) -> Result<usize> {
         self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_SIZE);
         message.add_frame(Self::string_frame(&self.name));
 

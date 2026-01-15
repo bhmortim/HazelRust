@@ -261,6 +261,10 @@ where
     K: Serializable + Deserializable + Send + Sync,
     V: Serializable + Deserializable + Send + Sync,
 {
+    async fn check_quorum(&self, is_read: bool) -> Result<()> {
+        self.connection_manager.check_quorum(&self.name, is_read).await
+    }
+
     /// Retrieves the value associated with the given key.
     ///
     /// If near-cache is enabled, checks the local cache first. On a cache miss,
@@ -269,6 +273,7 @@ where
     /// Returns `None` if the key does not exist in the map.
     pub async fn get(&self, key: &K) -> Result<Option<V>> {
         self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
         let key_data = Self::serialize_value(key)?;
 
         // Check near-cache first
@@ -309,6 +314,7 @@ where
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn put(&self, key: K, value: V) -> Result<Option<V>> {
         self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
 
@@ -339,6 +345,7 @@ where
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn remove(&self, key: &K) -> Result<Option<V>> {
         self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
         let key_data = Self::serialize_value(key)?;
 
         // Invalidate near-cache before remote operation
@@ -360,6 +367,7 @@ where
     /// Returns `true` if this map contains a mapping for the specified key.
     pub async fn contains_key(&self, key: &K) -> Result<bool> {
         self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
         let key_data = Self::serialize_value(key)?;
         let partition_id = compute_partition_hash(&key_data);
 
@@ -374,6 +382,7 @@ where
     /// Returns the number of key-value mappings in this map.
     pub async fn size(&self) -> Result<usize> {
         self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
         let message = ClientMessage::create_for_encode(MAP_SIZE, PARTITION_ID_ANY);
         let mut msg = message;
         msg.add_frame(Self::string_frame(&self.name));
@@ -387,6 +396,7 @@ where
     /// If near-cache is enabled, clears the local cache as well.
     pub async fn clear(&self) -> Result<()> {
         self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
         // Clear near-cache before remote operation
         if let Some(ref cache) = self.near_cache {
             let mut cache_guard = cache.lock().unwrap();
