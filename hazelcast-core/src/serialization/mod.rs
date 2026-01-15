@@ -2,12 +2,17 @@
 
 mod data_input;
 mod data_output;
+pub mod compact;
 pub mod portable;
 mod traits;
 
 #[cfg(feature = "serde")]
 mod serde;
 
+pub use compact::{
+    Compact, CompactReader, CompactSerializer, CompactWriter, DefaultCompactReader,
+    DefaultCompactWriter, FieldDescriptor, FieldKind, Schema, COMPACT_TYPE_ID,
+};
 pub use data_input::{DataInput, ObjectDataInput};
 pub use data_output::{DataOutput, ObjectDataOutput};
 pub use portable::{
