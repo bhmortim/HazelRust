@@ -1,5 +1,7 @@
 //! Distributed map proxy implementation.
 
+use std::collections::HashMap;
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
@@ -11,9 +13,9 @@ use tokio::spawn;
 use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
     IS_EVENT_FLAG, IS_NULL_FLAG, END_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_CLEAR, MAP_CONTAINS_KEY,
-    MAP_ENTRIES_WITH_PREDICATE, MAP_GET, MAP_KEYS_WITH_PREDICATE, MAP_PUT, MAP_REMOVE,
-    MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
-    RESPONSE_HEADER_SIZE,
+    MAP_ENTRIES_WITH_PREDICATE, MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS,
+    MAP_GET, MAP_KEYS_WITH_PREDICATE, MAP_PUT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE,
+    MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -27,6 +29,7 @@ use crate::listener::{
     EntryEvent, EntryEventType, EntryListenerConfig, ListenerId, ListenerRegistration,
     ListenerStats,
 };
+use crate::proxy::entry_processor::{EntryProcessor, EntryProcessorResult};
 use crate::query::Predicate;
 
 /// A distributed map proxy for performing key-value operations on a Hazelcast cluster.
@@ -736,6 +739,185 @@ where
 
         Ok(entries)
     }
+
+    /// Executes an entry processor on the entry with the given key.
+    ///
+    /// The processor is serialized and sent to the cluster member owning the key,
+    /// where it executes atomically on the entry. This avoids transferring the
+    /// entry data to the client for modification.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `E`: The entry processor type implementing [`EntryProcessor`]
+    ///
+    /// # Returns
+    ///
+    /// The result of executing the processor on the entry, or `None` if the key
+    /// does not exist and the processor returns no result.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let result = map.execute_on_key(&"user:123".to_string(), &increment_age_processor).await?;
+    /// println!("New age: {:?}", result);
+    /// ```
+    pub async fn execute_on_key<E>(&self, key: &K, processor: &E) -> Result<Option<E::Output>>
+    where
+        E: EntryProcessor,
+    {
+        let key_data = Self::serialize_value(key)?;
+        let processor_data = Self::serialize_value(processor)?;
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_EXECUTE_ON_KEY, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&processor_data));
+        message.add_frame(Self::data_frame(&key_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_nullable_response::<E::Output>(&response)
+    }
+
+    /// Executes an entry processor on entries with the given keys.
+    ///
+    /// The processor is sent to each cluster member owning one or more of the keys.
+    /// Each member executes the processor on its local entries atomically.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `E`: The entry processor type implementing [`EntryProcessor`]
+    ///
+    /// # Returns
+    ///
+    /// A map of keys to their processing results. Keys that don't exist in the map
+    /// may be omitted from the result.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let keys = vec!["user:1".to_string(), "user:2".to_string(), "user:3".to_string()];
+    /// let results = map.execute_on_keys(&keys, &increment_processor).await?;
+    /// for (key, result) in results {
+    ///     println!("{}: {:?}", key, result);
+    /// }
+    /// ```
+    pub async fn execute_on_keys<E>(
+        &self,
+        keys: &[K],
+        processor: &E,
+    ) -> Result<EntryProcessorResult<K, E::Output>>
+    where
+        E: EntryProcessor,
+        K: Eq + Hash + Clone,
+    {
+        if keys.is_empty() {
+            return Ok(EntryProcessorResult::default());
+        }
+
+        let processor_data = Self::serialize_value(processor)?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_EXECUTE_ON_KEYS, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&processor_data));
+
+        // Encode keys count
+        message.add_frame(Self::int_frame(keys.len() as i32));
+
+        // Encode each key
+        for key in keys {
+            let key_data = Self::serialize_value(key)?;
+            message.add_frame(Self::data_frame(&key_data));
+        }
+
+        let response = self.invoke(message).await?;
+        self.decode_entry_processor_results::<E::Output>(&response)
+    }
+
+    /// Executes an entry processor on all entries in this map.
+    ///
+    /// The processor is sent to all cluster members, where it executes on each
+    /// entry atomically. This is useful for bulk updates or aggregations.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `E`: The entry processor type implementing [`EntryProcessor`]
+    ///
+    /// # Returns
+    ///
+    /// A map of all keys to their processing results.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let results = map.execute_on_entries(&reset_counter_processor).await?;
+    /// println!("Processed {} entries", results.len());
+    /// ```
+    pub async fn execute_on_entries<E>(
+        &self,
+        processor: &E,
+    ) -> Result<EntryProcessorResult<K, E::Output>>
+    where
+        E: EntryProcessor,
+        K: Eq + Hash + Clone,
+    {
+        let processor_data = Self::serialize_value(processor)?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_EXECUTE_ON_ALL_KEYS, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&processor_data));
+
+        let response = self.invoke(message).await?;
+        self.decode_entry_processor_results::<E::Output>(&response)
+    }
+
+    fn decode_entry_processor_results<R>(
+        &self,
+        response: &ClientMessage,
+    ) -> Result<EntryProcessorResult<K, R>>
+    where
+        R: Deserializable,
+        K: Eq + Hash + Clone,
+    {
+        let frames = response.frames();
+        let mut results = HashMap::new();
+
+        // Skip initial frame, pairs of frames are key/result
+        let data_frames: Vec<_> = frames
+            .iter()
+            .skip(1)
+            .filter(|f| !f.content.is_empty())
+            .collect();
+
+        let mut i = 0;
+        while i + 1 < data_frames.len() {
+            let key_frame = data_frames[i];
+            let result_frame = data_frames[i + 1];
+
+            if key_frame.flags & END_FLAG != 0 && key_frame.content.is_empty() {
+                break;
+            }
+
+            if key_frame.flags & IS_NULL_FLAG != 0 {
+                i += 2;
+                continue;
+            }
+
+            let mut key_input = ObjectDataInput::new(&key_frame.content);
+            if let Ok(key) = K::deserialize(&mut key_input) {
+                if result_frame.flags & IS_NULL_FLAG == 0 && !result_frame.content.is_empty() {
+                    let mut result_input = ObjectDataInput::new(&result_frame.content);
+                    if let Ok(result) = R::deserialize(&mut result_input) {
+                        results.insert(key, result);
+                    }
+                }
+            }
+
+            i += 2;
+        }
+
+        Ok(EntryProcessorResult::new(results))
+    }
 }
 
 impl<K, V> Clone for IMap<K, V> {
@@ -938,5 +1120,86 @@ mod tests {
         let entries: Vec<(String, String)> =
             IMap::<String, String>::decode_entries_response(&message).unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_execute_on_key_serializes_processor() {
+        use crate::proxy::EntryProcessor;
+
+        struct TestProcessor {
+            increment: i32,
+        }
+
+        impl EntryProcessor for TestProcessor {
+            type Output = i32;
+        }
+
+        impl Serializable for TestProcessor {
+            fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+                output.write_i32(self.increment)?;
+                Ok(())
+            }
+        }
+
+        let processor = TestProcessor { increment: 5 };
+        let mut output = ObjectDataOutput::new();
+        processor.serialize(&mut output).unwrap();
+        let bytes = output.into_bytes();
+        assert!(!bytes.is_empty());
+        assert_eq!(bytes.len(), 4);
+    }
+
+    #[test]
+    fn test_entry_processor_result_integration() {
+        use crate::proxy::EntryProcessorResult;
+
+        let mut map = std::collections::HashMap::new();
+        map.insert("key1".to_string(), 100i64);
+        map.insert("key2".to_string(), 200i64);
+
+        let result: EntryProcessorResult<String, i64> = EntryProcessorResult::new(map);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get(&"key1".to_string()), Some(&100i64));
+        assert_eq!(result.get(&"key2".to_string()), Some(&200i64));
+    }
+
+    #[test]
+    fn test_entry_processor_with_complex_output() {
+        use crate::proxy::EntryProcessor;
+
+        #[derive(Debug, PartialEq)]
+        struct ProcessorResult {
+            old_value: i32,
+            new_value: i32,
+        }
+
+        impl Deserializable for ProcessorResult {
+            fn deserialize(input: &mut ObjectDataInput) -> hazelcast_core::Result<Self> {
+                Ok(Self {
+                    old_value: input.read_i32()?,
+                    new_value: input.read_i32()?,
+                })
+            }
+        }
+
+        struct UpdateProcessor {
+            delta: i32,
+        }
+
+        impl EntryProcessor for UpdateProcessor {
+            type Output = ProcessorResult;
+        }
+
+        impl Serializable for UpdateProcessor {
+            fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+                output.write_i32(self.delta)?;
+                Ok(())
+            }
+        }
+
+        let processor = UpdateProcessor { delta: 10 };
+        let mut output = ObjectDataOutput::new();
+        processor.serialize(&mut output).unwrap();
+        assert_eq!(output.into_bytes().len(), 4);
     }
 }

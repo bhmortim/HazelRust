@@ -329,6 +329,15 @@ pub const MAP_ENTRIES_WITH_PREDICATE: i32 = 0x010F00;
 /// Map key set with predicate request.
 pub const MAP_KEYS_WITH_PREDICATE: i32 = 0x011100;
 
+/// Map execute on key request.
+pub const MAP_EXECUTE_ON_KEY: i32 = 0x012E00;
+
+/// Map execute on keys request.
+pub const MAP_EXECUTE_ON_KEYS: i32 = 0x012F00;
+
+/// Map execute on all keys request.
+pub const MAP_EXECUTE_ON_ALL_KEYS: i32 = 0x013000;
+
 /// Executor submit to partition request.
 pub const EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x0E0100;
 
