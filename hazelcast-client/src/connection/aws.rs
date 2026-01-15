@@ -3,10 +3,12 @@
 //! This module provides automatic discovery of Hazelcast cluster members
 //! running on AWS EC2 instances or ECS tasks using tag-based filtering.
 
-use std::net::SocketAddr;
+use std::fmt;
+use std::net::{IpAddr, SocketAddr};
 
 use async_trait::async_trait;
-use hazelcast_core::Result;
+use hazelcast_core::{HazelcastError, Result};
+use tracing::debug;
 
 use super::ClusterDiscovery;
 
@@ -124,68 +126,56 @@ impl Default for AwsDiscoveryConfig {
     }
 }
 
-/// AWS-based cluster discovery using EC2 instance metadata and tags.
+/// Filter for EC2 instance queries.
 #[derive(Debug, Clone)]
-pub struct AwsDiscovery {
+pub struct InstanceFilter {
+    /// Filter name (e.g., "instance-state-name", "tag:Name").
+    pub name: String,
+    /// Filter values.
+    pub values: Vec<String>,
+}
+
+impl InstanceFilter {
+    /// Creates a new instance filter.
+    pub fn new(name: impl Into<String>, values: Vec<String>) -> Self {
+        Self {
+            name: name.into(),
+            values,
+        }
+    }
+}
+
+/// Discovered EC2 instance information.
+#[derive(Debug, Clone)]
+pub struct DiscoveredInstance {
+    /// Private IP address if available.
+    pub private_ip: Option<String>,
+    /// Public IP address if available.
+    pub public_ip: Option<String>,
+}
+
+/// Trait for EC2 client operations, enabling mock injection for tests.
+#[async_trait]
+pub trait Ec2ClientProvider: Send + Sync {
+    /// Describes EC2 instances matching the given filters.
+    async fn describe_instances(&self, filters: Vec<InstanceFilter>) -> Result<Vec<DiscoveredInstance>>;
+}
+
+/// Production EC2 client using AWS SDK.
+pub struct AwsSdkEc2Client {
     config: AwsDiscoveryConfig,
 }
 
-impl AwsDiscovery {
-    /// Creates a new AWS discovery instance with the given configuration.
+impl AwsSdkEc2Client {
+    /// Creates a new AWS SDK EC2 client with the given configuration.
     pub fn new(config: AwsDiscoveryConfig) -> Self {
         Self { config }
-    }
-
-    /// Returns the discovery configuration.
-    pub fn config(&self) -> &AwsDiscoveryConfig {
-        &self.config
-    }
-
-    /// Builds EC2 filters based on configuration.
-    fn build_filters(&self) -> Vec<aws_sdk_ec2::types::Filter> {
-        let mut filters = vec![
-            aws_sdk_ec2::types::Filter::builder()
-                .name("instance-state-name")
-                .values("running")
-                .build(),
-        ];
-
-        if let Some(sg) = &self.config.security_group {
-            filters.push(
-                aws_sdk_ec2::types::Filter::builder()
-                    .name("instance.group-id")
-                    .values(sg.clone())
-                    .build(),
-            );
-        }
-
-        if let (Some(key), Some(value)) = (&self.config.tag_key, &self.config.tag_value) {
-            filters.push(
-                aws_sdk_ec2::types::Filter::builder()
-                    .name(format!("tag:{}", key))
-                    .values(value.clone())
-                    .build(),
-            );
-        }
-
-        filters
-    }
-
-    /// Extracts IP address from an EC2 instance based on configuration.
-    fn extract_ip(&self, instance: &aws_sdk_ec2::types::Instance) -> Option<String> {
-        if self.config.use_private_ip {
-            instance.private_ip_address().map(|s| s.to_string())
-        } else {
-            instance.public_ip_address().map(|s| s.to_string())
-        }
     }
 }
 
 #[async_trait]
-impl ClusterDiscovery for AwsDiscovery {
-    async fn discover(&self) -> Result<Vec<SocketAddr>> {
-        use hazelcast_core::HazelcastError;
-
+impl Ec2ClientProvider for AwsSdkEc2Client {
+    async fn describe_instances(&self, filters: Vec<InstanceFilter>) -> Result<Vec<DiscoveredInstance>> {
         let mut config_loader = aws_config::from_env()
             .region(aws_sdk_ec2::config::Region::new(self.config.region.clone()));
 
@@ -203,24 +193,117 @@ impl ClusterDiscovery for AwsDiscovery {
         let sdk_config = config_loader.load().await;
         let ec2_client = aws_sdk_ec2::Client::new(&sdk_config);
 
-        let filters = self.build_filters();
+        let sdk_filters: Vec<aws_sdk_ec2::types::Filter> = filters
+            .into_iter()
+            .map(|f| {
+                aws_sdk_ec2::types::Filter::builder()
+                    .name(f.name)
+                    .set_values(Some(f.values))
+                    .build()
+            })
+            .collect();
+
         let response = ec2_client
             .describe_instances()
-            .set_filters(Some(filters))
+            .set_filters(Some(sdk_filters))
             .send()
             .await
             .map_err(|e| HazelcastError::Connection(format!("AWS EC2 API error: {}", e)))?;
 
-        let mut addresses = Vec::new();
+        let mut instances = Vec::new();
 
         for reservation in response.reservations() {
             for instance in reservation.instances() {
-                if let Some(ip) = self.extract_ip(instance) {
-                    let addr_str = format!("{}:{}", ip, self.config.port);
-                    if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-                        addresses.push(addr);
-                        tracing::debug!("Discovered Hazelcast member at {}", addr);
-                    }
+                instances.push(DiscoveredInstance {
+                    private_ip: instance.private_ip_address().map(|s| s.to_string()),
+                    public_ip: instance.public_ip_address().map(|s| s.to_string()),
+                });
+            }
+        }
+
+        Ok(instances)
+    }
+}
+
+/// AWS-based cluster discovery using EC2 instance metadata and tags.
+pub struct AwsDiscovery {
+    config: AwsDiscoveryConfig,
+    ec2_client: Box<dyn Ec2ClientProvider>,
+}
+
+impl fmt::Debug for AwsDiscovery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AwsDiscovery")
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
+impl AwsDiscovery {
+    /// Creates a new AWS discovery instance with the given configuration.
+    pub fn new(config: AwsDiscoveryConfig) -> Self {
+        let ec2_client = Box::new(AwsSdkEc2Client::new(config.clone()));
+        Self { config, ec2_client }
+    }
+
+    #[cfg(test)]
+    fn with_mock_client(config: AwsDiscoveryConfig, ec2_client: Box<dyn Ec2ClientProvider>) -> Self {
+        Self { config, ec2_client }
+    }
+
+    /// Returns the discovery configuration.
+    pub fn config(&self) -> &AwsDiscoveryConfig {
+        &self.config
+    }
+
+    /// Builds EC2 filters based on configuration.
+    fn build_filters(&self) -> Vec<InstanceFilter> {
+        let mut filters = vec![InstanceFilter::new(
+            "instance-state-name",
+            vec!["running".to_string()],
+        )];
+
+        if let Some(sg) = &self.config.security_group {
+            filters.push(InstanceFilter::new(
+                "instance.group-id",
+                vec![sg.clone()],
+            ));
+        }
+
+        if let (Some(key), Some(value)) = (&self.config.tag_key, &self.config.tag_value) {
+            filters.push(InstanceFilter::new(
+                format!("tag:{}", key),
+                vec![value.clone()],
+            ));
+        }
+
+        filters
+    }
+
+    /// Extracts IP address from a discovered instance based on configuration.
+    fn extract_ip(&self, instance: &DiscoveredInstance) -> Option<&str> {
+        if self.config.use_private_ip {
+            instance.private_ip.as_deref()
+        } else {
+            instance.public_ip.as_deref()
+        }
+    }
+}
+
+#[async_trait]
+impl ClusterDiscovery for AwsDiscovery {
+    async fn discover(&self) -> Result<Vec<SocketAddr>> {
+        let filters = self.build_filters();
+        let instances = self.ec2_client.describe_instances(filters).await?;
+
+        let mut addresses = Vec::new();
+
+        for instance in &instances {
+            if let Some(ip_str) = self.extract_ip(instance) {
+                if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                    let addr = SocketAddr::new(ip, self.config.port);
+                    addresses.push(addr);
+                    debug!("Discovered Hazelcast member at {}", addr);
                 }
             }
         }
@@ -238,6 +321,45 @@ impl ClusterDiscovery for AwsDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    struct MockEc2Client {
+        instances: Mutex<Vec<DiscoveredInstance>>,
+        should_error: bool,
+    }
+
+    impl MockEc2Client {
+        fn new(instances: Vec<DiscoveredInstance>) -> Self {
+            Self {
+                instances: Mutex::new(instances),
+                should_error: false,
+            }
+        }
+
+        fn with_error() -> Self {
+            Self {
+                instances: Mutex::new(vec![]),
+                should_error: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Ec2ClientProvider for MockEc2Client {
+        async fn describe_instances(&self, _filters: Vec<InstanceFilter>) -> Result<Vec<DiscoveredInstance>> {
+            if self.should_error {
+                return Err(HazelcastError::Connection("Mock EC2 API error".into()));
+            }
+            Ok(self.instances.lock().unwrap().clone())
+        }
+    }
+
+    fn create_mock_discovery(
+        config: AwsDiscoveryConfig,
+        instances: Vec<DiscoveredInstance>,
+    ) -> AwsDiscovery {
+        AwsDiscovery::with_mock_client(config, Box::new(MockEc2Client::new(instances)))
+    }
 
     #[test]
     fn test_aws_config_default() {
@@ -286,6 +408,12 @@ mod tests {
         let filters = discovery.build_filters();
 
         assert_eq!(filters.len(), 3);
+        assert_eq!(filters[0].name, "instance-state-name");
+        assert_eq!(filters[0].values, vec!["running"]);
+        assert_eq!(filters[1].name, "instance.group-id");
+        assert_eq!(filters[1].values, vec!["sg-abc123"]);
+        assert_eq!(filters[2].name, "tag:env");
+        assert_eq!(filters[2].values, vec!["staging"]);
     }
 
     #[test]
@@ -295,6 +423,7 @@ mod tests {
         let filters = discovery.build_filters();
 
         assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].name, "instance-state-name");
     }
 
     #[test]
@@ -308,22 +437,9 @@ mod tests {
     }
 
     #[test]
-    fn test_aws_discovery_clone() {
-        let discovery = AwsDiscovery::new(AwsDiscoveryConfig::default());
-        let cloned = discovery.clone();
-        assert_eq!(cloned.config().region(), "us-east-1");
-    }
-
-    #[test]
     fn test_aws_config_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<AwsDiscoveryConfig>();
-    }
-
-    #[test]
-    fn test_aws_discovery_is_send_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<AwsDiscovery>();
     }
 
     #[test]
@@ -333,5 +449,194 @@ mod tests {
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("us-east-2"));
         assert!(debug_str.contains("sg-test"));
+    }
+
+    #[tokio::test]
+    async fn test_aws_discovery_parses_private_ips() {
+        let config = AwsDiscoveryConfig::new("us-west-2").with_port(5701);
+
+        let instances = vec![
+            DiscoveredInstance {
+                private_ip: Some("10.0.0.1".to_string()),
+                public_ip: Some("54.1.2.3".to_string()),
+            },
+            DiscoveredInstance {
+                private_ip: Some("10.0.0.2".to_string()),
+                public_ip: Some("54.1.2.4".to_string()),
+            },
+        ];
+
+        let discovery = create_mock_discovery(config, instances);
+        let addresses = discovery.discover().await.unwrap();
+
+        assert_eq!(addresses.len(), 2);
+        assert!(addresses.contains(&"10.0.0.1:5701".parse().unwrap()));
+        assert!(addresses.contains(&"10.0.0.2:5701".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn test_aws_discovery_uses_public_ips_when_configured() {
+        let config = AwsDiscoveryConfig::new("us-west-2")
+            .with_port(5702)
+            .with_use_private_ip(false);
+
+        let instances = vec![
+            DiscoveredInstance {
+                private_ip: Some("10.0.0.1".to_string()),
+                public_ip: Some("54.1.2.3".to_string()),
+            },
+            DiscoveredInstance {
+                private_ip: Some("10.0.0.2".to_string()),
+                public_ip: Some("54.1.2.4".to_string()),
+            },
+        ];
+
+        let discovery = create_mock_discovery(config, instances);
+        let addresses = discovery.discover().await.unwrap();
+
+        assert_eq!(addresses.len(), 2);
+        assert!(addresses.contains(&"54.1.2.3:5702".parse().unwrap()));
+        assert!(addresses.contains(&"54.1.2.4:5702".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn test_aws_discovery_handles_empty_response() {
+        let config = AwsDiscoveryConfig::new("us-west-2");
+        let discovery = create_mock_discovery(config, vec![]);
+        let addresses = discovery.discover().await.unwrap();
+
+        assert!(addresses.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_aws_discovery_skips_instances_without_ip() {
+        let config = AwsDiscoveryConfig::new("us-west-2");
+
+        let instances = vec![
+            DiscoveredInstance {
+                private_ip: None,
+                public_ip: None,
+            },
+            DiscoveredInstance {
+                private_ip: Some("10.0.0.5".to_string()),
+                public_ip: None,
+            },
+        ];
+
+        let discovery = create_mock_discovery(config, instances);
+        let addresses = discovery.discover().await.unwrap();
+
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(addresses[0], "10.0.0.5:5701".parse().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_aws_discovery_handles_api_error() {
+        let config = AwsDiscoveryConfig::new("us-west-2");
+        let discovery = AwsDiscovery::with_mock_client(config, Box::new(MockEc2Client::with_error()));
+
+        let result = discovery.discover().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Mock EC2 API error"));
+    }
+
+    #[tokio::test]
+    async fn test_aws_discovery_skips_invalid_ips() {
+        let config = AwsDiscoveryConfig::new("us-west-2");
+
+        let instances = vec![
+            DiscoveredInstance {
+                private_ip: Some("not-an-ip".to_string()),
+                public_ip: None,
+            },
+            DiscoveredInstance {
+                private_ip: Some("10.0.0.10".to_string()),
+                public_ip: None,
+            },
+        ];
+
+        let discovery = create_mock_discovery(config, instances);
+        let addresses = discovery.discover().await.unwrap();
+
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(addresses[0], "10.0.0.10:5701".parse().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_aws_discovery_with_tag_filter() {
+        let config = AwsDiscoveryConfig::new("eu-west-1")
+            .with_tag("hazelcast:cluster", "production")
+            .with_port(5703);
+
+        let instances = vec![
+            DiscoveredInstance {
+                private_ip: Some("172.16.0.1".to_string()),
+                public_ip: None,
+            },
+            DiscoveredInstance {
+                private_ip: Some("172.16.0.2".to_string()),
+                public_ip: None,
+            },
+            DiscoveredInstance {
+                private_ip: Some("172.16.0.3".to_string()),
+                public_ip: None,
+            },
+        ];
+
+        let discovery = create_mock_discovery(config.clone(), instances);
+        let filters = discovery.build_filters();
+
+        assert!(filters.iter().any(|f| f.name == "tag:hazelcast:cluster" && f.values == vec!["production"]));
+
+        let addresses = discovery.discover().await.unwrap();
+        assert_eq!(addresses.len(), 3);
+        assert!(addresses.iter().all(|a| a.port() == 5703));
+    }
+
+    #[tokio::test]
+    async fn test_aws_discovery_with_security_group() {
+        let config = AwsDiscoveryConfig::new("ap-northeast-1")
+            .with_security_group("sg-hazelcast-cluster");
+
+        let instances = vec![DiscoveredInstance {
+            private_ip: Some("192.168.1.100".to_string()),
+            public_ip: Some("13.114.0.50".to_string()),
+        }];
+
+        let discovery = create_mock_discovery(config, instances);
+        let filters = discovery.build_filters();
+
+        assert!(filters.iter().any(|f| f.name == "instance.group-id" && f.values == vec!["sg-hazelcast-cluster"]));
+
+        let addresses = discovery.discover().await.unwrap();
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(addresses[0], "192.168.1.100:5701".parse().unwrap());
+    }
+
+    #[test]
+    fn test_instance_filter_new() {
+        let filter = InstanceFilter::new("tag:Name", vec!["value1".to_string(), "value2".to_string()]);
+        assert_eq!(filter.name, "tag:Name");
+        assert_eq!(filter.values.len(), 2);
+    }
+
+    #[test]
+    fn test_discovered_instance_clone() {
+        let instance = DiscoveredInstance {
+            private_ip: Some("10.0.0.1".to_string()),
+            public_ip: Some("54.0.0.1".to_string()),
+        };
+        let cloned = instance.clone();
+        assert_eq!(cloned.private_ip, instance.private_ip);
+        assert_eq!(cloned.public_ip, instance.public_ip);
+    }
+
+    #[test]
+    fn test_aws_discovery_debug() {
+        let config = AwsDiscoveryConfig::new("us-west-2");
+        let discovery = AwsDiscovery::new(config);
+        let debug_str = format!("{:?}", discovery);
+        assert!(debug_str.contains("AwsDiscovery"));
+        assert!(debug_str.contains("us-west-2"));
     }
 }
