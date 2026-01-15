@@ -10,6 +10,11 @@ mod service;
 pub use scheduled::{ScheduledExecutorService, ScheduledFuture, ScheduleType, TimeUnit};
 pub use service::ExecutorFuture;
 
+pub use self::{
+    Callable, ExecutionCallback, ExecutionTarget, ExecutorService,
+    FnExecutionCallback, Runnable, RunnableTask, CallableTask,
+};
+
 use std::marker::PhantomData;
 use std::sync::Arc;
 

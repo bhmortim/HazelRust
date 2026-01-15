@@ -17,7 +17,7 @@ use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Se
 
 use crate::connection::ConnectionManager;
 use crate::listener::Member;
-use super::{Callable, CallableTask, ExecutionTarget};
+use super::{Callable, CallableTask, ExecutionCallback, ExecutionTarget};
 
 /// A handle to a pending executor task result.
 ///
@@ -95,6 +95,18 @@ impl super::ExecutorService {
             .await
     }
 
+    /// Submits a callable task to the member owning the specified key's partition.
+    ///
+    /// Alias for [`submit_to_key`] for API consistency.
+    pub async fn submit_to_key_owner<T, R, K>(&self, task: &T, key: &K) -> Result<ExecutorFuture<R>>
+    where
+        T: Callable<R>,
+        R: Deserializable + Send + 'static,
+        K: Serializable,
+    {
+        self.submit_to_key(task, key).await
+    }
+
     /// Submits a callable task to all cluster members.
     ///
     /// Returns a vector of futures, one for each member's result.
@@ -116,6 +128,93 @@ impl super::ExecutorService {
             futures.push(future);
         }
         Ok(futures)
+    }
+
+    /// Submits a callable task with a callback for result handling.
+    ///
+    /// The callback's `on_response` method is called with the result on success,
+    /// or `on_failure` is called with the error on failure.
+    pub async fn submit_with_callback<T, R, C>(
+        &self,
+        task: &T,
+        callback: Arc<C>,
+    ) -> Result<()>
+    where
+        T: Callable<R>,
+        R: Deserializable + Send + 'static,
+        C: ExecutionCallback<R> + 'static,
+    {
+        let future = self.submit(task).await?;
+        Self::spawn_callback_handler(future, callback);
+        Ok(())
+    }
+
+    /// Submits a callable task to a specific member with a callback.
+    pub async fn submit_to_member_with_callback<T, R, C>(
+        &self,
+        task: &T,
+        member: &Member,
+        callback: Arc<C>,
+    ) -> Result<()>
+    where
+        T: Callable<R>,
+        R: Deserializable + Send + 'static,
+        C: ExecutionCallback<R> + 'static,
+    {
+        let future = self.submit_to_member(task, member).await?;
+        Self::spawn_callback_handler(future, callback);
+        Ok(())
+    }
+
+    /// Submits a callable task to a key owner with a callback.
+    pub async fn submit_to_key_owner_with_callback<T, R, K, C>(
+        &self,
+        task: &T,
+        key: &K,
+        callback: Arc<C>,
+    ) -> Result<()>
+    where
+        T: Callable<R>,
+        R: Deserializable + Send + 'static,
+        K: Serializable,
+        C: ExecutionCallback<R> + 'static,
+    {
+        let future = self.submit_to_key_owner(task, key).await?;
+        Self::spawn_callback_handler(future, callback);
+        Ok(())
+    }
+
+    /// Submits a callable task to all members with callbacks.
+    ///
+    /// Each member's result will trigger the callback independently.
+    pub async fn submit_to_all_members_with_callback<T, R, C>(
+        &self,
+        task: &T,
+        callback: Arc<C>,
+    ) -> Result<()>
+    where
+        T: Callable<R>,
+        R: Deserializable + Send + 'static,
+        C: ExecutionCallback<R> + 'static,
+    {
+        let futures = self.submit_to_all_members(task).await?;
+        for future in futures {
+            Self::spawn_callback_handler(future, Arc::clone(&callback));
+        }
+        Ok(())
+    }
+
+    fn spawn_callback_handler<R, C>(future: ExecutorFuture<R>, callback: Arc<C>)
+    where
+        R: Send + 'static,
+        C: ExecutionCallback<R> + 'static,
+    {
+        tokio::spawn(async move {
+            match future.get().await {
+                Ok(result) => callback.on_response(result),
+                Err(error) => callback.on_failure(error),
+            }
+        });
     }
 
     /// Shuts down the executor service.
