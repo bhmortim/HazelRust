@@ -1,0 +1,13 @@
+[package]
+name = "hazelcast-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hazelcast-core = { path = "../hazelcast-core" }
+tokio = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }

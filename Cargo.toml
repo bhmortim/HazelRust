@@ -1,0 +1,18 @@
+[workspace]
+members = [
+    "hazelcast-core",
+    "hazelcast-client",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+thiserror = "1"
+async-trait = "0.1"
+tracing = "0.1"
