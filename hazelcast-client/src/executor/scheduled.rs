@@ -14,7 +14,7 @@ use hazelcast_core::protocol::{
     SCHEDULED_EXECUTOR_CANCEL_FROM_PARTITION, SCHEDULED_EXECUTOR_CANCEL_FROM_MEMBER,
     SCHEDULED_EXECUTOR_IS_DONE_FROM_PARTITION, SCHEDULED_EXECUTOR_IS_DONE_FROM_MEMBER,
     SCHEDULED_EXECUTOR_GET_DELAY_FROM_PARTITION, SCHEDULED_EXECUTOR_GET_DELAY_FROM_MEMBER,
-    SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION,
+    SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION, SCHEDULED_EXECUTOR_DISPOSE,
     PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
@@ -138,6 +138,11 @@ impl<T: Deserializable> ScheduledFuture<T> {
         Ok(result)
     }
 
+    /// Checks if the task was cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
     /// Checks if the task has completed execution.
     ///
     /// A task is done if it has completed normally, was cancelled, or
@@ -198,6 +203,26 @@ impl<T: Deserializable> ScheduledFuture<T> {
         } else {
             Ok(Duration::from_nanos(nanos as u64))
         }
+    }
+
+    /// Disposes of the scheduled task, releasing server-side resources.
+    ///
+    /// After disposal, the task cannot be queried or cancelled.
+    pub async fn dispose(&self) -> Result<()> {
+        let partition_id = match &self.target {
+            ScheduledTaskTarget::Partition(pid) => *pid,
+            ScheduledTaskTarget::Member(_) => PARTITION_ID_ANY,
+        };
+
+        let mut message = ClientMessage::create_for_encode(SCHEDULED_EXECUTOR_DISPOSE, partition_id);
+        message.add_frame(Self::string_frame(&self.scheduler_name));
+        message.add_frame(Self::string_frame(&self.task_name));
+        if let ScheduledTaskTarget::Member(uuid) = &self.target {
+            message.add_frame(Self::uuid_frame(*uuid));
+        }
+
+        self.invoke(message).await?;
+        Ok(())
     }
 
     /// Waits for the task to complete and returns the result.
@@ -557,6 +582,13 @@ mod tests {
     }
 
     #[test]
+    fn test_time_unit_to_nanos_large_values() {
+        assert_eq!(TimeUnit::Seconds.to_nanos(60), 60_000_000_000);
+        assert_eq!(TimeUnit::Milliseconds.to_nanos(1000), 1_000_000_000);
+        assert_eq!(TimeUnit::Microseconds.to_nanos(1_000_000), 1_000_000_000);
+    }
+
+    #[test]
     fn test_schedule_type_values() {
         assert_eq!(ScheduleType::SingleRun as u8, 0);
         assert_eq!(ScheduleType::AtFixedRate as u8, 1);
@@ -564,9 +596,42 @@ mod tests {
     }
 
     #[test]
+    fn test_schedule_type_debug() {
+        assert_eq!(format!("{:?}", ScheduleType::SingleRun), "SingleRun");
+        assert_eq!(format!("{:?}", ScheduleType::AtFixedRate), "AtFixedRate");
+        assert_eq!(format!("{:?}", ScheduleType::WithFixedDelay), "WithFixedDelay");
+    }
+
+    #[test]
+    fn test_time_unit_debug() {
+        assert_eq!(format!("{:?}", TimeUnit::Nanoseconds), "Nanoseconds");
+        assert_eq!(format!("{:?}", TimeUnit::Microseconds), "Microseconds");
+        assert_eq!(format!("{:?}", TimeUnit::Milliseconds), "Milliseconds");
+        assert_eq!(format!("{:?}", TimeUnit::Seconds), "Seconds");
+    }
+
+    #[test]
+    fn test_time_unit_equality() {
+        assert_eq!(TimeUnit::Nanoseconds, TimeUnit::Nanoseconds);
+        assert_ne!(TimeUnit::Nanoseconds, TimeUnit::Milliseconds);
+    }
+
+    #[test]
+    fn test_schedule_type_equality() {
+        assert_eq!(ScheduleType::SingleRun, ScheduleType::SingleRun);
+        assert_ne!(ScheduleType::SingleRun, ScheduleType::AtFixedRate);
+    }
+
+    #[test]
     fn test_scheduled_future_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<ScheduledFuture<String>>();
+    }
+
+    #[test]
+    fn test_scheduled_future_is_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<ScheduledFuture<String>>();
     }
 
     #[test]
@@ -582,5 +647,48 @@ mod tests {
             ScheduledTaskTarget::Member(_) => {}
             _ => panic!("Expected Member"),
         }
+    }
+
+    #[test]
+    fn test_scheduled_task_target_debug() {
+        let partition = ScheduledTaskTarget::Partition(42);
+        let debug_str = format!("{:?}", partition);
+        assert!(debug_str.contains("Partition"));
+        assert!(debug_str.contains("42"));
+    }
+
+    #[test]
+    fn test_string_frame_encoding() {
+        let frame = ScheduledExecutorService::string_frame("test");
+        assert_eq!(frame.content(), b"test");
+    }
+
+    #[test]
+    fn test_byte_frame_encoding() {
+        let frame = ScheduledExecutorService::byte_frame(42);
+        assert_eq!(frame.content(), &[42]);
+    }
+
+    #[test]
+    fn test_long_frame_encoding() {
+        let frame = ScheduledExecutorService::long_frame(12345678901234i64);
+        let bytes = frame.content();
+        assert_eq!(bytes.len(), 8);
+        let value = i64::from_le_bytes(bytes.try_into().unwrap());
+        assert_eq!(value, 12345678901234i64);
+    }
+
+    #[test]
+    fn test_uuid_frame_encoding() {
+        let uuid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let frame = ScheduledExecutorService::uuid_frame(uuid);
+        assert_eq!(frame.content().len(), 16);
+    }
+
+    #[test]
+    fn test_data_frame_encoding() {
+        let data = vec![1, 2, 3, 4, 5];
+        let frame = ScheduledExecutorService::data_frame(&data);
+        assert_eq!(frame.content(), &[1, 2, 3, 4, 5]);
     }
 }

@@ -96,6 +96,34 @@ mod unit_tests {
     }
 }
 
+/// Scheduled task for testing periodic execution.
+#[derive(Debug, Clone)]
+pub struct CounterTask {
+    pub increment: i32,
+}
+
+impl CounterTask {
+    pub fn new(increment: i32) -> Self {
+        Self { increment }
+    }
+}
+
+impl Serializable for CounterTask {
+    fn serialize(&self, output: &mut dyn ObjectDataOutput) -> Result<()> {
+        output.write_i32(self.increment)
+    }
+}
+
+impl hazelcast_client::executor::Callable<i32> for CounterTask {
+    fn factory_id(&self) -> i32 {
+        1
+    }
+
+    fn class_id(&self) -> i32 {
+        2
+    }
+}
+
 /// Integration tests require a running Hazelcast cluster with the
 /// EchoTask callable registered on the server side.
 #[cfg(test)]
@@ -195,5 +223,153 @@ mod integration_tests {
         // assert!(!executor.is_shutdown().await.unwrap());
         // executor.shutdown().await.unwrap();
         // assert!(executor.is_shutdown().await.unwrap());
+    }
+}
+
+/// Scheduled executor integration tests.
+#[cfg(test)]
+mod scheduled_integration_tests {
+    use super::*;
+
+    /// Scaffold for scheduled executor schedule test.
+    #[tokio::test]
+    #[ignore = "requires running Hazelcast cluster"]
+    async fn test_scheduled_executor_schedule() {
+        // let config = hazelcast_client::ClientConfig::default();
+        // let client = hazelcast_client::HazelcastClient::connect(config).await.unwrap();
+        // let scheduler = client.get_scheduled_executor_service("test-scheduler").await;
+        //
+        // let task = EchoTask::new("delayed hello");
+        // let future = scheduler.schedule(&task, Duration::from_secs(1)).await.unwrap();
+        //
+        // assert!(!future.is_cancelled());
+        // let result = future.get().await.unwrap();
+        // assert_eq!(result, "delayed hello");
+    }
+
+    /// Scaffold for schedule_at_fixed_rate test.
+    #[tokio::test]
+    #[ignore = "requires running Hazelcast cluster"]
+    async fn test_scheduled_executor_at_fixed_rate() {
+        // let config = hazelcast_client::ClientConfig::default();
+        // let client = hazelcast_client::HazelcastClient::connect(config).await.unwrap();
+        // let scheduler = client.get_scheduled_executor_service("test-scheduler").await;
+        //
+        // let task = CounterTask::new(1);
+        // let future = scheduler
+        //     .schedule_at_fixed_rate(&task, Duration::from_secs(0), Duration::from_secs(1))
+        //     .await
+        //     .unwrap();
+        //
+        // tokio::time::sleep(Duration::from_secs(3)).await;
+        // assert!(!future.is_done().await.unwrap());
+        // future.cancel(true).await.unwrap();
+        // assert!(future.is_cancelled());
+    }
+
+    /// Scaffold for schedule_with_fixed_delay test.
+    #[tokio::test]
+    #[ignore = "requires running Hazelcast cluster"]
+    async fn test_scheduled_executor_with_fixed_delay() {
+        // let config = hazelcast_client::ClientConfig::default();
+        // let client = hazelcast_client::HazelcastClient::connect(config).await.unwrap();
+        // let scheduler = client.get_scheduled_executor_service("test-scheduler").await;
+        //
+        // let task = CounterTask::new(1);
+        // let future = scheduler
+        //     .schedule_with_fixed_delay(&task, Duration::from_secs(0), Duration::from_millis(500))
+        //     .await
+        //     .unwrap();
+        //
+        // tokio::time::sleep(Duration::from_secs(2)).await;
+        // future.cancel(false).await.unwrap();
+        // assert!(future.is_cancelled());
+    }
+
+    /// Scaffold for scheduled future cancel test.
+    #[tokio::test]
+    #[ignore = "requires running Hazelcast cluster"]
+    async fn test_scheduled_future_cancel() {
+        // let config = hazelcast_client::ClientConfig::default();
+        // let client = hazelcast_client::HazelcastClient::connect(config).await.unwrap();
+        // let scheduler = client.get_scheduled_executor_service("test-scheduler").await;
+        //
+        // let task = EchoTask::new("cancel me");
+        // let future = scheduler.schedule(&task, Duration::from_secs(60)).await.unwrap();
+        //
+        // assert!(!future.is_cancelled());
+        // let cancelled = future.cancel(true).await.unwrap();
+        // assert!(cancelled);
+        // assert!(future.is_cancelled());
+    }
+
+    /// Scaffold for scheduled future get_delay test.
+    #[tokio::test]
+    #[ignore = "requires running Hazelcast cluster"]
+    async fn test_scheduled_future_get_delay() {
+        // let config = hazelcast_client::ClientConfig::default();
+        // let client = hazelcast_client::HazelcastClient::connect(config).await.unwrap();
+        // let scheduler = client.get_scheduled_executor_service("test-scheduler").await;
+        //
+        // let task = EchoTask::new("delayed");
+        // let future = scheduler.schedule(&task, Duration::from_secs(10)).await.unwrap();
+        //
+        // let delay = future.get_delay().await.unwrap();
+        // assert!(delay.as_secs() > 8);
+        // assert!(delay.as_secs() <= 10);
+        //
+        // future.cancel(true).await.unwrap();
+    }
+
+    /// Scaffold for schedule_on_member test.
+    #[tokio::test]
+    #[ignore = "requires running Hazelcast cluster"]
+    async fn test_scheduled_executor_on_member() {
+        // let config = hazelcast_client::ClientConfig::default();
+        // let client = hazelcast_client::HazelcastClient::connect(config).await.unwrap();
+        // let scheduler = client.get_scheduled_executor_service("test-scheduler").await;
+        //
+        // let members = client.cluster_members().await;
+        // let member = members.first().unwrap();
+        //
+        // let task = EchoTask::new("member task");
+        // let future = scheduler
+        //     .schedule_on_member(&task, member, Duration::from_secs(1))
+        //     .await
+        //     .unwrap();
+        //
+        // let delay = future.get_delay().await.unwrap();
+        // assert!(delay.as_millis() > 0);
+    }
+
+    /// Scaffold for scheduled executor shutdown test.
+    #[tokio::test]
+    #[ignore = "requires running Hazelcast cluster"]
+    async fn test_scheduled_executor_shutdown() {
+        // let config = hazelcast_client::ClientConfig::default();
+        // let client = hazelcast_client::HazelcastClient::connect(config).await.unwrap();
+        // let scheduler = client.get_scheduled_executor_service("shutdown-scheduler").await;
+        //
+        // assert!(!scheduler.is_shutdown().await.unwrap());
+        // scheduler.shutdown().await.unwrap();
+        // assert!(scheduler.is_shutdown().await.unwrap());
+    }
+
+    /// Scaffold for scheduled future dispose test.
+    #[tokio::test]
+    #[ignore = "requires running Hazelcast cluster"]
+    async fn test_scheduled_future_dispose() {
+        // let config = hazelcast_client::ClientConfig::default();
+        // let client = hazelcast_client::HazelcastClient::connect(config).await.unwrap();
+        // let scheduler = client.get_scheduled_executor_service("test-scheduler").await;
+        //
+        // let task = EchoTask::new("disposable");
+        // let future = scheduler.schedule(&task, Duration::from_secs(1)).await.unwrap();
+        //
+        // // Wait for task to complete
+        // tokio::time::sleep(Duration::from_secs(2)).await;
+        //
+        // // Dispose should succeed after completion
+        // future.dispose().await.unwrap();
     }
 }
