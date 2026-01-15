@@ -7,6 +7,21 @@ use std::time::Duration;
 
 use crate::cache::NearCacheConfig;
 
+#[cfg(feature = "aws")]
+use crate::connection::AwsDiscoveryConfig;
+
+#[cfg(feature = "azure")]
+use crate::connection::AzureDiscoveryConfig;
+
+#[cfg(feature = "gcp")]
+use crate::connection::GcpDiscoveryConfig;
+
+#[cfg(feature = "kubernetes")]
+use crate::connection::KubernetesDiscoveryConfig;
+
+#[cfg(feature = "cloud")]
+use crate::connection::CloudDiscoveryConfig;
+
 /// Default cluster name.
 const DEFAULT_CLUSTER_NAME: &str = "dev";
 /// Default slow operation threshold.
@@ -54,6 +69,16 @@ pub struct NetworkConfig {
     heartbeat_interval: Duration,
     tls: TlsConfig,
     ws_url: Option<String>,
+    #[cfg(feature = "aws")]
+    aws_discovery: Option<AwsDiscoveryConfig>,
+    #[cfg(feature = "azure")]
+    azure_discovery: Option<AzureDiscoveryConfig>,
+    #[cfg(feature = "gcp")]
+    gcp_discovery: Option<GcpDiscoveryConfig>,
+    #[cfg(feature = "kubernetes")]
+    kubernetes_discovery: Option<KubernetesDiscoveryConfig>,
+    #[cfg(feature = "cloud")]
+    cloud_discovery: Option<CloudDiscoveryConfig>,
 }
 
 impl NetworkConfig {
@@ -81,6 +106,36 @@ impl NetworkConfig {
     pub fn ws_url(&self) -> Option<&str> {
         self.ws_url.as_deref()
     }
+
+    /// Returns the AWS discovery configuration if configured.
+    #[cfg(feature = "aws")]
+    pub fn aws_discovery(&self) -> Option<&AwsDiscoveryConfig> {
+        self.aws_discovery.as_ref()
+    }
+
+    /// Returns the Azure discovery configuration if configured.
+    #[cfg(feature = "azure")]
+    pub fn azure_discovery(&self) -> Option<&AzureDiscoveryConfig> {
+        self.azure_discovery.as_ref()
+    }
+
+    /// Returns the GCP discovery configuration if configured.
+    #[cfg(feature = "gcp")]
+    pub fn gcp_discovery(&self) -> Option<&GcpDiscoveryConfig> {
+        self.gcp_discovery.as_ref()
+    }
+
+    /// Returns the Kubernetes discovery configuration if configured.
+    #[cfg(feature = "kubernetes")]
+    pub fn kubernetes_discovery(&self) -> Option<&KubernetesDiscoveryConfig> {
+        self.kubernetes_discovery.as_ref()
+    }
+
+    /// Returns the Hazelcast Cloud discovery configuration if configured.
+    #[cfg(feature = "cloud")]
+    pub fn cloud_discovery(&self) -> Option<&CloudDiscoveryConfig> {
+        self.cloud_discovery.as_ref()
+    }
 }
 
 impl Default for NetworkConfig {
@@ -91,6 +146,16 @@ impl Default for NetworkConfig {
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             tls: TlsConfig::default(),
             ws_url: None,
+            #[cfg(feature = "aws")]
+            aws_discovery: None,
+            #[cfg(feature = "azure")]
+            azure_discovery: None,
+            #[cfg(feature = "gcp")]
+            gcp_discovery: None,
+            #[cfg(feature = "kubernetes")]
+            kubernetes_discovery: None,
+            #[cfg(feature = "cloud")]
+            cloud_discovery: None,
         }
     }
 }
@@ -103,6 +168,16 @@ pub struct NetworkConfigBuilder {
     heartbeat_interval: Option<Duration>,
     tls: TlsConfigBuilder,
     ws_url: Option<String>,
+    #[cfg(feature = "aws")]
+    aws_discovery: Option<AwsDiscoveryConfig>,
+    #[cfg(feature = "azure")]
+    azure_discovery: Option<AzureDiscoveryConfig>,
+    #[cfg(feature = "gcp")]
+    gcp_discovery: Option<GcpDiscoveryConfig>,
+    #[cfg(feature = "kubernetes")]
+    kubernetes_discovery: Option<KubernetesDiscoveryConfig>,
+    #[cfg(feature = "cloud")]
+    cloud_discovery: Option<CloudDiscoveryConfig>,
 }
 
 impl NetworkConfigBuilder {
@@ -159,6 +234,56 @@ impl NetworkConfigBuilder {
         self
     }
 
+    /// Sets the AWS discovery configuration for EC2/ECS-based cluster discovery.
+    ///
+    /// When configured, the client will discover cluster members by querying
+    /// AWS EC2 API for instances matching the configured filters.
+    #[cfg(feature = "aws")]
+    pub fn aws_discovery(mut self, config: AwsDiscoveryConfig) -> Self {
+        self.aws_discovery = Some(config);
+        self
+    }
+
+    /// Sets the Azure discovery configuration for VM-based cluster discovery.
+    ///
+    /// When configured, the client will discover cluster members by querying
+    /// Azure Resource Manager API for VMs matching the configured tags.
+    #[cfg(feature = "azure")]
+    pub fn azure_discovery(mut self, config: AzureDiscoveryConfig) -> Self {
+        self.azure_discovery = Some(config);
+        self
+    }
+
+    /// Sets the GCP discovery configuration for Compute Engine-based cluster discovery.
+    ///
+    /// When configured, the client will discover cluster members by querying
+    /// GCP Compute Engine API for instances matching the configured labels.
+    #[cfg(feature = "gcp")]
+    pub fn gcp_discovery(mut self, config: GcpDiscoveryConfig) -> Self {
+        self.gcp_discovery = Some(config);
+        self
+    }
+
+    /// Sets the Kubernetes discovery configuration for pod-based cluster discovery.
+    ///
+    /// When configured, the client will discover cluster members by querying
+    /// the Kubernetes API for pods or service endpoints matching the configured selectors.
+    #[cfg(feature = "kubernetes")]
+    pub fn kubernetes_discovery(mut self, config: KubernetesDiscoveryConfig) -> Self {
+        self.kubernetes_discovery = Some(config);
+        self
+    }
+
+    /// Sets the Hazelcast Cloud discovery configuration.
+    ///
+    /// When configured, the client will discover cluster members by querying
+    /// the Hazelcast Cloud coordinator API using the configured discovery token.
+    #[cfg(feature = "cloud")]
+    pub fn cloud_discovery(mut self, config: CloudDiscoveryConfig) -> Self {
+        self.cloud_discovery = Some(config);
+        self
+    }
+
     /// Builds the network configuration.
     pub fn build(self) -> Result<NetworkConfig, ConfigError> {
         let addresses = if self.addresses.is_empty() {
@@ -175,6 +300,16 @@ impl NetworkConfigBuilder {
             heartbeat_interval: self.heartbeat_interval.unwrap_or(DEFAULT_HEARTBEAT_INTERVAL),
             tls,
             ws_url: self.ws_url,
+            #[cfg(feature = "aws")]
+            aws_discovery: self.aws_discovery,
+            #[cfg(feature = "azure")]
+            azure_discovery: self.azure_discovery,
+            #[cfg(feature = "gcp")]
+            gcp_discovery: self.gcp_discovery,
+            #[cfg(feature = "kubernetes")]
+            kubernetes_discovery: self.kubernetes_discovery,
+            #[cfg(feature = "cloud")]
+            cloud_discovery: self.cloud_discovery,
         })
     }
 }
@@ -1685,5 +1820,152 @@ mod tests {
             config.diagnostics().slow_operation_threshold(),
             DEFAULT_SLOW_OPERATION_THRESHOLD
         );
+    }
+
+    #[cfg(feature = "aws")]
+    #[test]
+    fn test_network_config_aws_discovery() {
+        use crate::connection::AwsDiscoveryConfig;
+
+        let aws_config = AwsDiscoveryConfig::new("us-west-2")
+            .with_tag("hazelcast:cluster", "production")
+            .with_port(5702);
+
+        let config = NetworkConfigBuilder::new()
+            .aws_discovery(aws_config)
+            .build()
+            .unwrap();
+
+        assert!(config.aws_discovery().is_some());
+        let aws = config.aws_discovery().unwrap();
+        assert_eq!(aws.region(), "us-west-2");
+        assert_eq!(aws.port(), 5702);
+    }
+
+    #[cfg(feature = "azure")]
+    #[test]
+    fn test_network_config_azure_discovery() {
+        use crate::connection::AzureDiscoveryConfig;
+
+        let azure_config = AzureDiscoveryConfig::new("sub-123", "rg-hazelcast")
+            .with_tag("env", "prod")
+            .with_port(5703);
+
+        let config = NetworkConfigBuilder::new()
+            .azure_discovery(azure_config)
+            .build()
+            .unwrap();
+
+        assert!(config.azure_discovery().is_some());
+        let azure = config.azure_discovery().unwrap();
+        assert_eq!(azure.subscription_id, "sub-123");
+        assert_eq!(azure.resource_group, "rg-hazelcast");
+        assert_eq!(azure.port, 5703);
+    }
+
+    #[cfg(feature = "gcp")]
+    #[test]
+    fn test_network_config_gcp_discovery() {
+        use crate::connection::GcpDiscoveryConfig;
+
+        let gcp_config = GcpDiscoveryConfig::new("my-project")
+            .with_zone("us-central1-a")
+            .with_label("hazelcast", "cluster-1")
+            .with_port(5704);
+
+        let config = NetworkConfigBuilder::new()
+            .gcp_discovery(gcp_config)
+            .build()
+            .unwrap();
+
+        assert!(config.gcp_discovery().is_some());
+        let gcp = config.gcp_discovery().unwrap();
+        assert_eq!(gcp.project_id, "my-project");
+        assert_eq!(gcp.zone, Some("us-central1-a".to_string()));
+        assert_eq!(gcp.port, 5704);
+    }
+
+    #[cfg(feature = "kubernetes")]
+    #[test]
+    fn test_network_config_kubernetes_discovery() {
+        use crate::connection::KubernetesDiscoveryConfig;
+
+        let k8s_config = KubernetesDiscoveryConfig::new()
+            .namespace("hazelcast")
+            .service_name("hz-service")
+            .pod_label("app", "hazelcast")
+            .port(5705);
+
+        let config = NetworkConfigBuilder::new()
+            .kubernetes_discovery(k8s_config)
+            .build()
+            .unwrap();
+
+        assert!(config.kubernetes_discovery().is_some());
+        let k8s = config.kubernetes_discovery().unwrap();
+        assert_eq!(k8s.namespace, Some("hazelcast".to_string()));
+        assert_eq!(k8s.service_name, Some("hz-service".to_string()));
+        assert_eq!(k8s.port, Some(5705));
+    }
+
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn test_network_config_cloud_discovery() {
+        use crate::connection::CloudDiscoveryConfig;
+
+        let cloud_config = CloudDiscoveryConfig::new("my-discovery-token")
+            .with_timeout(30);
+
+        let config = NetworkConfigBuilder::new()
+            .cloud_discovery(cloud_config)
+            .build()
+            .unwrap();
+
+        assert!(config.cloud_discovery().is_some());
+        let cloud = config.cloud_discovery().unwrap();
+        assert_eq!(cloud.discovery_token(), "my-discovery-token");
+        assert_eq!(cloud.timeout_secs(), 30);
+    }
+
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn test_client_config_with_cloud_discovery() {
+        use crate::connection::CloudDiscoveryConfig;
+
+        let config = ClientConfig::builder()
+            .cluster_name("cloud-cluster")
+            .network(|n| {
+                n.cloud_discovery(
+                    CloudDiscoveryConfig::new("token-abc123")
+                        .with_coordinator_url("https://custom.hazelcast.cloud"),
+                )
+            })
+            .build()
+            .unwrap();
+
+        assert!(config.network().cloud_discovery().is_some());
+        let cloud = config.network().cloud_discovery().unwrap();
+        assert_eq!(cloud.discovery_token(), "token-abc123");
+        assert_eq!(cloud.coordinator_url(), "https://custom.hazelcast.cloud");
+    }
+
+    #[test]
+    fn test_network_config_no_discovery_by_default() {
+        let config = NetworkConfigBuilder::new().build().unwrap();
+
+        #[cfg(feature = "aws")]
+        assert!(config.aws_discovery().is_none());
+
+        #[cfg(feature = "azure")]
+        assert!(config.azure_discovery().is_none());
+
+        #[cfg(feature = "gcp")]
+        assert!(config.gcp_discovery().is_none());
+
+        #[cfg(feature = "kubernetes")]
+        assert!(config.kubernetes_discovery().is_none());
+
+        #[cfg(feature = "cloud")]
+        assert!(config.cloud_discovery().is_none());
     }
 }
