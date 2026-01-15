@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::cache::NearCacheConfig;
+use crate::deployment::UserCodeDeploymentConfig;
 use crate::listener::Member;
 
 /// Configuration for a WAN replication target cluster.
@@ -1509,6 +1510,7 @@ pub struct ClientConfig {
     near_caches: Vec<NearCacheConfig>,
     quorum_configs: Vec<QuorumConfig>,
     diagnostics: DiagnosticsConfig,
+    user_code_deployment: Option<UserCodeDeploymentConfig>,
 }
 
 impl ClientConfig {
@@ -1561,6 +1563,11 @@ impl ClientConfig {
     pub fn diagnostics(&self) -> &DiagnosticsConfig {
         &self.diagnostics
     }
+
+    /// Returns the user code deployment configuration, if set.
+    pub fn user_code_deployment(&self) -> Option<&UserCodeDeploymentConfig> {
+        self.user_code_deployment.as_ref()
+    }
 }
 
 impl Default for ClientConfig {
@@ -1579,6 +1586,7 @@ pub struct ClientConfigBuilder {
     near_caches: Vec<NearCacheConfig>,
     quorum_configs: Vec<QuorumConfig>,
     diagnostics: DiagnosticsConfigBuilder,
+    user_code_deployment: Option<UserCodeDeploymentConfig>,
 }
 
 impl ClientConfigBuilder {
@@ -1695,6 +1703,35 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the user code deployment configuration.
+    ///
+    /// User code deployment allows deploying Java classes to the cluster
+    /// for server-side execution (entry processors, aggregators, etc.).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::deployment::{UserCodeDeploymentConfig, ClassDefinition};
+    ///
+    /// let processor = ClassDefinition::new(
+    ///     "com.example.IncrementProcessor",
+    ///     bytecode,
+    /// );
+    ///
+    /// let ucd = UserCodeDeploymentConfig::builder()
+    ///     .enabled(true)
+    ///     .add_class(processor)
+    ///     .build()?;
+    ///
+    /// let config = ClientConfigBuilder::new()
+    ///     .user_code_deployment(ucd)
+    ///     .build()?;
+    /// ```
+    pub fn user_code_deployment(mut self, config: UserCodeDeploymentConfig) -> Self {
+        self.user_code_deployment = Some(config);
+        self
+    }
+
     /// Builds the client configuration, returning an error if validation fails.
     pub fn build(self) -> Result<ClientConfig, ConfigError> {
         let cluster_name = self
@@ -1718,6 +1755,7 @@ impl ClientConfigBuilder {
             near_caches: self.near_caches,
             quorum_configs: self.quorum_configs,
             diagnostics,
+            user_code_deployment: self.user_code_deployment,
         })
     }
 }
@@ -3158,6 +3196,38 @@ mod tests {
     fn test_quorum_type_is_copy() {
         fn assert_copy<T: Copy>() {}
         assert_copy::<QuorumType>();
+    }
+
+    #[test]
+    fn test_client_config_with_user_code_deployment() {
+        use crate::deployment::{ClassDefinition, UserCodeDeploymentConfig};
+
+        // Create mock bytecode with valid Java class magic number
+        let mut bytecode = vec![0xCA, 0xFE, 0xBA, 0xBE];
+        bytecode.extend_from_slice(&[0x00, 0x00, 0x00, 0x34, 0x00, 0x01]);
+
+        let class_def = ClassDefinition::new("com.example.MyProcessor", bytecode);
+        let ucd_config = UserCodeDeploymentConfig::builder()
+            .enabled(true)
+            .add_class(class_def)
+            .build()
+            .unwrap();
+
+        let config = ClientConfig::builder()
+            .user_code_deployment(ucd_config)
+            .build()
+            .unwrap();
+
+        assert!(config.user_code_deployment().is_some());
+        let ucd = config.user_code_deployment().unwrap();
+        assert!(ucd.enabled());
+        assert_eq!(ucd.class_definitions().len(), 1);
+    }
+
+    #[test]
+    fn test_client_config_default_no_user_code_deployment() {
+        let config = ClientConfig::default();
+        assert!(config.user_code_deployment().is_none());
     }
 
     #[test]

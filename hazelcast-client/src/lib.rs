@@ -6,6 +6,7 @@ pub mod cache;
 mod client;
 pub mod config;
 pub mod connection;
+pub mod deployment;
 pub mod diagnostics;
 pub mod executor;
 pub mod jet;
@@ -66,6 +67,10 @@ pub use transaction::{
     XA_RBOTHER, XA_RBPROTO, XA_RBTIMEOUT, XA_RBTRANSIENT, XA_RBEND,
 };
 pub use jet::{JetService, Job, JobConfig, JobConfigBuilder, JobStatus, Pipeline, PipelineBuilder};
+pub use deployment::{
+    ClassDefinition, ClassDefinitionBuilder, ClassProviderMode, ResourceEntry,
+    UserCodeDeploymentConfig, UserCodeDeploymentConfigBuilder,
+};
 pub use security::{
     AuthError, AuthResponse, Authenticator, Credentials, CustomCredentials, DefaultAuthenticator,
 };
