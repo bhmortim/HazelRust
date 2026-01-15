@@ -160,3 +160,12 @@ pub const MULTI_MAP_CONTAINS_ENTRY: i32 = 0x020B00;
 
 /// MultiMap remove entry request.
 pub const MULTI_MAP_REMOVE_ENTRY: i32 = 0x020C00;
+
+/// Topic publish request.
+pub const TOPIC_PUBLISH: i32 = 0x040100;
+
+/// Topic add message listener request.
+pub const TOPIC_ADD_MESSAGE_LISTENER: i32 = 0x040200;
+
+/// Topic remove message listener request.
+pub const TOPIC_REMOVE_MESSAGE_LISTENER: i32 = 0x040300;

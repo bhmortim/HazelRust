@@ -5,6 +5,7 @@
 mod client;
 pub mod config;
 pub mod connection;
+pub mod listener;
 pub mod proxy;
 
 pub use client::HazelcastClient;
@@ -17,4 +18,5 @@ pub use connection::{
     StaticAddressDiscovery,
 };
 pub use hazelcast_core as core;
-pub use proxy::{IList, IMap, IQueue, ISet, MultiMap};
+pub use listener::{ListenerId, ListenerRegistration, ListenerStats};
+pub use proxy::{IList, IMap, IQueue, ISet, ITopic, MultiMap, TopicMessage};

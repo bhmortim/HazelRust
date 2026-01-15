@@ -6,7 +6,7 @@ use hazelcast_core::{Deserializable, Result, Serializable};
 
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
-use crate::proxy::{IList, IMap, IQueue, ISet, MultiMap};
+use crate::proxy::{IList, IMap, IQueue, ISet, ITopic, MultiMap};
 
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
@@ -144,6 +144,21 @@ impl HazelcastClient {
         V: Serializable + Deserializable + Send + Sync,
     {
         MultiMap::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed topic proxy for the given name.
+    ///
+    /// The topic proxy allows pub/sub messaging on the cluster.
+    /// The actual topic is created on the cluster lazily when first accessed.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `T`: The message type, must implement `Serializable`, `Deserializable`, `Send`, `Sync`, and `'static`
+    pub fn get_topic<T>(&self, name: &str) -> ITopic<T>
+    where
+        T: Serializable + Deserializable + Send + Sync + 'static,
+    {
+        ITopic::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.
