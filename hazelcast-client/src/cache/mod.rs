@@ -3,6 +3,7 @@
 mod near_cache;
 
 pub use near_cache::{NearCache, NearCacheStats};
+pub use self::{EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder};
 
 use std::time::Duration;
 

@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::BytesMut;
@@ -21,6 +21,7 @@ use hazelcast_core::{
     compute_partition_hash, ClientMessage, Deserializable, HazelcastError, Result, Serializable,
 };
 
+use crate::cache::{NearCache, NearCacheConfig, NearCacheStats};
 use crate::connection::ConnectionManager;
 use crate::listener::{
     EntryEvent, EntryEventType, EntryListenerConfig, ListenerId, ListenerRegistration,
@@ -31,11 +32,13 @@ use crate::query::Predicate;
 /// A distributed map proxy for performing key-value operations on a Hazelcast cluster.
 ///
 /// `IMap` provides async CRUD operations with automatic serialization and partition routing.
+/// Optionally supports client-side near-caching for improved read performance.
 #[derive(Debug)]
 pub struct IMap<K, V> {
     name: String,
     connection_manager: Arc<ConnectionManager>,
     listener_stats: Arc<ListenerStats>,
+    near_cache: Option<Arc<Mutex<NearCache<Vec<u8>, Vec<u8>>>>>,
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
@@ -46,6 +49,22 @@ impl<K, V> IMap<K, V> {
             name,
             connection_manager,
             listener_stats: Arc::new(ListenerStats::new()),
+            near_cache: None,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Creates a new map proxy with near-cache enabled.
+    pub(crate) fn new_with_near_cache(
+        name: String,
+        connection_manager: Arc<ConnectionManager>,
+        config: NearCacheConfig,
+    ) -> Self {
+        Self {
+            name,
+            connection_manager,
+            listener_stats: Arc::new(ListenerStats::new()),
+            near_cache: Some(Arc::new(Mutex::new(NearCache::new(config)))),
             _phantom: PhantomData,
         }
     }
@@ -53,6 +72,11 @@ impl<K, V> IMap<K, V> {
     /// Returns the name of this map.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns `true` if this map has near-cache enabled.
+    pub fn has_near_cache(&self) -> bool {
+        self.near_cache.is_some()
     }
 }
 
@@ -63,9 +87,22 @@ where
 {
     /// Retrieves the value associated with the given key.
     ///
+    /// If near-cache is enabled, checks the local cache first. On a cache miss,
+    /// fetches from the cluster and populates the near-cache.
+    ///
     /// Returns `None` if the key does not exist in the map.
     pub async fn get(&self, key: &K) -> Result<Option<V>> {
         let key_data = Self::serialize_value(key)?;
+
+        // Check near-cache first
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            if let Some(value_data) = cache_guard.get(&key_data) {
+                let mut input = ObjectDataInput::new(&value_data);
+                return V::deserialize(&mut input).map(Some);
+            }
+        }
+
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_GET, partition_id);
@@ -73,15 +110,36 @@ where
         message.add_frame(Self::data_frame(&key_data));
 
         let response = self.invoke(message).await?;
-        Self::decode_nullable_response(&response)
+        let result: Option<V> = Self::decode_nullable_response(&response)?;
+
+        // Populate near-cache on successful remote fetch
+        if let Some(ref value) = result {
+            if let Some(ref cache) = self.near_cache {
+                let value_data = Self::serialize_value(value)?;
+                let mut cache_guard = cache.lock().unwrap();
+                cache_guard.put(key_data, value_data);
+            }
+        }
+
+        Ok(result)
     }
 
     /// Associates the specified value with the specified key.
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the update to the cluster.
     ///
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn put(&self, key: K, value: V) -> Result<Option<V>> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
+
+        // Invalidate near-cache before remote operation
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
@@ -97,9 +155,19 @@ where
 
     /// Removes the mapping for a key from this map if it is present.
     ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the remove to the cluster.
+    ///
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn remove(&self, key: &K) -> Result<Option<V>> {
         let key_data = Self::serialize_value(key)?;
+
+        // Invalidate near-cache before remote operation
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
@@ -134,7 +202,15 @@ where
     }
 
     /// Removes all entries from this map.
+    ///
+    /// If near-cache is enabled, clears the local cache as well.
     pub async fn clear(&self) -> Result<()> {
+        // Clear near-cache before remote operation
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.clear();
+        }
+
         let message = ClientMessage::create_for_encode(MAP_CLEAR, PARTITION_ID_ANY);
         let mut msg = message;
         msg.add_frame(Self::string_frame(&self.name));
@@ -500,6 +576,36 @@ where
         &self.listener_stats
     }
 
+    /// Returns the near-cache statistics, if near-cache is enabled.
+    ///
+    /// Returns `None` if this map does not have near-cache configured.
+    pub fn near_cache_stats(&self) -> Option<NearCacheStats> {
+        self.near_cache
+            .as_ref()
+            .map(|cache| cache.lock().unwrap().stats())
+    }
+
+    /// Invalidates a specific entry in the near-cache.
+    ///
+    /// This is useful for manual cache management or when receiving
+    /// invalidation events from the cluster.
+    pub fn invalidate_near_cache_entry(&self, key: &K) -> Result<()> {
+        if let Some(ref cache) = self.near_cache {
+            let key_data = Self::serialize_value(key)?;
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+        Ok(())
+    }
+
+    /// Clears all entries from the near-cache without affecting the remote map.
+    pub fn clear_near_cache(&self) {
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.clear();
+        }
+    }
+
     /// Returns all values matching the given predicate.
     ///
     /// # Example
@@ -638,6 +744,7 @@ impl<K, V> Clone for IMap<K, V> {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
             listener_stats: Arc::clone(&self.listener_stats),
+            near_cache: self.near_cache.as_ref().map(Arc::clone),
             _phantom: PhantomData,
         }
     }
@@ -646,11 +753,118 @@ impl<K, V> Clone for IMap<K, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::EvictionPolicy;
+    use std::time::Duration;
 
     #[test]
     fn test_imap_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<IMap<String, String>>();
+    }
+
+    #[test]
+    fn test_imap_has_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = ConnectionManager::new(vec![addr]);
+
+        let map_without: IMap<String, String> = IMap::new("test".to_string(), Arc::new(cm.clone()));
+        assert!(!map_without.has_near_cache());
+        assert!(map_without.near_cache_stats().is_none());
+
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map_with: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), Arc::new(cm), config);
+        assert!(map_with.has_near_cache());
+        assert!(map_with.near_cache_stats().is_some());
+    }
+
+    #[test]
+    fn test_near_cache_stats_initial() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        let stats = map.near_cache_stats().unwrap();
+        assert_eq!(stats.hits(), 0);
+        assert_eq!(stats.misses(), 0);
+        assert_eq!(stats.evictions(), 0);
+        assert_eq!(stats.expirations(), 0);
+    }
+
+    #[test]
+    fn test_near_cache_clone_shares_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map1: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map2 = map1.clone();
+
+        // Both should share the same near-cache
+        assert!(map1.has_near_cache());
+        assert!(map2.has_near_cache());
+
+        // Clearing one should affect the other (shared Arc)
+        map1.clear_near_cache();
+        let stats1 = map1.near_cache_stats().unwrap();
+        let stats2 = map2.near_cache_stats().unwrap();
+        assert_eq!(stats1.hits(), stats2.hits());
+    }
+
+    #[test]
+    fn test_invalidate_near_cache_entry() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        // Should not error even if key doesn't exist
+        assert!(map.invalidate_near_cache_entry(&"key1".to_string()).is_ok());
+    }
+
+    #[test]
+    fn test_clear_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        // Should not panic
+        map.clear_near_cache();
+    }
+
+    #[test]
+    fn test_near_cache_config_builder_integration() {
+        let config = NearCacheConfig::builder("user-*")
+            .max_size(1000)
+            .time_to_live(Duration::from_secs(60))
+            .eviction_policy(EvictionPolicy::Lfu)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.name(), "user-*");
+        assert_eq!(config.max_size(), 1000);
+        assert!(config.matches("user-map"));
+        assert!(!config.matches("other-map"));
     }
 
     #[test]
