@@ -6,6 +6,7 @@ use hazelcast_core::{Deserializable, Result, Serializable};
 
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
+use crate::listener::{Member, MemberEvent};
 use crate::proxy::{AtomicLong, IList, IMap, IQueue, ISet, ITopic, MultiMap};
 
 /// The main entry point for connecting to a Hazelcast cluster.
@@ -184,6 +185,25 @@ impl HazelcastClient {
     /// Returns the number of active connections to cluster members.
     pub async fn connection_count(&self) -> usize {
         self.connection_manager.connection_count().await
+    }
+
+    /// Returns the current list of known cluster members.
+    ///
+    /// This list is updated as members join or leave the cluster.
+    pub async fn members(&self) -> Vec<Member> {
+        self.connection_manager.members().await
+    }
+
+    /// Returns the number of known cluster members.
+    pub async fn member_count(&self) -> usize {
+        self.connection_manager.member_count().await
+    }
+
+    /// Subscribes to cluster membership events.
+    ///
+    /// The returned receiver will emit events when members join or leave the cluster.
+    pub fn subscribe_membership(&self) -> tokio::sync::broadcast::Receiver<MemberEvent> {
+        self.connection_manager.subscribe_membership()
     }
 
     /// Shuts down the client and closes all connections.

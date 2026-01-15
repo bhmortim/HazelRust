@@ -7,12 +7,14 @@ use std::time::Duration;
 
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::{interval, timeout};
+use uuid::Uuid;
 
 use hazelcast_core::{HazelcastError, Result};
 
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
 use crate::config::ClientConfig;
+use crate::listener::{Member, MemberEvent, MemberEventType};
 
 /// Events emitted during connection lifecycle.
 #[derive(Debug, Clone)]
@@ -64,7 +66,9 @@ pub struct ConnectionManager {
     config: Arc<ClientConfig>,
     discovery: Arc<dyn ClusterDiscovery>,
     connections: Arc<RwLock<HashMap<SocketAddr, Connection>>>,
+    members: Arc<RwLock<HashMap<Uuid, Member>>>,
     event_sender: broadcast::Sender<ConnectionEvent>,
+    membership_sender: broadcast::Sender<MemberEvent>,
     shutdown: tokio::sync::watch::Sender<bool>,
 }
 
@@ -72,13 +76,16 @@ impl ConnectionManager {
     /// Creates a new connection manager with the given configuration and discovery.
     pub fn new(config: ClientConfig, discovery: impl ClusterDiscovery + 'static) -> Self {
         let (event_sender, _) = broadcast::channel(64);
+        let (membership_sender, _) = broadcast::channel(64);
         let (shutdown, _) = tokio::sync::watch::channel(false);
 
         Self {
             config: Arc::new(config),
             discovery: Arc::new(discovery),
             connections: Arc::new(RwLock::new(HashMap::new())),
+            members: Arc::new(RwLock::new(HashMap::new())),
             event_sender,
+            membership_sender,
             shutdown,
         }
     }
@@ -94,6 +101,66 @@ impl ConnectionManager {
     /// Subscribes to connection lifecycle events.
     pub fn subscribe(&self) -> broadcast::Receiver<ConnectionEvent> {
         self.event_sender.subscribe()
+    }
+
+    /// Subscribes to cluster membership events.
+    pub fn subscribe_membership(&self) -> broadcast::Receiver<MemberEvent> {
+        self.membership_sender.subscribe()
+    }
+
+    /// Returns the current list of known cluster members.
+    pub async fn members(&self) -> Vec<Member> {
+        self.members.read().await.values().cloned().collect()
+    }
+
+    /// Returns a specific member by UUID, if known.
+    pub async fn get_member(&self, uuid: &Uuid) -> Option<Member> {
+        self.members.read().await.get(uuid).cloned()
+    }
+
+    /// Handles a member added event from the cluster.
+    pub async fn handle_member_added(&self, member: Member) {
+        let uuid = member.uuid();
+        let event = MemberEvent::member_added(member.clone());
+
+        self.members.write().await.insert(uuid, member.clone());
+
+        let _ = self.membership_sender.send(event);
+        tracing::info!(
+            uuid = %uuid,
+            address = %member.address(),
+            "cluster member added"
+        );
+    }
+
+    /// Handles a member removed event from the cluster.
+    pub async fn handle_member_removed(&self, member_uuid: Uuid) {
+        if let Some(member) = self.members.write().await.remove(&member_uuid) {
+            let event = MemberEvent::member_removed(member.clone());
+            let _ = self.membership_sender.send(event);
+            tracing::info!(
+                uuid = %member_uuid,
+                address = %member.address(),
+                "cluster member removed"
+            );
+        } else {
+            tracing::warn!(uuid = %member_uuid, "received removal for unknown member");
+        }
+    }
+
+    /// Updates the full member list from initial cluster state.
+    pub async fn set_initial_members(&self, members: Vec<Member>) {
+        let mut member_map = self.members.write().await;
+        member_map.clear();
+
+        for member in members {
+            let uuid = member.uuid();
+            let event = MemberEvent::member_added(member.clone());
+            member_map.insert(uuid, member);
+            let _ = self.membership_sender.send(event);
+        }
+
+        tracing::info!(count = member_map.len(), "initialized cluster member list");
     }
 
     /// Starts the connection manager, establishing initial connections.
@@ -255,6 +322,11 @@ impl ConnectionManager {
     /// Returns the number of active connections.
     pub async fn connection_count(&self) -> usize {
         self.connections.read().await.len()
+    }
+
+    /// Returns the number of known cluster members.
+    pub async fn member_count(&self) -> usize {
+        self.members.read().await.len()
     }
 
     /// Returns a list of connected addresses.
@@ -629,5 +701,117 @@ mod tests {
     fn test_connection_manager_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<ConnectionManager>();
+    }
+
+    #[tokio::test]
+    async fn test_member_tracking() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        assert_eq!(manager.member_count().await, 0);
+
+        let member = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        manager.handle_member_added(member.clone()).await;
+
+        assert_eq!(manager.member_count().await, 1);
+        let members = manager.members().await;
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].uuid(), member.uuid());
+    }
+
+    #[tokio::test]
+    async fn test_member_removal() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let member = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        let uuid = member.uuid();
+
+        manager.handle_member_added(member).await;
+        assert_eq!(manager.member_count().await, 1);
+
+        manager.handle_member_removed(uuid).await;
+        assert_eq!(manager.member_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_membership_events_broadcast() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let mut rx = manager.subscribe_membership();
+
+        let member = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        let uuid = member.uuid();
+
+        manager.handle_member_added(member).await;
+
+        let event = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        match event.event_type {
+            crate::listener::MemberEventType::Added => {
+                assert_eq!(event.member.uuid(), uuid);
+            }
+            _ => panic!("expected Added event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_initial_members_set() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let members = vec![
+            crate::listener::Member::new(
+                uuid::Uuid::new_v4(),
+                "127.0.0.1:5701".parse().unwrap(),
+            ),
+            crate::listener::Member::new(
+                uuid::Uuid::new_v4(),
+                "127.0.0.1:5702".parse().unwrap(),
+            ),
+        ];
+
+        manager.set_initial_members(members).await;
+
+        assert_eq!(manager.member_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_member_by_uuid() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let member = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        let uuid = member.uuid();
+
+        manager.handle_member_added(member.clone()).await;
+
+        let found = manager.get_member(&uuid).await;
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().uuid(), uuid);
+
+        let not_found = manager.get_member(&uuid::Uuid::new_v4()).await;
+        assert!(not_found.is_none());
     }
 }
