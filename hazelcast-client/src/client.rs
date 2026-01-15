@@ -6,6 +6,7 @@ use hazelcast_core::{Deserializable, Result, Serializable};
 
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
+use crate::executor::ExecutorService;
 use crate::listener::{Member, MemberEvent};
 use crate::proxy::{
     AtomicLong, CountDownLatch, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic,
@@ -282,6 +283,22 @@ impl HazelcastClient {
     /// - Coordinating startup sequences in distributed systems
     pub fn get_countdown_latch(&self, name: &str) -> CountDownLatch {
         CountDownLatch::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed executor service proxy for the given name.
+    ///
+    /// The executor service allows submitting callable tasks for execution
+    /// on remote cluster members.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let executor = client.get_executor_service("my-executor");
+    /// let future = executor.submit(&my_task).await?;
+    /// let result = future.get().await?;
+    /// ```
+    pub fn get_executor_service(&self, name: &str) -> ExecutorService {
+        ExecutorService::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the SQL service for executing SQL queries.

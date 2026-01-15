@@ -3,6 +3,10 @@
 //! This module provides types for submitting tasks to Hazelcast cluster members
 //! for remote execution.
 
+mod service;
+
+pub use service::ExecutorFuture;
+
 use std::marker::PhantomData;
 use std::sync::Arc;
 
