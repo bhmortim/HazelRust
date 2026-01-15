@@ -310,3 +310,12 @@ pub const CP_COUNTDOWN_LATCH_AWAIT: i32 = 0x0B0300;
 
 /// CP CountDownLatch get count request.
 pub const CP_COUNTDOWN_LATCH_GET_COUNT: i32 = 0x0B0400;
+
+/// SQL execute request.
+pub const SQL_EXECUTE: i32 = 0x210100;
+
+/// SQL fetch request.
+pub const SQL_FETCH: i32 = 0x210200;
+
+/// SQL close request.
+pub const SQL_CLOSE: i32 = 0x210300;

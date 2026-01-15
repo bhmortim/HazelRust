@@ -7,6 +7,7 @@ pub mod config;
 pub mod connection;
 pub mod listener;
 pub mod proxy;
+pub mod sql;
 
 pub use client::HazelcastClient;
 pub use config::{
@@ -20,3 +21,4 @@ pub use connection::{
 pub use hazelcast_core as core;
 pub use listener::{ListenerId, ListenerRegistration, ListenerStats};
 pub use proxy::{IList, IMap, IQueue, ISet, ITopic, MultiMap, TopicMessage};
+pub use sql::{SqlColumnMetadata, SqlColumnType, SqlRow, SqlRowMetadata, SqlStatement, SqlValue};
