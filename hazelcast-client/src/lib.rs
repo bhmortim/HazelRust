@@ -2,9 +2,12 @@
 
 #![warn(missing_docs)]
 
+mod client;
 pub mod config;
 pub mod connection;
+pub mod proxy;
 
+pub use client::HazelcastClient;
 pub use config::{
     ClientConfig, ClientConfigBuilder, ConfigError, NetworkConfig, NetworkConfigBuilder,
     RetryConfig, RetryConfigBuilder, SecurityConfig, SecurityConfigBuilder,
@@ -14,3 +17,4 @@ pub use connection::{
     StaticAddressDiscovery,
 };
 pub use hazelcast_core as core;
+pub use proxy::IMap;
