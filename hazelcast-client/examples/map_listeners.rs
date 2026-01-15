@@ -1,0 +1,90 @@
+//! Example: IMap entry listeners
+//!
+//! Demonstrates how to subscribe to map entry events (add, update, remove, evict).
+//!
+//! Run with: `cargo run --example map_listeners`
+
+use hazelcast_client::{Client, ClientConfig};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ClientConfig::new()
+        .cluster_name("dev")
+        .address("127.0.0.1:5701");
+
+    let client = Client::new(config).await?;
+    let map = client.get_map::<String, String>("listener-demo").await?;
+
+    // Track event counts
+    let add_count = Arc::new(AtomicUsize::new(0));
+    let update_count = Arc::new(AtomicUsize::new(0));
+    let remove_count = Arc::new(AtomicUsize::new(0));
+
+    let add_counter = add_count.clone();
+    let update_counter = update_count.clone();
+    let remove_counter = remove_count.clone();
+
+    // Add entry listener with value included
+    let listener_id = map
+        .add_entry_listener(
+            move |event| {
+                match event.event_type.as_str() {
+                    "ADDED" => {
+                        add_counter.fetch_add(1, Ordering::SeqCst);
+                        println!(
+                            "[ADDED] {} -> {}",
+                            event.key,
+                            event.value.as_deref().unwrap_or("N/A")
+                        );
+                    }
+                    "UPDATED" => {
+                        update_counter.fetch_add(1, Ordering::SeqCst);
+                        println!(
+                            "[UPDATED] {} -> {} (was: {})",
+                            event.key,
+                            event.value.as_deref().unwrap_or("N/A"),
+                            event.old_value.as_deref().unwrap_or("N/A")
+                        );
+                    }
+                    "REMOVED" => {
+                        remove_counter.fetch_add(1, Ordering::SeqCst);
+                        println!("[REMOVED] {}", event.key);
+                    }
+                    "EVICTED" => {
+                        println!("[EVICTED] {}", event.key);
+                    }
+                    _ => {}
+                }
+            },
+            true, // include_value
+        )
+        .await?;
+
+    println!("Listener registered: {}", listener_id);
+
+    // Perform operations that trigger events
+    println!("\n--- Performing map operations ---\n");
+
+    map.put("user:1".into(), "Alice".into()).await?;
+    map.put("user:2".into(), "Bob".into()).await?;
+    map.put("user:1".into(), "Alice Smith".into()).await?; // update
+    map.remove(&"user:2".into()).await?;
+
+    // Allow time for events to arrive
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    println!("\n--- Event Statistics ---");
+    println!("Added:   {}", add_count.load(Ordering::SeqCst));
+    println!("Updated: {}", update_count.load(Ordering::SeqCst));
+    println!("Removed: {}", remove_count.load(Ordering::SeqCst));
+
+    // Clean up
+    map.remove_entry_listener(listener_id).await?;
+    map.clear().await?;
+    client.shutdown().await?;
+
+    Ok(())
+}
