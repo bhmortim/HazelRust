@@ -1501,6 +1501,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_map_permission_denied_add_index() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let index_config = IndexConfig::builder()
+            .name("test-idx")
+            .index_type(IndexType::Hash)
+            .add_attribute("field")
+            .build();
+
+        let result = map.add_index(index_config).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
     async fn test_map_quorum_not_present_blocks_operations() {
         use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
         use crate::connection::ConnectionManager;
@@ -1899,6 +1926,60 @@ mod tests {
 
         assert_eq!(config.name(), Some("my-index"));
         assert_eq!(config.attributes().len(), 3);
+    }
+
+    #[test]
+    fn test_index_config_for_predicate_query_optimization() {
+        let sorted_config = IndexConfig::builder()
+            .name("age-sorted-idx")
+            .index_type(IndexType::Sorted)
+            .add_attribute("age")
+            .build();
+
+        assert_eq!(sorted_config.name(), Some("age-sorted-idx"));
+        assert_eq!(sorted_config.index_type(), IndexType::Sorted);
+        assert_eq!(sorted_config.attributes(), &["age".to_string()]);
+
+        let hash_config = IndexConfig::builder()
+            .name("email-hash-idx")
+            .index_type(IndexType::Hash)
+            .add_attribute("email")
+            .build();
+
+        assert_eq!(hash_config.name(), Some("email-hash-idx"));
+        assert_eq!(hash_config.index_type(), IndexType::Hash);
+        assert_eq!(hash_config.attributes(), &["email".to_string()]);
+    }
+
+    #[test]
+    fn test_composite_index_for_multi_attribute_queries() {
+        let composite_config = IndexConfig::builder()
+            .name("name-composite-idx")
+            .index_type(IndexType::Sorted)
+            .add_attributes(["lastName", "firstName", "middleName"])
+            .build();
+
+        assert_eq!(composite_config.name(), Some("name-composite-idx"));
+        assert_eq!(composite_config.index_type(), IndexType::Sorted);
+        assert_eq!(composite_config.attributes().len(), 3);
+        assert_eq!(composite_config.attributes()[0], "lastName");
+        assert_eq!(composite_config.attributes()[1], "firstName");
+        assert_eq!(composite_config.attributes()[2], "middleName");
+    }
+
+    #[test]
+    fn test_index_type_selection_for_query_patterns() {
+        let range_query_index = IndexConfig::builder()
+            .index_type(IndexType::Sorted)
+            .add_attribute("timestamp")
+            .build();
+        assert_eq!(range_query_index.index_type(), IndexType::Sorted);
+
+        let equality_query_index = IndexConfig::builder()
+            .index_type(IndexType::Hash)
+            .add_attribute("userId")
+            .build();
+        assert_eq!(equality_query_index.index_type(), IndexType::Hash);
     }
 
     #[test]
