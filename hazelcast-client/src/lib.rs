@@ -25,8 +25,8 @@ pub use executor::{
 };
 pub use config::{
     ClientConfig, ClientConfigBuilder, ConfigError, DiagnosticsConfig, DiagnosticsConfigBuilder,
-    NetworkConfig, NetworkConfigBuilder, RetryConfig, RetryConfigBuilder, SecurityConfig,
-    SecurityConfigBuilder,
+    NetworkConfig, NetworkConfigBuilder, PermissionAction, Permissions, RetryConfig,
+    RetryConfigBuilder, SecurityConfig, SecurityConfigBuilder,
 };
 pub use diagnostics::{OperationTracker, SlowOperationDetector};
 #[cfg(feature = "metrics")]

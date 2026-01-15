@@ -8,6 +8,7 @@ use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::{ClientMessage, HazelcastError, Result};
 
+use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 
 /// A distributed atomic long counter proxy for performing atomic operations on a Hazelcast CP subsystem.
@@ -34,8 +35,20 @@ impl AtomicLong {
         &self.name
     }
 
+    fn check_permission(&self, action: PermissionAction) -> Result<()> {
+        let permissions = self.connection_manager.effective_permissions();
+        if !permissions.is_permitted(action) {
+            return Err(HazelcastError::Authorization(format!(
+                "atomic long '{}' operation denied: requires {:?} permission",
+                self.name, action
+            )));
+        }
+        Ok(())
+    }
+
     /// Gets the current value.
     pub async fn get(&self) -> Result<i64> {
+        self.check_permission(PermissionAction::Read)?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -45,6 +58,7 @@ impl AtomicLong {
 
     /// Sets the value to the given value.
     pub async fn set(&self, value: i64) -> Result<()> {
+        self.check_permission(PermissionAction::Put)?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_SET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(value));
@@ -55,6 +69,7 @@ impl AtomicLong {
 
     /// Atomically sets the value to the given value and returns the old value.
     pub async fn get_and_set(&self, value: i64) -> Result<i64> {
+        self.check_permission(PermissionAction::Put)?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET_AND_SET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(value));
@@ -67,6 +82,7 @@ impl AtomicLong {
     ///
     /// Returns `true` if successful, `false` if the actual value was not equal to the expected value.
     pub async fn compare_and_set(&self, expected: i64, update: i64) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_COMPARE_AND_SET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(expected));
@@ -98,6 +114,7 @@ impl AtomicLong {
 
     /// Atomically adds the given delta to the current value and returns the updated value.
     pub async fn add_and_get(&self, delta: i64) -> Result<i64> {
+        self.check_permission(PermissionAction::Put)?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_ADD_AND_GET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(delta));
@@ -108,6 +125,7 @@ impl AtomicLong {
 
     /// Atomically adds the given delta to the current value and returns the old value.
     pub async fn get_and_add(&self, delta: i64) -> Result<i64> {
+        self.check_permission(PermissionAction::Put)?;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET_AND_ADD);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(delta));
@@ -203,6 +221,48 @@ mod tests {
     fn test_atomic_long_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<AtomicLong>();
+    }
+
+    #[tokio::test]
+    async fn test_atomic_long_permission_denied_get() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let counter = AtomicLong::new("test".to_string(), cm);
+
+        let result = counter.get().await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_atomic_long_permission_denied_set() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let counter = AtomicLong::new("test".to_string(), cm);
+
+        let result = counter.set(42).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
     #[test]

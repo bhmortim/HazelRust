@@ -10,6 +10,7 @@ use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
+use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 
 /// A distributed list proxy for performing indexed operations on a Hazelcast cluster.
@@ -36,6 +37,17 @@ impl<T> IList<T> {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    fn check_permission(&self, action: PermissionAction) -> Result<()> {
+        let permissions = self.connection_manager.effective_permissions();
+        if !permissions.is_permitted(action) {
+            return Err(HazelcastError::Authorization(format!(
+                "list '{}' operation denied: requires {:?} permission",
+                self.name, action
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl<T> IList<T>
@@ -46,6 +58,7 @@ where
     ///
     /// Returns `true` if the element was added successfully.
     pub async fn add(&self, item: T) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_ADD);
@@ -58,6 +71,7 @@ where
 
     /// Inserts the specified element at the specified position in this list.
     pub async fn add_at(&self, index: usize, item: T) -> Result<()> {
+        self.check_permission(PermissionAction::Put)?;
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_ADD_AT);
@@ -73,6 +87,7 @@ where
     ///
     /// Returns `None` if the index is out of bounds.
     pub async fn get(&self, index: usize) -> Result<Option<T>> {
+        self.check_permission(PermissionAction::Read)?;
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_GET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::int_frame(index as i32));
@@ -85,6 +100,7 @@ where
     ///
     /// Returns the element that was removed, or `None` if the index is out of bounds.
     pub async fn remove_at(&self, index: usize) -> Result<Option<T>> {
+        self.check_permission(PermissionAction::Remove)?;
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_REMOVE_AT);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::int_frame(index as i32));
@@ -97,6 +113,7 @@ where
     ///
     /// Returns the element previously at the specified position.
     pub async fn set(&self, index: usize, item: T) -> Result<Option<T>> {
+        self.check_permission(PermissionAction::Put)?;
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_SET);
@@ -110,6 +127,7 @@ where
 
     /// Returns the number of elements in this list.
     pub async fn size(&self) -> Result<usize> {
+        self.check_permission(PermissionAction::Read)?;
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_SIZE);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -119,6 +137,7 @@ where
 
     /// Returns `true` if this list contains the specified element.
     pub async fn contains(&self, item: &T) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
         let item_data = Self::serialize_value(item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_CONTAINS);
@@ -131,6 +150,7 @@ where
 
     /// Removes all elements from this list.
     pub async fn clear(&self) -> Result<()> {
+        self.check_permission(PermissionAction::Remove)?;
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_CLEAR);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -257,6 +277,26 @@ mod tests {
     fn test_ilist_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<IList<String>>();
+    }
+
+    #[tokio::test]
+    async fn test_list_permission_denied_add() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let perms = Permissions::new();
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let list: IList<String> = IList::new("test".to_string(), cm);
+
+        let result = list.add("item".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
     #[test]

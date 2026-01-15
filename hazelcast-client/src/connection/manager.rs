@@ -13,7 +13,7 @@ use hazelcast_core::{HazelcastError, Result};
 
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, Permissions};
 use crate::listener::{LifecycleEvent, Member, MemberEvent, MemberEventType};
 
 /// Events emitted during connection lifecycle.
@@ -363,6 +363,19 @@ impl ConnectionManager {
     /// Checks if connected to the specified address.
     pub async fn is_connected(&self, address: &SocketAddr) -> bool {
         self.connections.read().await.contains_key(address)
+    }
+
+    /// Returns the effective permissions for RBAC enforcement.
+    ///
+    /// If no permissions are configured in the security settings, returns
+    /// `Permissions::all()` for backward compatibility.
+    pub fn effective_permissions(&self) -> Permissions {
+        self.config.security().effective_permissions()
+    }
+
+    /// Returns the configured permissions, if any.
+    pub fn permissions(&self) -> Option<&Permissions> {
+        self.config.security().permissions()
     }
 
     /// Sends a message to a specific address.
@@ -727,6 +740,64 @@ mod tests {
     fn test_connection_manager_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<ConnectionManager>();
+    }
+
+    #[test]
+    fn test_effective_permissions_default() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let perms = manager.effective_permissions();
+        assert!(perms.is_admin());
+        assert!(perms.can_read());
+        assert!(perms.can_put());
+    }
+
+    #[test]
+    fn test_effective_permissions_with_rbac() {
+        use crate::config::{Permissions, PermissionAction};
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let effective = manager.effective_permissions();
+        assert!(effective.can_read());
+        assert!(!effective.can_put());
+        assert!(!effective.can_remove());
+    }
+
+    #[test]
+    fn test_permissions_returns_none_by_default() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        assert!(manager.permissions().is_none());
+    }
+
+    #[test]
+    fn test_permissions_returns_some_when_configured() {
+        use crate::config::{Permissions, PermissionAction};
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        assert!(manager.permissions().is_some());
     }
 
     #[tokio::test]

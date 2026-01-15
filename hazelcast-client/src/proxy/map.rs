@@ -185,6 +185,7 @@ impl Default for IndexConfigBuilder {
         Self::new()
     }
 }
+use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 use crate::listener::{
     EntryEvent, EntryEventType, EntryListenerConfig, ListenerId, ListenerRegistration,
@@ -242,6 +243,17 @@ impl<K, V> IMap<K, V> {
     pub fn has_near_cache(&self) -> bool {
         self.near_cache.is_some()
     }
+
+    fn check_permission(&self, action: PermissionAction) -> hazelcast_core::Result<()> {
+        let permissions = self.connection_manager.effective_permissions();
+        if !permissions.is_permitted(action) {
+            return Err(HazelcastError::Authorization(format!(
+                "map '{}' operation denied: requires {:?} permission",
+                self.name, action
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl<K, V> IMap<K, V>
@@ -256,6 +268,7 @@ where
     ///
     /// Returns `None` if the key does not exist in the map.
     pub async fn get(&self, key: &K) -> Result<Option<V>> {
+        self.check_permission(PermissionAction::Read)?;
         let key_data = Self::serialize_value(key)?;
 
         // Check near-cache first
@@ -295,6 +308,7 @@ where
     ///
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn put(&self, key: K, value: V) -> Result<Option<V>> {
+        self.check_permission(PermissionAction::Put)?;
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
 
@@ -324,6 +338,7 @@ where
     ///
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn remove(&self, key: &K) -> Result<Option<V>> {
+        self.check_permission(PermissionAction::Remove)?;
         let key_data = Self::serialize_value(key)?;
 
         // Invalidate near-cache before remote operation
@@ -344,6 +359,7 @@ where
 
     /// Returns `true` if this map contains a mapping for the specified key.
     pub async fn contains_key(&self, key: &K) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
         let key_data = Self::serialize_value(key)?;
         let partition_id = compute_partition_hash(&key_data);
 
@@ -357,6 +373,7 @@ where
 
     /// Returns the number of key-value mappings in this map.
     pub async fn size(&self) -> Result<usize> {
+        self.check_permission(PermissionAction::Read)?;
         let message = ClientMessage::create_for_encode(MAP_SIZE, PARTITION_ID_ANY);
         let mut msg = message;
         msg.add_frame(Self::string_frame(&self.name));
@@ -369,6 +386,7 @@ where
     ///
     /// If near-cache is enabled, clears the local cache as well.
     pub async fn clear(&self) -> Result<()> {
+        self.check_permission(PermissionAction::Remove)?;
         // Clear near-cache before remote operation
         if let Some(ref cache) = self.near_cache {
             let mut cache_guard = cache.lock().unwrap();
@@ -649,6 +667,7 @@ where
         K: 'static,
         V: 'static,
     {
+        self.check_permission(PermissionAction::Listen)?;
         let mut message =
             ClientMessage::create_for_encode(MAP_ADD_ENTRY_LISTENER, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
@@ -781,6 +800,7 @@ where
     /// let values = map.values_with_predicate(&predicate).await?;
     /// ```
     pub async fn values_with_predicate(&self, predicate: &dyn Predicate) -> Result<Vec<V>> {
+        self.check_permission(PermissionAction::Read)?;
         let predicate_data = predicate.to_predicate_data()?;
 
         let mut message =
@@ -803,6 +823,7 @@ where
     /// let keys = map.keys_with_predicate(&predicate).await?;
     /// ```
     pub async fn keys_with_predicate(&self, predicate: &dyn Predicate) -> Result<Vec<K>> {
+        self.check_permission(PermissionAction::Read)?;
         let predicate_data = predicate.to_predicate_data()?;
 
         let mut message =
@@ -828,6 +849,7 @@ where
     /// }
     /// ```
     pub async fn entries_with_predicate(&self, predicate: &dyn Predicate) -> Result<Vec<(K, V)>> {
+        self.check_permission(PermissionAction::Read)?;
         let predicate_data = predicate.to_predicate_data()?;
 
         let mut message =
@@ -926,6 +948,8 @@ where
     where
         E: EntryProcessor,
     {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_permission(PermissionAction::Put)?;
         let key_data = Self::serialize_value(key)?;
         let processor_data = Self::serialize_value(processor)?;
         let partition_id = compute_partition_hash(&key_data);
@@ -971,6 +995,8 @@ where
         E: EntryProcessor,
         K: Eq + Hash + Clone,
     {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_permission(PermissionAction::Put)?;
         if keys.is_empty() {
             return Ok(EntryProcessorResult::default());
         }
@@ -1021,6 +1047,8 @@ where
         E: EntryProcessor,
         K: Eq + Hash + Clone,
     {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_permission(PermissionAction::Put)?;
         let processor_data = Self::serialize_value(processor)?;
 
         let mut message =
@@ -1074,6 +1102,7 @@ where
     /// map.add_index(composite).await?;
     /// ```
     pub async fn add_index(&self, config: IndexConfig) -> Result<()> {
+        self.check_permission(PermissionAction::Index)?;
         let mut message = ClientMessage::create_for_encode(MAP_ADD_INDEX, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -1129,6 +1158,7 @@ where
         A: Aggregator,
         A::Output: Deserializable,
     {
+        self.check_permission(PermissionAction::Read)?;
         let aggregator_data = aggregator.to_aggregator_data()?;
 
         let mut message = ClientMessage::create_for_encode(MAP_AGGREGATE, PARTITION_ID_ANY);
@@ -1174,6 +1204,7 @@ where
         A: Aggregator,
         A::Output: Deserializable,
     {
+        self.check_permission(PermissionAction::Read)?;
         let aggregator_data = aggregator.to_aggregator_data()?;
         let predicate_data = predicate.to_predicate_data()?;
 
@@ -1217,6 +1248,7 @@ where
         P: Projection,
         P::Output: Deserializable,
     {
+        self.check_permission(PermissionAction::Read)?;
         let projection_data = projection.to_projection_data()?;
 
         let mut message = ClientMessage::create_for_encode(MAP_PROJECT, PARTITION_ID_ANY);
@@ -1267,6 +1299,7 @@ where
         P: Projection,
         P::Output: Deserializable,
     {
+        self.check_permission(PermissionAction::Read)?;
         let projection_data = projection.to_projection_data()?;
         let predicate_data = predicate.to_predicate_data()?;
 
@@ -1394,6 +1427,82 @@ mod tests {
     fn test_imap_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<IMap<String, String>>();
+    }
+
+    #[tokio::test]
+    async fn test_map_permission_denied_read() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.get(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_map_permission_denied_put() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.put("key".to_string(), "value".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_map_permission_denied_remove() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.remove(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_map_permission_allowed_with_all() {
+        use crate::config::ClientConfigBuilder;
+        use crate::connection::ConnectionManager;
+
+        let config = ClientConfigBuilder::new().build().unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        map.check_permission(crate::config::PermissionAction::Read).unwrap();
+        map.check_permission(crate::config::PermissionAction::Put).unwrap();
+        map.check_permission(crate::config::PermissionAction::Remove).unwrap();
     }
 
     #[test]

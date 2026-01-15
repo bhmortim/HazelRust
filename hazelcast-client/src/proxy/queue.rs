@@ -11,6 +11,7 @@ use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
+use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 
 /// A distributed queue proxy for performing FIFO operations on a Hazelcast cluster.
@@ -37,6 +38,17 @@ impl<T> IQueue<T> {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    fn check_permission(&self, action: PermissionAction) -> Result<()> {
+        let permissions = self.connection_manager.effective_permissions();
+        if !permissions.is_permitted(action) {
+            return Err(HazelcastError::Authorization(format!(
+                "queue '{}' operation denied: requires {:?} permission",
+                self.name, action
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl<T> IQueue<T>
@@ -47,6 +59,7 @@ where
     ///
     /// Returns `true` if the element was added successfully.
     pub async fn offer(&self, item: T) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_OFFER);
@@ -60,6 +73,7 @@ where
 
     /// Retrieves and removes the head of this queue, or returns `None` if empty.
     pub async fn poll(&self) -> Result<Option<T>> {
+        self.check_permission(PermissionAction::Remove)?;
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_POLL);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(0)); // timeout: 0 for non-blocking
@@ -73,6 +87,7 @@ where
     ///
     /// Returns `None` if the timeout expires before an element is available.
     pub async fn poll_timeout(&self, timeout: Duration) -> Result<Option<T>> {
+        self.check_permission(PermissionAction::Remove)?;
         let timeout_ms = timeout.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_POLL);
@@ -103,6 +118,7 @@ where
     ///
     /// Returns `None` if the queue is empty.
     pub async fn peek(&self) -> Result<Option<T>> {
+        self.check_permission(PermissionAction::Read)?;
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_PEEK);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -112,6 +128,7 @@ where
 
     /// Returns the number of elements in this queue.
     pub async fn size(&self) -> Result<usize> {
+        self.check_permission(PermissionAction::Read)?;
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_SIZE);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -238,6 +255,49 @@ mod tests {
     fn test_iqueue_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<IQueue<String>>();
+    }
+
+    #[tokio::test]
+    async fn test_queue_permission_denied_offer() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let queue: IQueue<String> = IQueue::new("test".to_string(), cm);
+
+        let result = queue.offer("item".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_queue_permission_denied_poll() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let queue: IQueue<String> = IQueue::new("test".to_string(), cm);
+
+        let result = queue.poll().await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
     #[test]

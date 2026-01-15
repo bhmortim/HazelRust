@@ -10,6 +10,7 @@ use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
+use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 
 /// A distributed set proxy for performing set operations on a Hazelcast cluster.
@@ -36,6 +37,17 @@ impl<T> ISet<T> {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    fn check_permission(&self, action: PermissionAction) -> Result<()> {
+        let permissions = self.connection_manager.effective_permissions();
+        if !permissions.is_permitted(action) {
+            return Err(HazelcastError::Authorization(format!(
+                "set '{}' operation denied: requires {:?} permission",
+                self.name, action
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl<T> ISet<T>
@@ -46,6 +58,7 @@ where
     ///
     /// Returns `true` if the set did not already contain the element.
     pub async fn add(&self, item: T) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(SET_ADD);
@@ -60,6 +73,7 @@ where
     ///
     /// Returns `true` if the set contained the element.
     pub async fn remove(&self, item: &T) -> Result<bool> {
+        self.check_permission(PermissionAction::Remove)?;
         let item_data = Self::serialize_value(item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(SET_REMOVE);
@@ -72,6 +86,7 @@ where
 
     /// Returns `true` if this set contains the specified element.
     pub async fn contains(&self, item: &T) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
         let item_data = Self::serialize_value(item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(SET_CONTAINS);
@@ -84,6 +99,7 @@ where
 
     /// Returns the number of elements in this set.
     pub async fn size(&self) -> Result<usize> {
+        self.check_permission(PermissionAction::Read)?;
         let mut message = ClientMessage::create_for_encode_any_partition(SET_SIZE);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -98,6 +114,7 @@ where
 
     /// Removes all elements from this set.
     pub async fn clear(&self) -> Result<()> {
+        self.check_permission(PermissionAction::Remove)?;
         let mut message = ClientMessage::create_for_encode_any_partition(SET_CLEAR);
         message.add_frame(Self::string_frame(&self.name));
 
@@ -193,6 +210,27 @@ mod tests {
     fn test_iset_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<ISet<String>>();
+    }
+
+    #[tokio::test]
+    async fn test_set_permission_denied_add() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let set: ISet<String> = ISet::new("test".to_string(), cm);
+
+        let result = set.add("item".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
     #[test]

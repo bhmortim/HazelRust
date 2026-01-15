@@ -11,6 +11,7 @@ use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
+use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 use crate::listener::{ListenerId, ListenerRegistration, ListenerStats};
 
@@ -91,6 +92,17 @@ impl<T> ITopic<T> {
     pub fn stats(&self) -> &ListenerStats {
         &self.stats
     }
+
+    fn check_permission(&self, action: PermissionAction) -> Result<()> {
+        let permissions = self.connection_manager.effective_permissions();
+        if !permissions.is_permitted(action) {
+            return Err(HazelcastError::Authorization(format!(
+                "topic '{}' operation denied: requires {:?} permission",
+                self.name, action
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl<T> ITopic<T>
@@ -102,6 +114,7 @@ where
     /// The message is serialized and sent to the cluster, which then
     /// distributes it to all registered listeners.
     pub async fn publish(&self, message: T) -> Result<()> {
+        self.check_permission(PermissionAction::Put)?;
         let message_data = Self::serialize_value(&message)?;
 
         let mut msg = ClientMessage::create_for_encode_any_partition(TOPIC_PUBLISH);
@@ -132,6 +145,7 @@ where
     where
         F: Fn(TopicMessage<T>) + Send + Sync + 'static,
     {
+        self.check_permission(PermissionAction::Listen)?;
         let mut msg = ClientMessage::create_for_encode_any_partition(TOPIC_ADD_MESSAGE_LISTENER);
         msg.add_frame(Self::string_frame(&self.name));
         msg.add_frame(Self::bool_frame(false)); // local_only = false
@@ -298,6 +312,48 @@ mod tests {
     fn test_itopic_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<ITopic<String>>();
+    }
+
+    #[tokio::test]
+    async fn test_topic_permission_denied_publish() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Listen);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let topic: ITopic<String> = ITopic::new("test".to_string(), cm);
+
+        let result = topic.publish("message".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_topic_permission_denied_listen() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let topic: ITopic<String> = ITopic::new("test".to_string(), cm);
+
+        let result = topic.add_message_listener(|_msg| {}).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
     #[test]

@@ -22,9 +22,17 @@ pub enum HazelcastError {
     #[error("timeout error: {0}")]
     Timeout(String),
 
-    /// Authentication/authorization errors.
+    /// Authentication errors (invalid credentials, failed login).
     #[error("authentication error: {0}")]
     Authentication(String),
+
+    /// Authorization errors (insufficient permissions for operation).
+    #[error("authorization error: {0}")]
+    Authorization(String),
+
+    /// Configuration errors (invalid settings).
+    #[error("configuration error: {0}")]
+    Configuration(String),
 
     /// I/O errors from the standard library.
     #[error("I/O error: {0}")]
@@ -77,6 +85,24 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "authentication error: invalid credentials"
+        );
+    }
+
+    #[test]
+    fn test_authorization_error_display() {
+        let err = HazelcastError::Authorization("missing read permission".to_string());
+        assert_eq!(
+            err.to_string(),
+            "authorization error: missing read permission"
+        );
+    }
+
+    #[test]
+    fn test_configuration_error_display() {
+        let err = HazelcastError::Configuration("invalid timeout value".to_string());
+        assert_eq!(
+            err.to_string(),
+            "configuration error: invalid timeout value"
         );
     }
 

@@ -730,6 +730,7 @@ pub struct SecurityConfig {
     password: Option<String>,
     token: Option<String>,
     authenticator: Option<Arc<dyn crate::security::Authenticator>>,
+    permissions: Option<Permissions>,
 }
 
 impl std::fmt::Debug for SecurityConfig {
@@ -778,6 +779,19 @@ impl SecurityConfig {
     pub fn authenticator(&self) -> Option<&Arc<dyn crate::security::Authenticator>> {
         self.authenticator.as_ref()
     }
+
+    /// Returns the configured permissions if RBAC is enabled.
+    pub fn permissions(&self) -> Option<&Permissions> {
+        self.permissions.as_ref()
+    }
+
+    /// Returns the effective permissions for authorization checks.
+    ///
+    /// If no permissions are explicitly configured, returns `Permissions::all()`
+    /// for backward compatibility.
+    pub fn effective_permissions(&self) -> Permissions {
+        self.permissions.clone().unwrap_or_else(Permissions::all)
+    }
 }
 
 /// Builder for `SecurityConfig`.
@@ -787,6 +801,7 @@ pub struct SecurityConfigBuilder {
     password: Option<String>,
     token: Option<String>,
     authenticator: Option<Arc<dyn crate::security::Authenticator>>,
+    permissions: Option<Permissions>,
 }
 
 impl std::fmt::Debug for SecurityConfigBuilder {
@@ -856,6 +871,30 @@ impl SecurityConfigBuilder {
         self
     }
 
+    /// Sets the permissions for RBAC enforcement.
+    ///
+    /// When permissions are set, operations will be checked against the
+    /// granted permissions before being sent to the cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::config::{Permissions, PermissionAction};
+    ///
+    /// let mut perms = Permissions::new();
+    /// perms.grant(PermissionAction::Read);
+    /// perms.grant(PermissionAction::Put);
+    ///
+    /// let config = SecurityConfigBuilder::new()
+    ///     .permissions(perms)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn permissions(mut self, permissions: Permissions) -> Self {
+        self.permissions = Some(permissions);
+        self
+    }
+
     /// Builds the security configuration, returning an error if validation fails.
     ///
     /// # Errors
@@ -881,6 +920,7 @@ impl SecurityConfigBuilder {
             password: self.password,
             token: self.token,
             authenticator: self.authenticator,
+            permissions: self.permissions,
         })
     }
 }
@@ -1660,6 +1700,52 @@ mod tests {
     fn test_permissions_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<Permissions>();
+    }
+
+    #[test]
+    fn test_security_config_with_permissions() {
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = SecurityConfigBuilder::new()
+            .permissions(perms)
+            .build()
+            .unwrap();
+
+        assert!(config.permissions().is_some());
+        let permissions = config.permissions().unwrap();
+        assert!(permissions.can_read());
+        assert!(permissions.can_put());
+        assert!(!permissions.can_remove());
+    }
+
+    #[test]
+    fn test_security_config_effective_permissions_with_none() {
+        let config = SecurityConfigBuilder::new().build().unwrap();
+        assert!(config.permissions().is_none());
+
+        let effective = config.effective_permissions();
+        assert!(effective.can_read());
+        assert!(effective.can_put());
+        assert!(effective.can_remove());
+        assert!(effective.is_admin());
+    }
+
+    #[test]
+    fn test_security_config_effective_permissions_with_some() {
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = SecurityConfigBuilder::new()
+            .permissions(perms)
+            .build()
+            .unwrap();
+
+        let effective = config.effective_permissions();
+        assert!(effective.can_read());
+        assert!(!effective.can_put());
+        assert!(!effective.can_remove());
     }
 
     #[test]
