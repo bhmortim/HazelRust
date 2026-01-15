@@ -21,4 +21,7 @@ pub use connection::{
 pub use hazelcast_core as core;
 pub use listener::{ListenerId, ListenerRegistration, ListenerStats};
 pub use proxy::{IList, IMap, IQueue, ISet, ITopic, MultiMap, TopicMessage};
-pub use sql::{SqlColumnMetadata, SqlColumnType, SqlRow, SqlRowMetadata, SqlStatement, SqlValue};
+pub use sql::{
+    SqlColumnMetadata, SqlColumnType, SqlResult, SqlRow, SqlRowMetadata, SqlService, SqlStatement,
+    SqlValue,
+};

@@ -11,6 +11,7 @@ use crate::proxy::{
     AtomicLong, CountDownLatch, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic,
     MultiMap, PNCounter, ReplicatedMap, Ringbuffer, Semaphore,
 };
+use crate::sql::SqlService;
 
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
@@ -281,6 +282,28 @@ impl HazelcastClient {
     /// - Coordinating startup sequences in distributed systems
     pub fn get_countdown_latch(&self, name: &str) -> CountDownLatch {
         CountDownLatch::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns the SQL service for executing SQL queries.
+    ///
+    /// The SQL service allows executing SQL queries against data stored in
+    /// Hazelcast maps and other data structures.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let sql = client.sql();
+    /// let statement = SqlStatement::new("SELECT * FROM users WHERE age > ?")
+    ///     .add_parameter(SqlValue::Integer(21));
+    ///
+    /// let mut result = sql.execute(statement).await?;
+    /// while let Some(row) = result.next_row().await? {
+    ///     println!("Row: {:?}", row);
+    /// }
+    /// result.close().await?;
+    /// ```
+    pub fn sql(&self) -> SqlService {
+        SqlService::new(Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.

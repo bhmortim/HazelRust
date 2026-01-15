@@ -1,7 +1,11 @@
 //! SQL query execution types and infrastructure.
 
+mod service;
+
 use std::collections::HashMap;
 use std::time::Duration;
+
+pub use service::{SqlResult, SqlService};
 
 /// SQL column data types supported by Hazelcast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
