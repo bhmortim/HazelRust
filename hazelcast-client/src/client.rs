@@ -6,7 +6,7 @@ use hazelcast_core::{Deserializable, Result, Serializable};
 
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
-use crate::proxy::{IList, IMap, IQueue, ISet};
+use crate::proxy::{IList, IMap, IQueue, ISet, MultiMap};
 
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
@@ -127,6 +127,23 @@ impl HazelcastClient {
         T: Serializable + Deserializable + Send + Sync,
     {
         IList::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed multi-map proxy for the given name.
+    ///
+    /// The multi-map proxy allows storing multiple values per key on the cluster.
+    /// The actual multi-map is created on the cluster lazily when first accessed.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `K`: The key type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    /// - `V`: The value type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    pub fn get_multimap<K, V>(&self, name: &str) -> MultiMap<K, V>
+    where
+        K: Serializable + Deserializable + Send + Sync,
+        V: Serializable + Deserializable + Send + Sync,
+    {
+        MultiMap::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.

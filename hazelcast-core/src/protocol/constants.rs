@@ -130,3 +130,33 @@ pub const LIST_REMOVE_AT: i32 = 0x050900;
 
 /// List clear request.
 pub const LIST_CLEAR: i32 = 0x050A00;
+
+/// MultiMap put request.
+pub const MULTI_MAP_PUT: i32 = 0x020100;
+
+/// MultiMap get request.
+pub const MULTI_MAP_GET: i32 = 0x020200;
+
+/// MultiMap remove request.
+pub const MULTI_MAP_REMOVE: i32 = 0x020300;
+
+/// MultiMap clear request.
+pub const MULTI_MAP_CLEAR: i32 = 0x020600;
+
+/// MultiMap size request.
+pub const MULTI_MAP_SIZE: i32 = 0x020700;
+
+/// MultiMap value count request.
+pub const MULTI_MAP_VALUE_COUNT: i32 = 0x020800;
+
+/// MultiMap contains key request.
+pub const MULTI_MAP_CONTAINS_KEY: i32 = 0x020900;
+
+/// MultiMap contains value request.
+pub const MULTI_MAP_CONTAINS_VALUE: i32 = 0x020A00;
+
+/// MultiMap contains entry request.
+pub const MULTI_MAP_CONTAINS_ENTRY: i32 = 0x020B00;
+
+/// MultiMap remove entry request.
+pub const MULTI_MAP_REMOVE_ENTRY: i32 = 0x020C00;

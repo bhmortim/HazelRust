@@ -17,4 +17,4 @@ pub use connection::{
     StaticAddressDiscovery,
 };
 pub use hazelcast_core as core;
-pub use proxy::{IList, IMap, IQueue, ISet};
+pub use proxy::{IList, IMap, IQueue, ISet, MultiMap};
