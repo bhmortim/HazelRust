@@ -8,7 +8,8 @@ use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::listener::{Member, MemberEvent};
 use crate::proxy::{
-    AtomicLong, IList, IMap, IQueue, ISet, ITopic, MultiMap, PNCounter, ReplicatedMap, Ringbuffer,
+    AtomicLong, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic, MultiMap, PNCounter,
+    ReplicatedMap, Ringbuffer,
 };
 
 /// The main entry point for connecting to a Hazelcast cluster.
@@ -220,6 +221,20 @@ impl HazelcastClient {
     /// - Conflict-free merge semantics are acceptable
     pub fn get_pn_counter(&self, name: &str) -> PNCounter {
         PNCounter::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed FlakeIdGenerator proxy for the given name.
+    ///
+    /// The FlakeIdGenerator produces cluster-wide unique 64-bit IDs that are
+    /// roughly ordered by time. IDs are composed of a timestamp, node ID, and
+    /// sequence number (similar to Twitter's Snowflake algorithm).
+    ///
+    /// FlakeIdGenerators are ideal for:
+    /// - Generating unique primary keys for distributed databases
+    /// - Creating roughly time-ordered identifiers without coordination
+    /// - High-throughput ID generation scenarios
+    pub fn get_flake_id_generator(&self, name: &str) -> FlakeIdGenerator {
+        FlakeIdGenerator::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.

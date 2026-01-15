@@ -265,3 +265,6 @@ pub const PN_COUNTER_GET: i32 = 0x200100;
 
 /// PN Counter add request.
 pub const PN_COUNTER_ADD: i32 = 0x200200;
+
+/// FlakeIdGenerator new ID batch request.
+pub const FLAKE_ID_GENERATOR_NEW_ID_BATCH: i32 = 0x1C0100;
