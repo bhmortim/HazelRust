@@ -106,3 +106,27 @@ pub const SET_CLEAR: i32 = 0x060500;
 
 /// Set size request.
 pub const SET_SIZE: i32 = 0x060800;
+
+/// List size request.
+pub const LIST_SIZE: i32 = 0x050100;
+
+/// List contains request.
+pub const LIST_CONTAINS: i32 = 0x050200;
+
+/// List add request.
+pub const LIST_ADD: i32 = 0x050500;
+
+/// List add at index request.
+pub const LIST_ADD_AT: i32 = 0x050600;
+
+/// List set request.
+pub const LIST_SET: i32 = 0x050700;
+
+/// List get request.
+pub const LIST_GET: i32 = 0x050800;
+
+/// List remove at index request.
+pub const LIST_REMOVE_AT: i32 = 0x050900;
+
+/// List clear request.
+pub const LIST_CLEAR: i32 = 0x050A00;
