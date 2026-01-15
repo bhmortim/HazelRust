@@ -47,6 +47,12 @@ pub use sql::{
 pub use transaction::{
     TransactionContext, TransactionOptions, TransactionState, TransactionType,
     TransactionalList, TransactionalMap, TransactionalQueue, TransactionalSet,
+    XAResource, XATransaction, XaTransactionState, Xid,
+    XA_TMNOFLAGS, XA_TMJOIN, XA_TMRESUME, XA_TMSUCCESS, XA_TMFAIL, XA_TMSUSPEND,
+    XA_TMSTARTRSCAN, XA_TMENDRSCAN, XA_TMONEPHASE,
+    XA_OK, XA_RDONLY, XA_HEURRB, XA_HEURCOM, XA_HEURHAZ, XA_HEURMIX, XA_RETRY,
+    XA_RBBASE, XA_RBROLLBACK, XA_RBCOMMFAIL, XA_RBDEADLOCK, XA_RBINTEGRITY,
+    XA_RBOTHER, XA_RBPROTO, XA_RBTIMEOUT, XA_RBTRANSIENT, XA_RBEND,
 };
 pub use security::{
     AuthError, AuthResponse, Authenticator, Credentials, CustomCredentials, DefaultAuthenticator,

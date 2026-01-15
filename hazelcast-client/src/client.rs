@@ -14,7 +14,7 @@ use crate::proxy::{
     MultiMap, PNCounter, ReliableTopic, ReplicatedMap, Ringbuffer, Semaphore,
 };
 use crate::sql::SqlService;
-use crate::transaction::{TransactionContext, TransactionOptions};
+use crate::transaction::{TransactionContext, TransactionOptions, XATransaction, Xid};
 
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
@@ -381,6 +381,53 @@ impl HazelcastClient {
     /// ```
     pub fn new_transaction_context(&self, options: TransactionOptions) -> TransactionContext {
         TransactionContext::new(Arc::clone(&self.connection_manager), options)
+    }
+
+    /// Creates a new XA transaction with the specified transaction identifier.
+    ///
+    /// XA transactions support distributed two-phase commit across multiple
+    /// resource managers, enabling ACID guarantees across heterogeneous systems.
+    ///
+    /// # Arguments
+    ///
+    /// * `xid` - The XA transaction identifier
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::{HazelcastClient, Xid, XAResource, XA_TMNOFLAGS, XA_TMSUCCESS, XA_OK};
+    ///
+    /// let xid = Xid::new(0, b"global-txn-123", b"branch-001");
+    /// let mut xa_txn = client.new_xa_transaction(xid);
+    ///
+    /// xa_txn.start(XA_TMNOFLAGS).await?;
+    /// // ... perform operations ...
+    /// xa_txn.end(XA_TMSUCCESS).await?;
+    ///
+    /// let vote = xa_txn.prepare().await?;
+    /// if vote == XA_OK {
+    ///     xa_txn.commit(false).await?;
+    /// } else {
+    ///     xa_txn.rollback().await?;
+    /// }
+    /// ```
+    pub fn new_xa_transaction(&self, xid: Xid) -> XATransaction {
+        XATransaction::new(Arc::clone(&self.connection_manager), xid)
+    }
+
+    /// Creates a new XA transaction with an auto-generated transaction identifier.
+    ///
+    /// This is a convenience method that generates a unique `Xid` using a random UUID.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut xa_txn = client.new_xa_transaction_auto();
+    /// xa_txn.start(XA_TMNOFLAGS).await?;
+    /// // ... operations ...
+    /// ```
+    pub fn new_xa_transaction_auto(&self) -> XATransaction {
+        XATransaction::with_generated_xid(Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.
