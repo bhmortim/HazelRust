@@ -9,7 +9,9 @@ pub mod serialization;
 pub use error::{HazelcastError, Result};
 pub use protocol::{compute_partition_hash, ClientMessage, ClientMessageCodec, Frame};
 pub use serialization::{
-    DataInput, DataOutput, Deserializable, ObjectDataInput, ObjectDataOutput, Serializable,
+    ClassDefinition, DataInput, DataOutput, Deserializable, FieldDefinition, FieldType,
+    ObjectDataInput, ObjectDataOutput, Portable, PortableFactory, PortableReader, PortableWriter,
+    Serializable,
 };
 
 #[cfg(feature = "serde")]
