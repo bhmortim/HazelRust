@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+serde = ["dep:serde", "dep:bincode"]
+
 [dependencies]
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -11,3 +15,5 @@ bytes = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+bincode = { version = "1.3", optional = true }
