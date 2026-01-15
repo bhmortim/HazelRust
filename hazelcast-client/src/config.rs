@@ -171,6 +171,17 @@ impl Default for RetryConfig {
     }
 }
 
+impl From<RetryConfig> for RetryConfigBuilder {
+    fn from(config: RetryConfig) -> Self {
+        Self {
+            initial_backoff: Some(config.initial_backoff),
+            max_backoff: Some(config.max_backoff),
+            multiplier: Some(config.multiplier),
+            max_retries: Some(config.max_retries),
+        }
+    }
+}
+
 /// Builder for `RetryConfig`.
 #[derive(Debug, Clone, Default)]
 pub struct RetryConfigBuilder {
@@ -211,6 +222,12 @@ impl RetryConfigBuilder {
     }
 
     /// Builds the retry configuration, returning an error if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if:
+    /// - `initial_backoff` exceeds `max_backoff`
+    /// - `multiplier` is less than 1.0
     pub fn build(self) -> Result<RetryConfig, ConfigError> {
         let initial_backoff = self.initial_backoff.unwrap_or(DEFAULT_INITIAL_BACKOFF);
         let max_backoff = self.max_backoff.unwrap_or(DEFAULT_MAX_BACKOFF);

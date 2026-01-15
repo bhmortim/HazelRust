@@ -7,7 +7,11 @@ license.workspace = true
 [dependencies]
 hazelcast-core = { path = "../hazelcast-core" }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 bytes = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
