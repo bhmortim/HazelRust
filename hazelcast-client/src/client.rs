@@ -10,7 +10,7 @@ use crate::executor::ExecutorService;
 use crate::listener::{Member, MemberEvent};
 use crate::proxy::{
     AtomicLong, CountDownLatch, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic,
-    MultiMap, PNCounter, ReplicatedMap, Ringbuffer, Semaphore,
+    MultiMap, PNCounter, ReliableTopic, ReplicatedMap, Ringbuffer, Semaphore,
 };
 use crate::sql::SqlService;
 use crate::transaction::{TransactionContext, TransactionOptions};
@@ -210,6 +210,38 @@ impl HazelcastClient {
         T: Serializable + Deserializable + Send + Sync,
     {
         Ringbuffer::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a reliable topic proxy for the given name.
+    ///
+    /// `ReliableTopic` is backed by a Ringbuffer and provides:
+    /// - Reliable delivery with sequence tracking
+    /// - Gap detection when messages are lost due to ringbuffer overflow
+    /// - Ability to replay messages from history
+    ///
+    /// # Type Parameters
+    ///
+    /// - `T`: The message type, must implement serialization traits and `'static`
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let topic = client.get_reliable_topic::<String>("my-reliable-topic");
+    ///
+    /// // Publish messages
+    /// topic.publish("Hello".to_string()).await?;
+    ///
+    /// // Subscribe with custom config
+    /// let config = ReliableTopicConfig::default().start_from_oldest(true);
+    /// let registration = topic.add_message_listener_with_config(config, |msg| {
+    ///     println!("Received: {} at seq {}", msg.message, msg.sequence);
+    /// }).await?;
+    /// ```
+    pub fn get_reliable_topic<T>(&self, name: &str) -> ReliableTopic<T>
+    where
+        T: Serializable + Deserializable + Send + Sync + 'static,
+    {
+        ReliableTopic::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns a distributed PN Counter proxy for the given name.
