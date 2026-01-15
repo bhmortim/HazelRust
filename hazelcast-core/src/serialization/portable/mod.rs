@@ -1,7 +1,13 @@
 //! Portable serialization framework for cross-language compatibility.
 
+mod reader_writer;
+mod serializer;
+
 use crate::{HazelcastError, Result};
 use std::collections::HashMap;
+
+pub use reader_writer::{DefaultPortableReader, DefaultPortableWriter};
+pub use serializer::{PortableSerializer, PORTABLE_TYPE_ID};
 
 /// Supported field types in Portable serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

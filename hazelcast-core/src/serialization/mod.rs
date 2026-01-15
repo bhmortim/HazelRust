@@ -11,8 +11,9 @@ mod serde;
 pub use data_input::{DataInput, ObjectDataInput};
 pub use data_output::{DataOutput, ObjectDataOutput};
 pub use portable::{
-    ClassDefinition, FieldDefinition, FieldType, Portable, PortableFactory, PortableReader,
-    PortableWriter,
+    ClassDefinition, DefaultPortableReader, DefaultPortableWriter, FieldDefinition, FieldType,
+    Portable, PortableFactory, PortableReader, PortableSerializer, PortableWriter,
+    PORTABLE_TYPE_ID,
 };
 pub use traits::{Deserializable, Serializable};
 
