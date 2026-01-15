@@ -13,6 +13,9 @@ mod kubernetes;
 #[cfg(feature = "cloud")]
 mod cloud;
 
+#[cfg(feature = "azure")]
+mod azure;
+
 #[cfg(feature = "websocket")]
 mod websocket;
 
@@ -28,6 +31,9 @@ pub use kubernetes::{KubernetesDiscovery, KubernetesDiscoveryConfig};
 
 #[cfg(feature = "cloud")]
 pub use cloud::{CloudDiscovery, CloudDiscoveryConfig};
+
+#[cfg(feature = "azure")]
+pub use azure::{AzureDiscovery, AzureDiscoveryConfig};
 
 #[cfg(feature = "websocket")]
 pub use websocket::WebSocketConnection;

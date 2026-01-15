@@ -11,6 +11,7 @@ metrics = ["prometheus"]
 aws = ["aws-config", "aws-sdk-ec2"]
 kubernetes = ["kube", "k8s-openapi"]
 cloud = ["reqwest"]
+azure = ["azure_identity", "azure_core", "reqwest", "serde_json"]
 websocket = ["tokio-tungstenite", "url"]
 
 [dependencies]
@@ -39,6 +40,11 @@ k8s-openapi = { version = "0.22", features = ["v1_30"], optional = true }
 
 # Hazelcast Cloud (optional, for Cloud discovery)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+
+# Azure (optional, for Azure discovery)
+azure_identity = { version = "0.22", optional = true }
+azure_core = { version = "0.22", optional = true }
+serde_json = { version = "1.0", optional = true }
 
 # WebSocket (optional, for WebSocket transport)
 tokio-tungstenite = { version = "0.24", optional = true }
