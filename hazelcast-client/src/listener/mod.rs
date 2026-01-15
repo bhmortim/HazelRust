@@ -1,5 +1,9 @@
 //! Event listener infrastructure for Hazelcast distributed data structures.
 
+mod membership;
+
+pub use membership::{Member, MemberEvent, MemberEventType, MembershipListener};
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 

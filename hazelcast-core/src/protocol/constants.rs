@@ -193,3 +193,9 @@ pub const MAP_ADD_ENTRY_LISTENER: i32 = 0x011400;
 
 /// Map remove entry listener request.
 pub const MAP_REMOVE_ENTRY_LISTENER: i32 = 0x011500;
+
+/// Client add membership listener request.
+pub const CLIENT_ADD_MEMBERSHIP_LISTENER: i32 = 0x000300;
+
+/// Client remove membership listener request.
+pub const CLIENT_REMOVE_MEMBERSHIP_LISTENER: i32 = 0x000301;
