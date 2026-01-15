@@ -6,6 +6,7 @@ mod map;
 mod multimap;
 mod queue;
 mod replicated_map;
+mod ringbuffer;
 mod set;
 mod topic;
 
@@ -15,5 +16,6 @@ pub use map::IMap;
 pub use multimap::MultiMap;
 pub use queue::IQueue;
 pub use replicated_map::ReplicatedMap;
+pub use ringbuffer::{OverflowPolicy, Ringbuffer};
 pub use set::ISet;
 pub use topic::{ITopic, TopicMessage};

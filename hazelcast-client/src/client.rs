@@ -7,7 +7,9 @@ use hazelcast_core::{Deserializable, Result, Serializable};
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::listener::{Member, MemberEvent};
-use crate::proxy::{AtomicLong, IList, IMap, IQueue, ISet, ITopic, MultiMap, ReplicatedMap};
+use crate::proxy::{
+    AtomicLong, IList, IMap, IQueue, ISet, ITopic, MultiMap, ReplicatedMap, Ringbuffer,
+};
 
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
@@ -188,6 +190,22 @@ impl HazelcastClient {
         V: Serializable + Deserializable + Send + Sync,
     {
         ReplicatedMap::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed ringbuffer proxy for the given name.
+    ///
+    /// The ringbuffer proxy provides a bounded circular buffer with sequence-based
+    /// access. Items can be read by sequence number, allowing reliable event streaming.
+    /// The actual ringbuffer is created on the cluster lazily when first accessed.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `T`: The element type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    pub fn get_ringbuffer<T>(&self, name: &str) -> Ringbuffer<T>
+    where
+        T: Serializable + Deserializable + Send + Sync,
+    {
+        Ringbuffer::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.

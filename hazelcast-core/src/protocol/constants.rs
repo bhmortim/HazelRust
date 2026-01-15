@@ -232,3 +232,30 @@ pub const REPLICATED_MAP_VALUES: i32 = 0x0D0A00;
 
 /// ReplicatedMap entry set request.
 pub const REPLICATED_MAP_ENTRY_SET: i32 = 0x0D0B00;
+
+/// Ringbuffer size request.
+pub const RINGBUFFER_SIZE: i32 = 0x190100;
+
+/// Ringbuffer tail sequence request.
+pub const RINGBUFFER_TAIL_SEQUENCE: i32 = 0x190200;
+
+/// Ringbuffer head sequence request.
+pub const RINGBUFFER_HEAD_SEQUENCE: i32 = 0x190300;
+
+/// Ringbuffer capacity request.
+pub const RINGBUFFER_CAPACITY: i32 = 0x190400;
+
+/// Ringbuffer remaining capacity request.
+pub const RINGBUFFER_REMAINING_CAPACITY: i32 = 0x190500;
+
+/// Ringbuffer add request.
+pub const RINGBUFFER_ADD: i32 = 0x190600;
+
+/// Ringbuffer read one request.
+pub const RINGBUFFER_READ_ONE: i32 = 0x190700;
+
+/// Ringbuffer add all request.
+pub const RINGBUFFER_ADD_ALL: i32 = 0x190800;
+
+/// Ringbuffer read many request.
+pub const RINGBUFFER_READ_MANY: i32 = 0x190900;
