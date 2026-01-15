@@ -8,6 +8,32 @@ use std::hash::{Hash, Hasher};
 /// Type identifier for Compact serialization.
 pub const COMPACT_TYPE_ID: i32 = -2;
 
+/// Default values for Compact fields during schema evolution.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DefaultFieldValue {
+    Boolean(bool),
+    Int8(i8),
+    Int16(i16),
+    Int32(i32),
+    Int64(i64),
+    Float32(f32),
+    Float64(f64),
+    String(Option<String>),
+    Null,
+}
+
+/// Result of schema evolution validation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SchemaEvolutionResult {
+    Compatible {
+        added_fields: Vec<String>,
+        removed_fields: Vec<String>,
+    },
+    Incompatible {
+        reason: String,
+    },
+}
+
 /// Field kind identifiers for Compact serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(i32)]
@@ -111,6 +137,37 @@ impl FieldKind {
                 | Self::ArrayOfCompact
         )
     }
+
+    /// Returns the default value for this field kind during schema evolution.
+    pub fn default_value(&self) -> DefaultFieldValue {
+        match self {
+            Self::Boolean => DefaultFieldValue::Boolean(false),
+            Self::Int8 => DefaultFieldValue::Int8(0),
+            Self::Int16 => DefaultFieldValue::Int16(0),
+            Self::Int32 => DefaultFieldValue::Int32(0),
+            Self::Int64 => DefaultFieldValue::Int64(0),
+            Self::Float32 => DefaultFieldValue::Float32(0.0),
+            Self::Float64 => DefaultFieldValue::Float64(0.0),
+            Self::String => DefaultFieldValue::String(None),
+            Self::Compact => DefaultFieldValue::Null,
+            Self::ArrayOfBoolean
+            | Self::ArrayOfInt8
+            | Self::ArrayOfInt16
+            | Self::ArrayOfInt32
+            | Self::ArrayOfInt64
+            | Self::ArrayOfFloat32
+            | Self::ArrayOfFloat64
+            | Self::ArrayOfString
+            | Self::ArrayOfCompact => DefaultFieldValue::Null,
+            Self::NullableBoolean
+            | Self::NullableInt8
+            | Self::NullableInt16
+            | Self::NullableInt32
+            | Self::NullableInt64
+            | Self::NullableFloat32
+            | Self::NullableFloat64 => DefaultFieldValue::Null,
+        }
+    }
 }
 
 /// Descriptor for a field within a Compact schema.
@@ -154,6 +211,12 @@ pub struct Schema {
     fields: Vec<FieldDescriptor>,
     field_indices: HashMap<String, usize>,
     schema_id: i64,
+}
+
+impl Hash for Schema {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.schema_id.hash(state);
+    }
 }
 
 impl Schema {
@@ -231,6 +294,204 @@ impl Schema {
         self.field_indices.insert(field.name.clone(), self.fields.len());
         self.fields.push(field);
         self.schema_id = Self::compute_schema_id(&self.type_name, &self.fields);
+    }
+
+    /// Checks if this schema is compatible with another schema for evolution.
+    /// 
+    /// Schemas are compatible if they have the same type name and all common
+    /// fields have compatible types.
+    pub fn is_compatible_with(&self, other: &Schema) -> bool {
+        if self.type_name != other.type_name {
+            return false;
+        }
+
+        for field in &self.fields {
+            if let Some(other_field) = other.field(&field.name) {
+                if !Self::are_field_kinds_compatible(field.kind, other_field.kind) {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    fn are_field_kinds_compatible(kind1: FieldKind, kind2: FieldKind) -> bool {
+        if kind1 == kind2 {
+            return true;
+        }
+
+        match (kind1, kind2) {
+            (FieldKind::Int8, FieldKind::NullableInt8)
+            | (FieldKind::NullableInt8, FieldKind::Int8) => true,
+            (FieldKind::Int16, FieldKind::NullableInt16)
+            | (FieldKind::NullableInt16, FieldKind::Int16) => true,
+            (FieldKind::Int32, FieldKind::NullableInt32)
+            | (FieldKind::NullableInt32, FieldKind::Int32) => true,
+            (FieldKind::Int64, FieldKind::NullableInt64)
+            | (FieldKind::NullableInt64, FieldKind::Int64) => true,
+            (FieldKind::Float32, FieldKind::NullableFloat32)
+            | (FieldKind::NullableFloat32, FieldKind::Float32) => true,
+            (FieldKind::Float64, FieldKind::NullableFloat64)
+            | (FieldKind::NullableFloat64, FieldKind::Float64) => true,
+            (FieldKind::Boolean, FieldKind::NullableBoolean)
+            | (FieldKind::NullableBoolean, FieldKind::Boolean) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns the default value for a field by name.
+    pub fn get_default_value_for_field(&self, field_name: &str) -> Option<DefaultFieldValue> {
+        self.field(field_name).map(|f| f.kind.default_value())
+    }
+}
+
+/// Validator for schema evolution compatibility.
+#[derive(Debug, Clone, Default)]
+pub struct SchemaEvolutionValidator;
+
+impl SchemaEvolutionValidator {
+    /// Creates a new schema evolution validator.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Validates that schema evolution from old to new is compatible.
+    pub fn validate_evolution(
+        old_schema: &Schema,
+        new_schema: &Schema,
+    ) -> Result<SchemaEvolutionResult> {
+        if old_schema.type_name() != new_schema.type_name() {
+            return Ok(SchemaEvolutionResult::Incompatible {
+                reason: format!(
+                    "Type name mismatch: '{}' vs '{}'",
+                    old_schema.type_name(),
+                    new_schema.type_name()
+                ),
+            });
+        }
+
+        let old_field_names: std::collections::HashSet<_> =
+            old_schema.fields().iter().map(|f| f.name()).collect();
+        let new_field_names: std::collections::HashSet<_> =
+            new_schema.fields().iter().map(|f| f.name()).collect();
+
+        let added_fields: Vec<String> = new_field_names
+            .difference(&old_field_names)
+            .map(|s| s.to_string())
+            .collect();
+
+        let removed_fields: Vec<String> = old_field_names
+            .difference(&new_field_names)
+            .map(|s| s.to_string())
+            .collect();
+
+        for field in old_schema.fields() {
+            if let Some(new_field) = new_schema.field(field.name()) {
+                if !Schema::are_field_kinds_compatible(field.kind(), new_field.kind()) {
+                    return Ok(SchemaEvolutionResult::Incompatible {
+                        reason: format!(
+                            "Incompatible field type change for '{}': {:?} -> {:?}",
+                            field.name(),
+                            field.kind(),
+                            new_field.kind()
+                        ),
+                    });
+                }
+            }
+        }
+
+        Ok(SchemaEvolutionResult::Compatible {
+            added_fields,
+            removed_fields,
+        })
+    }
+}
+
+/// Registry for managing Compact schemas.
+#[derive(Debug, Default)]
+pub struct SchemaRegistry {
+    schemas_by_id: HashMap<i64, Schema>,
+    schemas_by_type: HashMap<String, Vec<i64>>,
+}
+
+impl SchemaRegistry {
+    /// Creates a new empty schema registry.
+    pub fn new() -> Self {
+        Self {
+            schemas_by_id: HashMap::new(),
+            schemas_by_type: HashMap::new(),
+        }
+    }
+
+    /// Registers a schema in the local cache.
+    pub fn register_schema(&mut self, schema: Schema) {
+        let schema_id = schema.schema_id();
+        let type_name = schema.type_name().to_string();
+
+        if !self.schemas_by_id.contains_key(&schema_id) {
+            self.schemas_by_id.insert(schema_id, schema);
+            self.schemas_by_type
+                .entry(type_name)
+                .or_default()
+                .push(schema_id);
+        }
+    }
+
+    /// Looks up a schema by its ID.
+    pub fn get_schema_by_id(&self, schema_id: i64) -> Option<&Schema> {
+        self.schemas_by_id.get(&schema_id)
+    }
+
+    /// Returns all schema versions for a given type name.
+    pub fn get_schemas_by_type(&self, type_name: &str) -> Vec<&Schema> {
+        self.schemas_by_type
+            .get(type_name)
+            .map(|ids| ids.iter().filter_map(|id| self.schemas_by_id.get(id)).collect())
+            .unwrap_or_default()
+    }
+
+    /// Gets an existing schema or creates a new one for the given Compact type.
+    pub fn get_or_create_schema<T: Compact>(&mut self) -> Schema {
+        let type_name = T::get_type_name();
+        
+        if let Some(schemas) = self.schemas_by_type.get(type_name) {
+            if let Some(&schema_id) = schemas.first() {
+                if let Some(schema) = self.schemas_by_id.get(&schema_id) {
+                    return schema.clone();
+                }
+            }
+        }
+
+        let schema = Schema::new(type_name);
+        self.register_schema(schema.clone());
+        schema
+    }
+
+    /// Fetches a schema from the cluster by ID.
+    /// 
+    /// This is a stub that currently returns from the local cache.
+    /// Will be wired to cluster communication later.
+    pub fn fetch_schema(&self, schema_id: i64) -> Result<Option<Schema>> {
+        Ok(self.schemas_by_id.get(&schema_id).cloned())
+    }
+
+    /// Sends a schema to the cluster.
+    /// 
+    /// This is a stub that currently does nothing.
+    /// Will be wired to cluster communication later.
+    pub fn send_schema(&self, _schema: &Schema) -> Result<()> {
+        Ok(())
+    }
+
+    /// Returns the number of registered schemas.
+    pub fn len(&self) -> usize {
+        self.schemas_by_id.len()
+    }
+
+    /// Returns true if no schemas are registered.
+    pub fn is_empty(&self) -> bool {
+        self.schemas_by_id.is_empty()
     }
 }
 
@@ -819,12 +1080,33 @@ impl CompactWriter for DefaultCompactWriter {
 #[derive(Debug)]
 pub struct DefaultCompactReader {
     schema: Schema,
+    writer_schema: Option<Schema>,
     fields: HashMap<String, FieldData>,
 }
 
 impl DefaultCompactReader {
     /// Creates a new reader from serialized bytes with an expected schema.
     pub fn from_bytes(data: &[u8], schema: Schema) -> Result<Self> {
+        Self::from_bytes_internal(data, schema, None)
+    }
+
+    /// Creates a new reader from serialized bytes with both reader and writer schemas.
+    /// 
+    /// This constructor enables schema evolution by tracking which schema was used
+    /// to write the data vs. which schema the reader expects.
+    pub fn from_bytes_with_writer_schema(
+        data: &[u8],
+        reader_schema: Schema,
+        writer_schema: Schema,
+    ) -> Result<Self> {
+        Self::from_bytes_internal(data, reader_schema, Some(writer_schema))
+    }
+
+    fn from_bytes_internal(
+        data: &[u8],
+        schema: Schema,
+        writer_schema: Option<Schema>,
+    ) -> Result<Self> {
         let mut input = ObjectDataInput::new(data);
         let mut fields = HashMap::new();
 
@@ -843,7 +1125,16 @@ impl DefaultCompactReader {
             }
         }
 
-        Ok(Self { schema, fields })
+        Ok(Self {
+            schema,
+            writer_schema,
+            fields,
+        })
+    }
+
+    /// Returns the writer schema if available.
+    pub fn writer_schema(&self) -> Option<&Schema> {
+        self.writer_schema.as_ref()
     }
 
     fn get_field(&self, name: &str, expected_kind: FieldKind) -> Result<Option<&[u8]>> {
@@ -1288,33 +1579,50 @@ impl CompactReader for DefaultCompactReader {
 /// Serializer for Compact objects.
 #[derive(Debug, Default)]
 pub struct CompactSerializer {
-    schemas: HashMap<String, Schema>,
+    registry: SchemaRegistry,
 }
 
 impl CompactSerializer {
     /// Creates a new CompactSerializer.
     pub fn new() -> Self {
         Self {
-            schemas: HashMap::new(),
+            registry: SchemaRegistry::new(),
         }
+    }
+
+    /// Creates a new CompactSerializer with the given schema registry.
+    pub fn with_registry(registry: SchemaRegistry) -> Self {
+        Self { registry }
+    }
+
+    /// Returns a reference to the schema registry.
+    pub fn get_registry(&self) -> &SchemaRegistry {
+        &self.registry
+    }
+
+    /// Returns a mutable reference to the schema registry.
+    pub fn get_registry_mut(&mut self) -> &mut SchemaRegistry {
+        &mut self.registry
     }
 
     /// Registers a schema for a type.
     pub fn register_schema(&mut self, schema: Schema) {
-        self.schemas.insert(schema.type_name().to_string(), schema);
+        self.registry.register_schema(schema);
     }
 
     /// Looks up a schema by type name.
     pub fn get_schema(&self, type_name: &str) -> Option<&Schema> {
-        self.schemas.get(type_name)
+        self.registry.get_schemas_by_type(type_name).into_iter().next()
     }
 
     /// Serializes a Compact object to bytes.
     pub fn serialize<T: Compact>(&self, value: &T) -> Result<Vec<u8>> {
         let type_name = T::get_type_name();
         let schema = self
-            .schemas
-            .get(type_name)
+            .registry
+            .get_schemas_by_type(type_name)
+            .into_iter()
+            .next()
             .cloned()
             .unwrap_or_else(|| Schema::new(type_name));
 
@@ -1336,7 +1644,7 @@ impl CompactSerializer {
         let mut input = ObjectDataInput::new(data);
 
         let type_name = input.read_string()?;
-        let _schema_id = input.read_long()?;
+        let writer_schema_id = input.read_long()?;
         let field_data_len = input.read_int()? as usize;
         let field_data = input.read_bytes(field_data_len)?;
 
@@ -1348,13 +1656,67 @@ impl CompactSerializer {
             )));
         }
 
-        let schema = self
-            .schemas
-            .get(&type_name)
+        let reader_schema = self
+            .registry
+            .get_schemas_by_type(&type_name)
+            .into_iter()
+            .next()
             .cloned()
             .unwrap_or_else(|| Schema::new(&type_name));
 
-        let mut reader = DefaultCompactReader::from_bytes(&field_data, schema)?;
+        let writer_schema = self.registry.get_schema_by_id(writer_schema_id).cloned();
+
+        let mut reader = match writer_schema {
+            Some(ws) if ws.schema_id() != reader_schema.schema_id() => {
+                DefaultCompactReader::from_bytes_with_writer_schema(
+                    &field_data,
+                    reader_schema,
+                    ws,
+                )?
+            }
+            _ => DefaultCompactReader::from_bytes(&field_data, reader_schema)?,
+        };
+
+        let mut instance = T::default();
+        instance.read(&mut reader)?;
+
+        Ok(instance)
+    }
+
+    /// Deserializes bytes with explicit schema evolution support.
+    /// 
+    /// Uses the provided reader schema and looks up the writer schema from the registry.
+    pub fn deserialize_with_schema<T: Compact + Default>(
+        &self,
+        data: &[u8],
+        reader_schema: Schema,
+    ) -> Result<T> {
+        let mut input = ObjectDataInput::new(data);
+
+        let type_name = input.read_string()?;
+        let writer_schema_id = input.read_long()?;
+        let field_data_len = input.read_int()? as usize;
+        let field_data = input.read_bytes(field_data_len)?;
+
+        if T::get_type_name() != type_name {
+            return Err(HazelcastError::Serialization(format!(
+                "Type mismatch: expected '{}', got '{}'",
+                T::get_type_name(),
+                type_name
+            )));
+        }
+
+        let writer_schema = self.registry.get_schema_by_id(writer_schema_id).cloned();
+
+        let mut reader = match writer_schema {
+            Some(ws) => DefaultCompactReader::from_bytes_with_writer_schema(
+                &field_data,
+                reader_schema,
+                ws,
+            )?,
+            None => DefaultCompactReader::from_bytes(&field_data, reader_schema)?,
+        };
+
         let mut instance = T::default();
         instance.read(&mut reader)?;
 
@@ -1785,5 +2147,536 @@ mod tests {
         );
 
         assert_ne!(schema1.schema_id(), schema2.schema_id());
+    }
+
+    #[test]
+    fn test_schema_registry_basic_operations() {
+        let mut registry = SchemaRegistry::new();
+        assert!(registry.is_empty());
+
+        let schema1 = Schema::with_fields(
+            "Person",
+            vec![
+                FieldDescriptor::new("name", FieldKind::String, 0),
+                FieldDescriptor::new("age", FieldKind::Int32, 1),
+            ],
+        );
+        let schema_id = schema1.schema_id();
+
+        registry.register_schema(schema1.clone());
+
+        assert_eq!(registry.len(), 1);
+        assert!(!registry.is_empty());
+
+        let retrieved = registry.get_schema_by_id(schema_id);
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().type_name(), "Person");
+
+        let by_type = registry.get_schemas_by_type("Person");
+        assert_eq!(by_type.len(), 1);
+        assert_eq!(by_type[0].schema_id(), schema_id);
+
+        let not_found = registry.get_schema_by_id(999);
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_schema_registry_multiple_versions() {
+        let mut registry = SchemaRegistry::new();
+
+        let v1 = Schema::with_fields(
+            "Person",
+            vec![FieldDescriptor::new("name", FieldKind::String, 0)],
+        );
+
+        let v2 = Schema::with_fields(
+            "Person",
+            vec![
+                FieldDescriptor::new("name", FieldKind::String, 0),
+                FieldDescriptor::new("age", FieldKind::Int32, 1),
+            ],
+        );
+
+        registry.register_schema(v1.clone());
+        registry.register_schema(v2.clone());
+
+        let schemas = registry.get_schemas_by_type("Person");
+        assert_eq!(schemas.len(), 2);
+    }
+
+    #[test]
+    fn test_schema_registry_get_or_create() {
+        let mut registry = SchemaRegistry::new();
+
+        let schema1 = registry.get_or_create_schema::<Person>();
+        assert_eq!(schema1.type_name(), "Person");
+        assert_eq!(registry.len(), 1);
+
+        let schema2 = registry.get_or_create_schema::<Person>();
+        assert_eq!(schema2.schema_id(), schema1.schema_id());
+        assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn test_schema_registry_fetch_and_send_stubs() {
+        let mut registry = SchemaRegistry::new();
+        let schema = Schema::new("Test");
+        registry.register_schema(schema.clone());
+
+        let fetched = registry.fetch_schema(schema.schema_id()).unwrap();
+        assert_eq!(fetched, Some(schema.clone()));
+
+        let not_found = registry.fetch_schema(999).unwrap();
+        assert!(not_found.is_none());
+
+        assert!(registry.send_schema(&schema).is_ok());
+    }
+
+    #[test]
+    fn test_default_field_value_for_all_kinds() {
+        assert_eq!(FieldKind::Boolean.default_value(), DefaultFieldValue::Boolean(false));
+        assert_eq!(FieldKind::Int8.default_value(), DefaultFieldValue::Int8(0));
+        assert_eq!(FieldKind::Int16.default_value(), DefaultFieldValue::Int16(0));
+        assert_eq!(FieldKind::Int32.default_value(), DefaultFieldValue::Int32(0));
+        assert_eq!(FieldKind::Int64.default_value(), DefaultFieldValue::Int64(0));
+        assert_eq!(FieldKind::Float32.default_value(), DefaultFieldValue::Float32(0.0));
+        assert_eq!(FieldKind::Float64.default_value(), DefaultFieldValue::Float64(0.0));
+        assert_eq!(FieldKind::String.default_value(), DefaultFieldValue::String(None));
+        assert_eq!(FieldKind::Compact.default_value(), DefaultFieldValue::Null);
+        assert_eq!(FieldKind::ArrayOfInt32.default_value(), DefaultFieldValue::Null);
+        assert_eq!(FieldKind::NullableInt32.default_value(), DefaultFieldValue::Null);
+    }
+
+    #[test]
+    fn test_schema_get_default_value_for_field() {
+        let schema = Schema::with_fields(
+            "Test",
+            vec![
+                FieldDescriptor::new("count", FieldKind::Int32, 0),
+                FieldDescriptor::new("name", FieldKind::String, 1),
+            ],
+        );
+
+        assert_eq!(
+            schema.get_default_value_for_field("count"),
+            Some(DefaultFieldValue::Int32(0))
+        );
+        assert_eq!(
+            schema.get_default_value_for_field("name"),
+            Some(DefaultFieldValue::String(None))
+        );
+        assert_eq!(schema.get_default_value_for_field("unknown"), None);
+    }
+
+    #[test]
+    fn test_schema_compatibility_same_schema() {
+        let schema = Schema::with_fields(
+            "Person",
+            vec![
+                FieldDescriptor::new("name", FieldKind::String, 0),
+                FieldDescriptor::new("age", FieldKind::Int32, 1),
+            ],
+        );
+
+        assert!(schema.is_compatible_with(&schema));
+    }
+
+    #[test]
+    fn test_schema_compatibility_added_field() {
+        let v1 = Schema::with_fields(
+            "Person",
+            vec![FieldDescriptor::new("name", FieldKind::String, 0)],
+        );
+
+        let v2 = Schema::with_fields(
+            "Person",
+            vec![
+                FieldDescriptor::new("name", FieldKind::String, 0),
+                FieldDescriptor::new("age", FieldKind::Int32, 1),
+            ],
+        );
+
+        assert!(v1.is_compatible_with(&v2));
+        assert!(v2.is_compatible_with(&v1));
+    }
+
+    #[test]
+    fn test_schema_compatibility_type_mismatch() {
+        let v1 = Schema::with_fields(
+            "Person",
+            vec![FieldDescriptor::new("age", FieldKind::Int32, 0)],
+        );
+
+        let v2 = Schema::with_fields(
+            "Person",
+            vec![FieldDescriptor::new("age", FieldKind::String, 0)],
+        );
+
+        assert!(!v1.is_compatible_with(&v2));
+    }
+
+    #[test]
+    fn test_schema_compatibility_nullable_promotion() {
+        let v1 = Schema::with_fields(
+            "Test",
+            vec![FieldDescriptor::new("value", FieldKind::Int32, 0)],
+        );
+
+        let v2 = Schema::with_fields(
+            "Test",
+            vec![FieldDescriptor::new("value", FieldKind::NullableInt32, 0)],
+        );
+
+        assert!(v1.is_compatible_with(&v2));
+        assert!(v2.is_compatible_with(&v1));
+    }
+
+    #[test]
+    fn test_schema_compatibility_different_type_names() {
+        let s1 = Schema::with_fields(
+            "Person",
+            vec![FieldDescriptor::new("name", FieldKind::String, 0)],
+        );
+
+        let s2 = Schema::with_fields(
+            "Employee",
+            vec![FieldDescriptor::new("name", FieldKind::String, 0)],
+        );
+
+        assert!(!s1.is_compatible_with(&s2));
+    }
+
+    #[test]
+    fn test_schema_evolution_validator_compatible() {
+        let old_schema = Schema::with_fields(
+            "Person",
+            vec![FieldDescriptor::new("name", FieldKind::String, 0)],
+        );
+
+        let new_schema = Schema::with_fields(
+            "Person",
+            vec![
+                FieldDescriptor::new("name", FieldKind::String, 0),
+                FieldDescriptor::new("email", FieldKind::String, 1),
+            ],
+        );
+
+        let result = SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
+
+        match result {
+            SchemaEvolutionResult::Compatible {
+                added_fields,
+                removed_fields,
+            } => {
+                assert_eq!(added_fields, vec!["email".to_string()]);
+                assert!(removed_fields.is_empty());
+            }
+            _ => panic!("Expected compatible result"),
+        }
+    }
+
+    #[test]
+    fn test_schema_evolution_validator_removed_field() {
+        let old_schema = Schema::with_fields(
+            "Person",
+            vec![
+                FieldDescriptor::new("name", FieldKind::String, 0),
+                FieldDescriptor::new("legacy", FieldKind::Int32, 1),
+            ],
+        );
+
+        let new_schema = Schema::with_fields(
+            "Person",
+            vec![FieldDescriptor::new("name", FieldKind::String, 0)],
+        );
+
+        let result = SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
+
+        match result {
+            SchemaEvolutionResult::Compatible {
+                added_fields,
+                removed_fields,
+            } => {
+                assert!(added_fields.is_empty());
+                assert_eq!(removed_fields, vec!["legacy".to_string()]);
+            }
+            _ => panic!("Expected compatible result"),
+        }
+    }
+
+    #[test]
+    fn test_schema_evolution_validator_incompatible() {
+        let old_schema = Schema::with_fields(
+            "Person",
+            vec![FieldDescriptor::new("age", FieldKind::Int32, 0)],
+        );
+
+        let new_schema = Schema::with_fields(
+            "Person",
+            vec![FieldDescriptor::new("age", FieldKind::String, 0)],
+        );
+
+        let result = SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
+
+        match result {
+            SchemaEvolutionResult::Incompatible { reason } => {
+                assert!(reason.contains("Incompatible field type change"));
+                assert!(reason.contains("age"));
+            }
+            _ => panic!("Expected incompatible result"),
+        }
+    }
+
+    #[test]
+    fn test_schema_evolution_validator_type_name_mismatch() {
+        let old_schema = Schema::new("Person");
+        let new_schema = Schema::new("Employee");
+
+        let result = SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
+
+        match result {
+            SchemaEvolutionResult::Incompatible { reason } => {
+                assert!(reason.contains("Type name mismatch"));
+            }
+            _ => panic!("Expected incompatible result"),
+        }
+    }
+
+    #[test]
+    fn test_schema_evolution_add_field() {
+        #[derive(Debug, Default, PartialEq)]
+        struct PersonV1 {
+            name: String,
+            age: i32,
+        }
+
+        impl Compact for PersonV1 {
+            fn get_type_name() -> &'static str {
+                "PersonEvolved"
+            }
+
+            fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+                writer.write_string("name", Some(&self.name))?;
+                writer.write_int32("age", self.age)?;
+                Ok(())
+            }
+
+            fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+                self.name = reader.read_string("name")?.unwrap_or_default();
+                self.age = reader.read_int32("age")?;
+                Ok(())
+            }
+        }
+
+        #[derive(Debug, Default, PartialEq)]
+        struct PersonV2 {
+            name: String,
+            age: i32,
+            email: Option<String>,
+        }
+
+        impl Compact for PersonV2 {
+            fn get_type_name() -> &'static str {
+                "PersonEvolved"
+            }
+
+            fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+                writer.write_string("name", Some(&self.name))?;
+                writer.write_int32("age", self.age)?;
+                writer.write_string("email", self.email.as_deref())?;
+                Ok(())
+            }
+
+            fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+                self.name = reader.read_string("name")?.unwrap_or_default();
+                self.age = reader.read_int32("age")?;
+                self.email = reader.read_string("email")?;
+                Ok(())
+            }
+        }
+
+        let serializer = CompactSerializer::new();
+
+        let v1 = PersonV1 {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+        let bytes = serializer.serialize(&v1).unwrap();
+
+        let v2: PersonV2 = serializer.deserialize(&bytes).unwrap();
+
+        assert_eq!(v2.name, "Alice");
+        assert_eq!(v2.age, 30);
+        assert_eq!(v2.email, None);
+    }
+
+    #[test]
+    fn test_schema_evolution_remove_field() {
+        #[derive(Debug, Default, PartialEq)]
+        struct PersonV2 {
+            name: String,
+            age: i32,
+            email: Option<String>,
+        }
+
+        impl Compact for PersonV2 {
+            fn get_type_name() -> &'static str {
+                "PersonEvolved2"
+            }
+
+            fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+                writer.write_string("name", Some(&self.name))?;
+                writer.write_int32("age", self.age)?;
+                writer.write_string("email", self.email.as_deref())?;
+                Ok(())
+            }
+
+            fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+                self.name = reader.read_string("name")?.unwrap_or_default();
+                self.age = reader.read_int32("age")?;
+                self.email = reader.read_string("email")?;
+                Ok(())
+            }
+        }
+
+        #[derive(Debug, Default, PartialEq)]
+        struct PersonV1 {
+            name: String,
+            age: i32,
+        }
+
+        impl Compact for PersonV1 {
+            fn get_type_name() -> &'static str {
+                "PersonEvolved2"
+            }
+
+            fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+                writer.write_string("name", Some(&self.name))?;
+                writer.write_int32("age", self.age)?;
+                Ok(())
+            }
+
+            fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+                self.name = reader.read_string("name")?.unwrap_or_default();
+                self.age = reader.read_int32("age")?;
+                Ok(())
+            }
+        }
+
+        let serializer = CompactSerializer::new();
+
+        let v2 = PersonV2 {
+            name: "Bob".to_string(),
+            age: 25,
+            email: Some("bob@example.com".to_string()),
+        };
+        let bytes = serializer.serialize(&v2).unwrap();
+
+        let v1: PersonV1 = serializer.deserialize(&bytes).unwrap();
+
+        assert_eq!(v1.name, "Bob");
+        assert_eq!(v1.age, 25);
+    }
+
+    #[test]
+    fn test_schema_evolution_round_trip_with_registry() {
+        let mut serializer = CompactSerializer::new();
+
+        let v1_schema = Schema::with_fields(
+            "Person",
+            vec![
+                FieldDescriptor::new("name", FieldKind::String, 0),
+                FieldDescriptor::new("age", FieldKind::Int32, 1),
+            ],
+        );
+        let v2_schema = Schema::with_fields(
+            "Person",
+            vec![
+                FieldDescriptor::new("name", FieldKind::String, 0),
+                FieldDescriptor::new("age", FieldKind::Int32, 1),
+                FieldDescriptor::new("score", FieldKind::NullableFloat64, 2),
+            ],
+        );
+
+        serializer.register_schema(v1_schema.clone());
+        serializer.register_schema(v2_schema.clone());
+
+        let schemas = serializer.get_registry().get_schemas_by_type("Person");
+        assert_eq!(schemas.len(), 2);
+
+        let person = Person {
+            name: "Charlie".to_string(),
+            age: 35,
+            active: true,
+            score: Some(99.5),
+        };
+
+        let bytes = serializer.serialize(&person).unwrap();
+        let result: Person = serializer.deserialize(&bytes).unwrap();
+
+        assert_eq!(result, person);
+    }
+
+    #[test]
+    fn test_compact_reader_with_writer_schema() {
+        let writer_schema = Schema::with_fields(
+            "Test",
+            vec![
+                FieldDescriptor::new("a", FieldKind::Int32, 0),
+                FieldDescriptor::new("b", FieldKind::Int32, 1),
+            ],
+        );
+
+        let reader_schema = Schema::with_fields(
+            "Test",
+            vec![
+                FieldDescriptor::new("a", FieldKind::Int32, 0),
+                FieldDescriptor::new("c", FieldKind::Int32, 2),
+            ],
+        );
+
+        let mut writer = DefaultCompactWriter::new(writer_schema.clone());
+        writer.write_int32("a", 10).unwrap();
+        writer.write_int32("b", 20).unwrap();
+        let bytes = writer.to_bytes();
+
+        let mut reader = DefaultCompactReader::from_bytes_with_writer_schema(
+            &bytes,
+            reader_schema.clone(),
+            writer_schema.clone(),
+        )
+        .unwrap();
+
+        assert!(reader.writer_schema().is_some());
+        assert_eq!(reader.read_int32("a").unwrap(), 10);
+        assert_eq!(reader.read_int32("c").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_compact_serializer_with_registry() {
+        let mut registry = SchemaRegistry::new();
+        let schema = Schema::with_fields(
+            "Person",
+            vec![
+                FieldDescriptor::new("name", FieldKind::String, 0),
+                FieldDescriptor::new("age", FieldKind::Int32, 1),
+            ],
+        );
+        registry.register_schema(schema);
+
+        let serializer = CompactSerializer::with_registry(registry);
+
+        let person = Person {
+            name: "Test".to_string(),
+            age: 42,
+            active: true,
+            score: None,
+        };
+
+        let bytes = serializer.serialize(&person).unwrap();
+        let result: Person = serializer.deserialize(&bytes).unwrap();
+
+        assert_eq!(result.name, person.name);
+        assert_eq!(result.age, person.age);
     }
 }
