@@ -7,9 +7,12 @@ use std::time::Instant;
 use bytes::BytesMut;
 use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
 use hazelcast_core::{HazelcastError, Result};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Encoder};
+
+#[cfg(feature = "tls")]
+use crate::config::TlsConfig;
 
 /// Unique identifier for a connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,12 +43,47 @@ impl std::fmt::Display for ConnectionId {
     }
 }
 
+/// Wrapper for connection streams supporting both plain and TLS.
+enum ConnectionStream {
+    Plain(TcpStream),
+    #[cfg(feature = "tls")]
+    Tls(tokio_rustls::client::TlsStream<TcpStream>),
+}
+
+impl std::fmt::Debug for ConnectionStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Plain(stream) => f.debug_tuple("Plain").field(stream).finish(),
+            #[cfg(feature = "tls")]
+            Self::Tls(_) => f.debug_tuple("Tls").field(&"<TlsStream>").finish(),
+        }
+    }
+}
+
+impl ConnectionStream {
+    async fn read_buf(&mut self, buf: &mut BytesMut) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(stream) => stream.read_buf(buf).await,
+            #[cfg(feature = "tls")]
+            Self::Tls(stream) => stream.read_buf(buf).await,
+        }
+    }
+
+    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        match self {
+            Self::Plain(stream) => stream.write_all(buf).await,
+            #[cfg(feature = "tls")]
+            Self::Tls(stream) => stream.write_all(buf).await,
+        }
+    }
+}
+
 /// A connection to a single Hazelcast cluster member.
 #[derive(Debug)]
 pub struct Connection {
     id: ConnectionId,
     address: SocketAddr,
-    stream: TcpStream,
+    stream: ConnectionStream,
     codec: ClientMessageCodec,
     read_buffer: BytesMut,
     created_at: Instant,
@@ -60,7 +98,22 @@ impl Connection {
         Self {
             id: ConnectionId::new(),
             address,
-            stream,
+            stream: ConnectionStream::Plain(stream),
+            codec: ClientMessageCodec::new(),
+            read_buffer: BytesMut::with_capacity(8192),
+            created_at: now,
+            last_read_at: now,
+            last_write_at: now,
+        }
+    }
+
+    #[cfg(feature = "tls")]
+    fn new_tls(stream: tokio_rustls::client::TlsStream<TcpStream>, address: SocketAddr) -> Self {
+        let now = Instant::now();
+        Self {
+            id: ConnectionId::new(),
+            address,
+            stream: ConnectionStream::Tls(stream),
             codec: ClientMessageCodec::new(),
             read_buffer: BytesMut::with_capacity(8192),
             created_at: now,
@@ -106,6 +159,118 @@ impl Connection {
 
         tracing::debug!(address = %address, "established connection");
         Ok(Self::new(stream, address))
+    }
+
+    /// Establishes a new TLS connection to the given address.
+    #[cfg(feature = "tls")]
+    pub async fn connect_tls(
+        address: SocketAddr,
+        tls_config: &TlsConfig,
+        server_name: Option<&str>,
+    ) -> Result<Self> {
+        use std::io::BufReader;
+        use std::sync::Arc;
+        use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+        use tokio_rustls::TlsConnector;
+
+        let stream = TcpStream::connect(address).await.map_err(|e| {
+            HazelcastError::Connection(format!("failed to connect to {}: {}", address, e))
+        })?;
+
+        stream.set_nodelay(true).map_err(|e| {
+            HazelcastError::Connection(format!("failed to set TCP_NODELAY: {}", e))
+        })?;
+
+        let tls_stream = Self::perform_tls_handshake(stream, address, tls_config, server_name).await?;
+
+        tracing::debug!(address = %address, "established TLS connection");
+        Ok(Self::new_tls(tls_stream, address))
+    }
+
+    #[cfg(feature = "tls")]
+    async fn perform_tls_handshake(
+        stream: TcpStream,
+        address: SocketAddr,
+        tls_config: &TlsConfig,
+        server_name: Option<&str>,
+    ) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
+        use std::io::BufReader;
+        use std::sync::Arc;
+        use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+        use tokio_rustls::TlsConnector;
+
+        let mut root_store = RootCertStore::empty();
+
+        if let Some(ca_path) = tls_config.ca_cert_path() {
+            let ca_file = std::fs::File::open(ca_path).map_err(|e| {
+                HazelcastError::Connection(format!("failed to open CA certificate: {}", e))
+            })?;
+            let mut reader = BufReader::new(ca_file);
+            let certs = rustls_pemfile::certs(&mut reader)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| {
+                    HazelcastError::Connection(format!("failed to parse CA certificate: {}", e))
+                })?;
+
+            for cert in certs {
+                root_store.add(cert).map_err(|e| {
+                    HazelcastError::Connection(format!("failed to add CA certificate: {}", e))
+                })?;
+            }
+        } else {
+            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        }
+
+        let config_builder = ClientConfig::builder().with_root_certificates(root_store);
+
+        let client_config = if tls_config.has_client_auth() {
+            let cert_path = tls_config.client_cert_path().unwrap();
+            let key_path = tls_config.client_key_path().unwrap();
+
+            let cert_file = std::fs::File::open(cert_path).map_err(|e| {
+                HazelcastError::Connection(format!("failed to open client certificate: {}", e))
+            })?;
+            let mut cert_reader = BufReader::new(cert_file);
+            let certs = rustls_pemfile::certs(&mut cert_reader)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| {
+                    HazelcastError::Connection(format!("failed to parse client certificate: {}", e))
+                })?;
+
+            let key_file = std::fs::File::open(key_path).map_err(|e| {
+                HazelcastError::Connection(format!("failed to open client key: {}", e))
+            })?;
+            let mut key_reader = BufReader::new(key_file);
+            let key = rustls_pemfile::private_key(&mut key_reader)
+                .map_err(|e| {
+                    HazelcastError::Connection(format!("failed to parse client key: {}", e))
+                })?
+                .ok_or_else(|| {
+                    HazelcastError::Connection("no private key found in file".to_string())
+                })?;
+
+            config_builder.with_client_auth_cert(certs, key).map_err(|e| {
+                HazelcastError::Connection(format!("failed to configure client auth: {}", e))
+            })?
+        } else {
+            config_builder.with_no_client_auth()
+        };
+
+        let connector = TlsConnector::from(Arc::new(client_config));
+
+        let name = server_name
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| address.ip().to_string());
+
+        let server_name = rustls_pki_types::ServerName::try_from(name.clone()).map_err(|e| {
+            HazelcastError::Connection(format!("invalid server name '{}': {}", name, e))
+        })?;
+
+        let tls_stream = connector.connect(server_name, stream).await.map_err(|e| {
+            HazelcastError::Connection(format!("TLS handshake failed with {}: {}", address, e))
+        })?;
+
+        Ok(tls_stream)
     }
 
     /// Sends a message over this connection.

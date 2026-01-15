@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+tls = ["tokio-rustls", "rustls-pemfile", "webpki-roots", "rustls-pki-types"]
+
 [dependencies]
 hazelcast-core = { path = "../hazelcast-core" }
 tokio = { workspace = true }
@@ -12,6 +16,11 @@ bytes = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+
+tokio-rustls = { version = "0.26", optional = true }
+rustls-pemfile = { version = "2", optional = true }
+webpki-roots = { version = "0.26", optional = true }
+rustls-pki-types = { version = "1", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

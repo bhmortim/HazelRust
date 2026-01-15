@@ -1,6 +1,7 @@
 //! Client configuration types and builders.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// Default cluster name.
@@ -46,6 +47,7 @@ pub struct NetworkConfig {
     addresses: Vec<SocketAddr>,
     connection_timeout: Duration,
     heartbeat_interval: Duration,
+    tls: TlsConfig,
 }
 
 impl NetworkConfig {
@@ -63,6 +65,11 @@ impl NetworkConfig {
     pub fn heartbeat_interval(&self) -> Duration {
         self.heartbeat_interval
     }
+
+    /// Returns the TLS configuration.
+    pub fn tls(&self) -> &TlsConfig {
+        &self.tls
+    }
 }
 
 impl Default for NetworkConfig {
@@ -71,6 +78,7 @@ impl Default for NetworkConfig {
             addresses: vec!["127.0.0.1:5701".parse().unwrap()],
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
+            tls: TlsConfig::default(),
         }
     }
 }
@@ -81,6 +89,7 @@ pub struct NetworkConfigBuilder {
     addresses: Vec<SocketAddr>,
     connection_timeout: Option<Duration>,
     heartbeat_interval: Option<Duration>,
+    tls: TlsConfigBuilder,
 }
 
 impl NetworkConfigBuilder {
@@ -113,19 +122,37 @@ impl NetworkConfigBuilder {
         self
     }
 
+    /// Configures TLS settings using a builder function.
+    pub fn tls<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(TlsConfigBuilder) -> TlsConfigBuilder,
+    {
+        self.tls = f(self.tls);
+        self
+    }
+
+    /// Enables TLS with default settings.
+    pub fn enable_tls(mut self) -> Self {
+        self.tls = self.tls.enabled(true);
+        self
+    }
+
     /// Builds the network configuration.
-    pub fn build(self) -> NetworkConfig {
+    pub fn build(self) -> Result<NetworkConfig, ConfigError> {
         let addresses = if self.addresses.is_empty() {
             vec!["127.0.0.1:5701".parse().unwrap()]
         } else {
             self.addresses
         };
 
-        NetworkConfig {
+        let tls = self.tls.build()?;
+
+        Ok(NetworkConfig {
             addresses,
             connection_timeout: self.connection_timeout.unwrap_or(DEFAULT_CONNECTION_TIMEOUT),
             heartbeat_interval: self.heartbeat_interval.unwrap_or(DEFAULT_HEARTBEAT_INTERVAL),
-        }
+            tls,
+        })
     }
 }
 
@@ -249,6 +276,136 @@ impl RetryConfigBuilder {
             max_backoff,
             multiplier,
             max_retries,
+        })
+    }
+}
+
+/// TLS configuration for secure connections.
+#[derive(Debug, Clone)]
+pub struct TlsConfig {
+    enabled: bool,
+    ca_cert_path: Option<PathBuf>,
+    client_cert_path: Option<PathBuf>,
+    client_key_path: Option<PathBuf>,
+    verify_hostname: bool,
+}
+
+impl TlsConfig {
+    /// Returns whether TLS is enabled.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Returns the path to the CA certificate file.
+    pub fn ca_cert_path(&self) -> Option<&PathBuf> {
+        self.ca_cert_path.as_ref()
+    }
+
+    /// Returns the path to the client certificate file.
+    pub fn client_cert_path(&self) -> Option<&PathBuf> {
+        self.client_cert_path.as_ref()
+    }
+
+    /// Returns the path to the client private key file.
+    pub fn client_key_path(&self) -> Option<&PathBuf> {
+        self.client_key_path.as_ref()
+    }
+
+    /// Returns whether hostname verification is enabled.
+    pub fn verify_hostname(&self) -> bool {
+        self.verify_hostname
+    }
+
+    /// Returns true if client authentication is configured.
+    pub fn has_client_auth(&self) -> bool {
+        self.client_cert_path.is_some() && self.client_key_path.is_some()
+    }
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ca_cert_path: None,
+            client_cert_path: None,
+            client_key_path: None,
+            verify_hostname: true,
+        }
+    }
+}
+
+/// Builder for `TlsConfig`.
+#[derive(Debug, Clone, Default)]
+pub struct TlsConfigBuilder {
+    enabled: Option<bool>,
+    ca_cert_path: Option<PathBuf>,
+    client_cert_path: Option<PathBuf>,
+    client_key_path: Option<PathBuf>,
+    verify_hostname: Option<bool>,
+}
+
+impl TlsConfigBuilder {
+    /// Creates a new TLS configuration builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enables or disables TLS.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    /// Sets the path to the CA certificate file for server verification.
+    pub fn ca_cert_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.ca_cert_path = Some(path.into());
+        self
+    }
+
+    /// Sets the path to the client certificate file for mutual TLS.
+    pub fn client_cert_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.client_cert_path = Some(path.into());
+        self
+    }
+
+    /// Sets the path to the client private key file for mutual TLS.
+    pub fn client_key_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.client_key_path = Some(path.into());
+        self
+    }
+
+    /// Sets client certificate and key paths for mutual TLS.
+    pub fn client_auth(self, cert_path: impl Into<PathBuf>, key_path: impl Into<PathBuf>) -> Self {
+        self.client_cert_path(cert_path).client_key_path(key_path)
+    }
+
+    /// Enables or disables hostname verification.
+    pub fn verify_hostname(mut self, verify: bool) -> Self {
+        self.verify_hostname = Some(verify);
+        self
+    }
+
+    /// Builds the TLS configuration, returning an error if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if:
+    /// - Only one of `client_cert_path` or `client_key_path` is set
+    pub fn build(self) -> Result<TlsConfig, ConfigError> {
+        let enabled = self.enabled.unwrap_or(false);
+
+        if self.client_cert_path.is_some() != self.client_key_path.is_some() {
+            return Err(ConfigError::new(
+                "both client_cert_path and client_key_path must be provided together",
+            ));
+        }
+
+        Ok(TlsConfig {
+            enabled,
+            ca_cert_path: self.ca_cert_path,
+            client_cert_path: self.client_cert_path,
+            client_key_path: self.client_key_path,
+            verify_hostname: self.verify_hostname.unwrap_or(true),
         })
     }
 }
@@ -446,7 +603,7 @@ impl ClientConfigBuilder {
             return Err(ConfigError::new("cluster_name must not be empty"));
         }
 
-        let network = self.network.build();
+        let network = self.network.build()?;
         let retry = self.retry.build()?;
         let security = self.security.build()?;
 
@@ -570,7 +727,8 @@ mod tests {
             .add_address(addr)
             .connection_timeout(Duration::from_secs(15))
             .heartbeat_interval(Duration::from_secs(10))
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(config.addresses(), &[addr]);
         assert_eq!(config.connection_timeout(), Duration::from_secs(15));
@@ -579,7 +737,7 @@ mod tests {
 
     #[test]
     fn test_network_config_defaults() {
-        let config = NetworkConfigBuilder::new().build();
+        let config = NetworkConfigBuilder::new().build().unwrap();
         assert_eq!(config.addresses().len(), 1);
         assert_eq!(config.connection_timeout(), DEFAULT_CONNECTION_TIMEOUT);
         assert_eq!(config.heartbeat_interval(), DEFAULT_HEARTBEAT_INTERVAL);
@@ -685,5 +843,103 @@ mod tests {
             cloned.security().username(),
             config.security().username()
         );
+    }
+
+    #[test]
+    fn test_tls_config_defaults() {
+        let config = TlsConfigBuilder::new().build().unwrap();
+        assert!(!config.enabled());
+        assert!(config.ca_cert_path().is_none());
+        assert!(config.client_cert_path().is_none());
+        assert!(config.client_key_path().is_none());
+        assert!(config.verify_hostname());
+        assert!(!config.has_client_auth());
+    }
+
+    #[test]
+    fn test_tls_config_enabled() {
+        let config = TlsConfigBuilder::new()
+            .enabled(true)
+            .verify_hostname(false)
+            .build()
+            .unwrap();
+
+        assert!(config.enabled());
+        assert!(!config.verify_hostname());
+    }
+
+    #[test]
+    fn test_tls_config_with_ca_cert() {
+        let config = TlsConfigBuilder::new()
+            .enabled(true)
+            .ca_cert_path("/path/to/ca.pem")
+            .build()
+            .unwrap();
+
+        assert!(config.enabled());
+        assert_eq!(
+            config.ca_cert_path(),
+            Some(&PathBuf::from("/path/to/ca.pem"))
+        );
+    }
+
+    #[test]
+    fn test_tls_config_client_auth() {
+        let config = TlsConfigBuilder::new()
+            .enabled(true)
+            .client_auth("/path/to/cert.pem", "/path/to/key.pem")
+            .build()
+            .unwrap();
+
+        assert!(config.has_client_auth());
+        assert_eq!(
+            config.client_cert_path(),
+            Some(&PathBuf::from("/path/to/cert.pem"))
+        );
+        assert_eq!(
+            config.client_key_path(),
+            Some(&PathBuf::from("/path/to/key.pem"))
+        );
+    }
+
+    #[test]
+    fn test_tls_config_partial_client_auth_fails() {
+        let result = TlsConfigBuilder::new()
+            .enabled(true)
+            .client_cert_path("/path/to/cert.pem")
+            .build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("client_cert_path and client_key_path must be provided together"));
+    }
+
+    #[test]
+    fn test_network_config_with_tls() {
+        let config = NetworkConfigBuilder::new()
+            .tls(|t| t.enabled(true).verify_hostname(false))
+            .build()
+            .unwrap();
+
+        assert!(config.tls().enabled());
+        assert!(!config.tls().verify_hostname());
+    }
+
+    #[test]
+    fn test_network_config_enable_tls_shortcut() {
+        let config = NetworkConfigBuilder::new()
+            .enable_tls()
+            .build()
+            .unwrap();
+
+        assert!(config.tls().enabled());
+    }
+
+    #[test]
+    fn test_tls_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<TlsConfig>();
     }
 }

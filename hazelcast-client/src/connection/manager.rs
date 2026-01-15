@@ -130,7 +130,7 @@ impl ConnectionManager {
     pub async fn connect_to(&self, address: SocketAddr) -> Result<ConnectionId> {
         let connect_timeout = self.config.network().connection_timeout();
 
-        let connection = timeout(connect_timeout, Connection::connect(address))
+        let connection = timeout(connect_timeout, self.create_connection(address))
             .await
             .map_err(|_| {
                 HazelcastError::Timeout(format!(
@@ -147,6 +147,18 @@ impl ConnectionManager {
         tracing::info!(id = %id, address = %address, "connected to cluster member");
 
         Ok(id)
+    }
+
+    async fn create_connection(&self, address: SocketAddr) -> Result<Connection> {
+        #[cfg(feature = "tls")]
+        {
+            let tls_config = self.config.network().tls();
+            if tls_config.enabled() {
+                return Connection::connect_tls(address, tls_config, None).await;
+            }
+        }
+
+        Connection::connect(address).await
     }
 
     /// Reconnects to an address with exponential backoff.
