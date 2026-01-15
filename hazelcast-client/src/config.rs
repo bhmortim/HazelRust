@@ -430,11 +430,167 @@ impl TlsConfigBuilder {
     }
 }
 
+/// Permission actions that can be granted to a client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PermissionAction {
+    /// Permission to create distributed objects.
+    Create,
+    /// Permission to destroy distributed objects.
+    Destroy,
+    /// Permission to read from distributed objects.
+    Read,
+    /// Permission to put/write to distributed objects.
+    Put,
+    /// Permission to remove entries from distributed objects.
+    Remove,
+    /// Permission to listen to events.
+    Listen,
+    /// Permission to acquire locks.
+    Lock,
+    /// Permission to create indexes.
+    Index,
+    /// All permissions (admin).
+    All,
+}
+
+/// Permissions granted to the authenticated client.
+///
+/// This struct tracks the operations the client is allowed to perform
+/// based on RBAC configuration on the server.
+#[derive(Debug, Clone, Default)]
+pub struct Permissions {
+    can_create: bool,
+    can_destroy: bool,
+    can_read: bool,
+    can_put: bool,
+    can_remove: bool,
+    can_listen: bool,
+    can_lock: bool,
+    can_index: bool,
+    is_admin: bool,
+}
+
+impl Permissions {
+    /// Creates a new permissions set with all permissions denied.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a permissions set with all permissions granted (admin).
+    pub fn all() -> Self {
+        Self {
+            can_create: true,
+            can_destroy: true,
+            can_read: true,
+            can_put: true,
+            can_remove: true,
+            can_listen: true,
+            can_lock: true,
+            can_index: true,
+            is_admin: true,
+        }
+    }
+
+    /// Returns whether the client can create distributed objects.
+    pub fn can_create(&self) -> bool {
+        self.is_admin || self.can_create
+    }
+
+    /// Returns whether the client can destroy distributed objects.
+    pub fn can_destroy(&self) -> bool {
+        self.is_admin || self.can_destroy
+    }
+
+    /// Returns whether the client can read from distributed objects.
+    pub fn can_read(&self) -> bool {
+        self.is_admin || self.can_read
+    }
+
+    /// Returns whether the client can put/write to distributed objects.
+    pub fn can_put(&self) -> bool {
+        self.is_admin || self.can_put
+    }
+
+    /// Returns whether the client can remove entries from distributed objects.
+    pub fn can_remove(&self) -> bool {
+        self.is_admin || self.can_remove
+    }
+
+    /// Returns whether the client can listen to events.
+    pub fn can_listen(&self) -> bool {
+        self.is_admin || self.can_listen
+    }
+
+    /// Returns whether the client can acquire locks.
+    pub fn can_lock(&self) -> bool {
+        self.is_admin || self.can_lock
+    }
+
+    /// Returns whether the client can create indexes.
+    pub fn can_index(&self) -> bool {
+        self.is_admin || self.can_index
+    }
+
+    /// Returns whether the client has admin privileges.
+    pub fn is_admin(&self) -> bool {
+        self.is_admin
+    }
+
+    /// Grants the specified permission action.
+    pub fn grant(&mut self, action: PermissionAction) {
+        match action {
+            PermissionAction::Create => self.can_create = true,
+            PermissionAction::Destroy => self.can_destroy = true,
+            PermissionAction::Read => self.can_read = true,
+            PermissionAction::Put => self.can_put = true,
+            PermissionAction::Remove => self.can_remove = true,
+            PermissionAction::Listen => self.can_listen = true,
+            PermissionAction::Lock => self.can_lock = true,
+            PermissionAction::Index => self.can_index = true,
+            PermissionAction::All => self.is_admin = true,
+        }
+    }
+
+    /// Revokes the specified permission action.
+    pub fn revoke(&mut self, action: PermissionAction) {
+        match action {
+            PermissionAction::Create => self.can_create = false,
+            PermissionAction::Destroy => self.can_destroy = false,
+            PermissionAction::Read => self.can_read = false,
+            PermissionAction::Put => self.can_put = false,
+            PermissionAction::Remove => self.can_remove = false,
+            PermissionAction::Listen => self.can_listen = false,
+            PermissionAction::Lock => self.can_lock = false,
+            PermissionAction::Index => self.can_index = false,
+            PermissionAction::All => self.is_admin = false,
+        }
+    }
+
+    /// Returns whether the specified action is permitted.
+    pub fn is_permitted(&self, action: PermissionAction) -> bool {
+        if self.is_admin {
+            return true;
+        }
+        match action {
+            PermissionAction::Create => self.can_create,
+            PermissionAction::Destroy => self.can_destroy,
+            PermissionAction::Read => self.can_read,
+            PermissionAction::Put => self.can_put,
+            PermissionAction::Remove => self.can_remove,
+            PermissionAction::Listen => self.can_listen,
+            PermissionAction::Lock => self.can_lock,
+            PermissionAction::Index => self.can_index,
+            PermissionAction::All => self.is_admin,
+        }
+    }
+}
+
 /// Security configuration for authentication.
 #[derive(Debug, Clone, Default)]
 pub struct SecurityConfig {
     username: Option<String>,
     password: Option<String>,
+    token: Option<String>,
 }
 
 impl SecurityConfig {
@@ -448,9 +604,24 @@ impl SecurityConfig {
         self.password.as_deref()
     }
 
-    /// Returns true if credentials are configured.
+    /// Returns the configured authentication token.
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_deref()
+    }
+
+    /// Returns true if username/password credentials are configured.
     pub fn has_credentials(&self) -> bool {
         self.username.is_some() && self.password.is_some()
+    }
+
+    /// Returns true if token-based authentication is configured.
+    pub fn has_token(&self) -> bool {
+        self.token.is_some()
+    }
+
+    /// Returns true if any authentication method is configured.
+    pub fn is_authenticated(&self) -> bool {
+        self.has_credentials() || self.has_token()
     }
 }
 
@@ -459,6 +630,7 @@ impl SecurityConfig {
 pub struct SecurityConfigBuilder {
     username: Option<String>,
     password: Option<String>,
+    token: Option<String>,
 }
 
 impl SecurityConfigBuilder {
@@ -484,7 +656,22 @@ impl SecurityConfigBuilder {
         self.username(username).password(password)
     }
 
+    /// Sets the authentication token for token-based authentication.
+    ///
+    /// Token-based authentication is used for RBAC (Role-Based Access Control)
+    /// where the token encodes the client's permissions.
+    pub fn token(mut self, token: impl Into<String>) -> Self {
+        self.token = Some(token.into());
+        self
+    }
+
     /// Builds the security configuration, returning an error if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if:
+    /// - Only one of `username` or `password` is set (both must be provided together)
+    /// - Both credentials and token are set (mutually exclusive)
     pub fn build(self) -> Result<SecurityConfig, ConfigError> {
         if self.username.is_some() != self.password.is_some() {
             return Err(ConfigError::new(
@@ -492,9 +679,16 @@ impl SecurityConfigBuilder {
             ));
         }
 
+        if self.token.is_some() && (self.username.is_some() || self.password.is_some()) {
+            return Err(ConfigError::new(
+                "token and username/password authentication are mutually exclusive",
+            ));
+        }
+
         Ok(SecurityConfig {
             username: self.username,
             password: self.password,
+            token: self.token,
         })
     }
 }
@@ -1043,6 +1237,143 @@ mod tests {
     fn test_client_config_default_no_near_caches() {
         let config = ClientConfig::default();
         assert!(config.near_caches().is_empty());
+    }
+
+    #[test]
+    fn test_security_token_authentication() {
+        let config = SecurityConfigBuilder::new()
+            .token("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test")
+            .build()
+            .unwrap();
+
+        assert!(config.has_token());
+        assert!(!config.has_credentials());
+        assert!(config.is_authenticated());
+        assert_eq!(
+            config.token(),
+            Some("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test")
+        );
+    }
+
+    #[test]
+    fn test_security_token_and_credentials_mutually_exclusive() {
+        let result = SecurityConfigBuilder::new()
+            .token("some-token")
+            .credentials("admin", "secret")
+            .build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn test_security_is_authenticated() {
+        let no_auth = SecurityConfigBuilder::new().build().unwrap();
+        assert!(!no_auth.is_authenticated());
+
+        let with_creds = SecurityConfigBuilder::new()
+            .credentials("user", "pass")
+            .build()
+            .unwrap();
+        assert!(with_creds.is_authenticated());
+
+        let with_token = SecurityConfigBuilder::new()
+            .token("token")
+            .build()
+            .unwrap();
+        assert!(with_token.is_authenticated());
+    }
+
+    #[test]
+    fn test_client_config_with_token() {
+        let config = ClientConfig::builder()
+            .security(|s| s.token("my-auth-token"))
+            .build()
+            .unwrap();
+
+        assert!(config.security().has_token());
+        assert_eq!(config.security().token(), Some("my-auth-token"));
+    }
+
+    #[test]
+    fn test_permissions_default_denied() {
+        let perms = Permissions::new();
+        assert!(!perms.can_create());
+        assert!(!perms.can_destroy());
+        assert!(!perms.can_read());
+        assert!(!perms.can_put());
+        assert!(!perms.can_remove());
+        assert!(!perms.can_listen());
+        assert!(!perms.can_lock());
+        assert!(!perms.can_index());
+        assert!(!perms.is_admin());
+    }
+
+    #[test]
+    fn test_permissions_all() {
+        let perms = Permissions::all();
+        assert!(perms.can_create());
+        assert!(perms.can_destroy());
+        assert!(perms.can_read());
+        assert!(perms.can_put());
+        assert!(perms.can_remove());
+        assert!(perms.can_listen());
+        assert!(perms.can_lock());
+        assert!(perms.can_index());
+        assert!(perms.is_admin());
+    }
+
+    #[test]
+    fn test_permissions_grant_and_revoke() {
+        let mut perms = Permissions::new();
+
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+        assert!(perms.can_read());
+        assert!(perms.can_put());
+        assert!(!perms.can_remove());
+
+        perms.revoke(PermissionAction::Read);
+        assert!(!perms.can_read());
+        assert!(perms.can_put());
+    }
+
+    #[test]
+    fn test_permissions_admin_overrides() {
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::All);
+
+        assert!(perms.can_create());
+        assert!(perms.can_read());
+        assert!(perms.can_put());
+        assert!(perms.can_remove());
+    }
+
+    #[test]
+    fn test_permissions_is_permitted() {
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Listen);
+
+        assert!(perms.is_permitted(PermissionAction::Read));
+        assert!(perms.is_permitted(PermissionAction::Listen));
+        assert!(!perms.is_permitted(PermissionAction::Put));
+        assert!(!perms.is_permitted(PermissionAction::All));
+    }
+
+    #[test]
+    fn test_permissions_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Permissions>();
+    }
+
+    #[test]
+    fn test_permission_action_is_copy() {
+        fn assert_copy<T: Copy>() {}
+        assert_copy::<PermissionAction>();
     }
 
     #[test]
