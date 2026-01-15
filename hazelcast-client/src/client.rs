@@ -8,6 +8,7 @@ use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};
 use crate::executor::ExecutorService;
+use crate::jet::JetService;
 use crate::listener::{LifecycleEvent, Member, MemberEvent};
 use crate::proxy::{
     AtomicLong, CountDownLatch, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic,
@@ -357,6 +358,33 @@ impl HazelcastClient {
     /// ```
     pub fn sql(&self) -> SqlService {
         SqlService::new(Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns the Jet service for submitting and managing streaming jobs.
+    ///
+    /// The Jet service allows submitting streaming pipelines for execution
+    /// on the Hazelcast cluster, monitoring job status, and managing job lifecycle.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let jet = client.jet();
+    /// let pipeline = Pipeline::builder()
+    ///     .read_from("source-map")
+    ///     .map("transform")
+    ///     .write_to("sink-map")
+    ///     .build();
+    ///
+    /// let job = jet.submit_job(&pipeline, None).await?;
+    /// println!("Job {} submitted", job.id());
+    ///
+    /// let status = job.get_status().await?;
+    /// println!("Job status: {}", status);
+    ///
+    /// job.cancel().await?;
+    /// ```
+    pub fn jet(&self) -> JetService {
+        JetService::new(Arc::clone(&self.connection_manager))
     }
 
     /// Creates a new transaction context with the specified options.

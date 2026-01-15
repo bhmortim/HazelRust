@@ -8,6 +8,7 @@ pub mod config;
 pub mod connection;
 pub mod diagnostics;
 pub mod executor;
+pub mod jet;
 pub mod listener;
 #[cfg(feature = "metrics")]
 pub mod metrics;
@@ -61,6 +62,7 @@ pub use transaction::{
     XA_RBBASE, XA_RBROLLBACK, XA_RBCOMMFAIL, XA_RBDEADLOCK, XA_RBINTEGRITY,
     XA_RBOTHER, XA_RBPROTO, XA_RBTIMEOUT, XA_RBTRANSIENT, XA_RBEND,
 };
+pub use jet::{JetService, Job, JobConfig, JobConfigBuilder, JobStatus, Pipeline, PipelineBuilder};
 pub use security::{
     AuthError, AuthResponse, Authenticator, Credentials, CustomCredentials, DefaultAuthenticator,
 };
