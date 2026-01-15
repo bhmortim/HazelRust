@@ -9,7 +9,7 @@ use crate::connection::ConnectionManager;
 use crate::listener::{Member, MemberEvent};
 use crate::proxy::{
     AtomicLong, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic, MultiMap,
-    PNCounter, ReplicatedMap, Ringbuffer,
+    PNCounter, ReplicatedMap, Ringbuffer, Semaphore,
 };
 
 /// The main entry point for connecting to a Hazelcast cluster.
@@ -251,6 +251,21 @@ impl HazelcastClient {
     /// - Scenarios where detecting stale lock holders is important
     pub fn get_fenced_lock(&self, name: &str) -> FencedLock {
         FencedLock::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed Semaphore proxy for the given name.
+    ///
+    /// The Semaphore provides a distributed counting semaphore backed by the CP
+    /// subsystem. It controls access to a shared resource through permits.
+    ///
+    /// Note: Semaphore requires the CP subsystem to be enabled on the Hazelcast cluster.
+    ///
+    /// Semaphores are ideal for:
+    /// - Limiting concurrent access to a resource across the cluster
+    /// - Implementing distributed rate limiting
+    /// - Coordinating access to bounded resources
+    pub fn get_semaphore(&self, name: &str) -> Semaphore {
+        Semaphore::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.

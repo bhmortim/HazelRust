@@ -280,3 +280,21 @@ pub const CP_FENCED_LOCK_UNLOCK: i32 = 0x070300;
 
 /// CP FencedLock get lock ownership state request.
 pub const CP_FENCED_LOCK_GET_LOCK_OWNERSHIP_STATE: i32 = 0x070400;
+
+/// CP Semaphore init request.
+pub const CP_SEMAPHORE_INIT: i32 = 0x0C0100;
+
+/// CP Semaphore acquire request.
+pub const CP_SEMAPHORE_ACQUIRE: i32 = 0x0C0200;
+
+/// CP Semaphore release request.
+pub const CP_SEMAPHORE_RELEASE: i32 = 0x0C0300;
+
+/// CP Semaphore drain request.
+pub const CP_SEMAPHORE_DRAIN: i32 = 0x0C0400;
+
+/// CP Semaphore change (reduce/increase) request.
+pub const CP_SEMAPHORE_CHANGE: i32 = 0x0C0500;
+
+/// CP Semaphore available permits request.
+pub const CP_SEMAPHORE_AVAILABLE_PERMITS: i32 = 0x0C0600;
