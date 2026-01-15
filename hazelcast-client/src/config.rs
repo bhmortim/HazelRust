@@ -50,6 +50,7 @@ pub struct NetworkConfig {
     connection_timeout: Duration,
     heartbeat_interval: Duration,
     tls: TlsConfig,
+    ws_url: Option<String>,
 }
 
 impl NetworkConfig {
@@ -72,6 +73,11 @@ impl NetworkConfig {
     pub fn tls(&self) -> &TlsConfig {
         &self.tls
     }
+
+    /// Returns the WebSocket URL if configured.
+    pub fn ws_url(&self) -> Option<&str> {
+        self.ws_url.as_deref()
+    }
 }
 
 impl Default for NetworkConfig {
@@ -81,6 +87,7 @@ impl Default for NetworkConfig {
             connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             tls: TlsConfig::default(),
+            ws_url: None,
         }
     }
 }
@@ -92,6 +99,7 @@ pub struct NetworkConfigBuilder {
     connection_timeout: Option<Duration>,
     heartbeat_interval: Option<Duration>,
     tls: TlsConfigBuilder,
+    ws_url: Option<String>,
 }
 
 impl NetworkConfigBuilder {
@@ -139,6 +147,15 @@ impl NetworkConfigBuilder {
         self
     }
 
+    /// Sets the WebSocket URL for WebSocket transport.
+    ///
+    /// When set, the client will use WebSocket connections instead of raw TCP.
+    /// The URL should be in the format `ws://host:port/path` or `wss://host:port/path`.
+    pub fn ws_url(mut self, url: impl Into<String>) -> Self {
+        self.ws_url = Some(url.into());
+        self
+    }
+
     /// Builds the network configuration.
     pub fn build(self) -> Result<NetworkConfig, ConfigError> {
         let addresses = if self.addresses.is_empty() {
@@ -154,6 +171,7 @@ impl NetworkConfigBuilder {
             connection_timeout: self.connection_timeout.unwrap_or(DEFAULT_CONNECTION_TIMEOUT),
             heartbeat_interval: self.heartbeat_interval.unwrap_or(DEFAULT_HEARTBEAT_INTERVAL),
             tls,
+            ws_url: self.ws_url,
         })
     }
 }
@@ -1025,5 +1043,47 @@ mod tests {
     fn test_client_config_default_no_near_caches() {
         let config = ClientConfig::default();
         assert!(config.near_caches().is_empty());
+    }
+
+    #[test]
+    fn test_network_config_ws_url() {
+        let config = NetworkConfigBuilder::new()
+            .ws_url("ws://127.0.0.1:5701/hazelcast")
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            config.ws_url(),
+            Some("ws://127.0.0.1:5701/hazelcast")
+        );
+    }
+
+    #[test]
+    fn test_network_config_ws_url_default_none() {
+        let config = NetworkConfigBuilder::new().build().unwrap();
+        assert!(config.ws_url().is_none());
+    }
+
+    #[test]
+    fn test_network_config_wss_url() {
+        let config = NetworkConfigBuilder::new()
+            .ws_url("wss://cluster.example.com:443")
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            config.ws_url(),
+            Some("wss://cluster.example.com:443")
+        );
+    }
+
+    #[test]
+    fn test_client_config_with_websocket() {
+        let config = ClientConfig::builder()
+            .network(|n| n.ws_url("ws://localhost:8080"))
+            .build()
+            .unwrap();
+
+        assert_eq!(config.network().ws_url(), Some("ws://localhost:8080"));
     }
 }

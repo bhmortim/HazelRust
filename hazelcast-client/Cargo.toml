@@ -11,6 +11,7 @@ metrics = ["prometheus"]
 aws = ["aws-config", "aws-sdk-ec2"]
 kubernetes = ["kube", "k8s-openapi"]
 cloud = ["reqwest"]
+websocket = ["tokio-tungstenite", "url"]
 
 [dependencies]
 hazelcast-core = { path = "../hazelcast-core" }
@@ -20,6 +21,7 @@ bytes = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+futures-util = "0.3"
 
 tokio-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2", optional = true }
@@ -37,6 +39,10 @@ k8s-openapi = { version = "0.22", features = ["v1_30"], optional = true }
 
 # Hazelcast Cloud (optional, for Cloud discovery)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+
+# WebSocket (optional, for WebSocket transport)
+tokio-tungstenite = { version = "0.24", optional = true }
+url = { version = "2.5", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

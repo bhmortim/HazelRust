@@ -13,6 +13,9 @@ mod kubernetes;
 #[cfg(feature = "cloud")]
 mod cloud;
 
+#[cfg(feature = "websocket")]
+mod websocket;
+
 pub use connection::{Connection, ConnectionId};
 pub use discovery::{ClusterDiscovery, StaticAddressDiscovery};
 pub use manager::{ConnectionEvent, ConnectionManager};
@@ -25,3 +28,6 @@ pub use kubernetes::{KubernetesDiscovery, KubernetesDiscoveryConfig};
 
 #[cfg(feature = "cloud")]
 pub use cloud::{CloudDiscovery, CloudDiscoveryConfig};
+
+#[cfg(feature = "websocket")]
+pub use websocket::WebSocketConnection;
