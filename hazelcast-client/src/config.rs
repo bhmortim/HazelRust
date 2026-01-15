@@ -7,6 +7,261 @@ use std::time::Duration;
 
 use crate::cache::NearCacheConfig;
 
+/// Configuration for a WAN replication target cluster.
+#[derive(Debug, Clone)]
+pub struct WanTargetClusterConfig {
+    cluster_name: String,
+    endpoints: Vec<SocketAddr>,
+    connection_timeout: Duration,
+}
+
+impl WanTargetClusterConfig {
+    /// Returns the target cluster name.
+    pub fn cluster_name(&self) -> &str {
+        &self.cluster_name
+    }
+
+    /// Returns the target cluster endpoints.
+    pub fn endpoints(&self) -> &[SocketAddr] {
+        &self.endpoints
+    }
+
+    /// Returns the connection timeout for this target.
+    pub fn connection_timeout(&self) -> Duration {
+        self.connection_timeout
+    }
+}
+
+/// Builder for `WanTargetClusterConfig`.
+#[derive(Debug, Clone, Default)]
+pub struct WanTargetClusterConfigBuilder {
+    cluster_name: Option<String>,
+    endpoints: Vec<SocketAddr>,
+    connection_timeout: Option<Duration>,
+}
+
+impl WanTargetClusterConfigBuilder {
+    /// Creates a new WAN target cluster configuration builder.
+    pub fn new(cluster_name: impl Into<String>) -> Self {
+        Self {
+            cluster_name: Some(cluster_name.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Adds an endpoint address for the target cluster.
+    pub fn add_endpoint(mut self, endpoint: SocketAddr) -> Self {
+        self.endpoints.push(endpoint);
+        self
+    }
+
+    /// Sets the endpoint addresses for the target cluster.
+    pub fn endpoints(mut self, endpoints: impl IntoIterator<Item = SocketAddr>) -> Self {
+        self.endpoints = endpoints.into_iter().collect();
+        self
+    }
+
+    /// Sets the connection timeout for the target cluster.
+    pub fn connection_timeout(mut self, timeout: Duration) -> Self {
+        self.connection_timeout = Some(timeout);
+        self
+    }
+
+    /// Builds the WAN target cluster configuration.
+    pub fn build(self) -> Result<WanTargetClusterConfig, ConfigError> {
+        let cluster_name = self
+            .cluster_name
+            .ok_or_else(|| ConfigError::new("cluster_name is required for WAN target"))?;
+
+        if cluster_name.is_empty() {
+            return Err(ConfigError::new("cluster_name must not be empty"));
+        }
+
+        if self.endpoints.is_empty() {
+            return Err(ConfigError::new(
+                "at least one endpoint is required for WAN target",
+            ));
+        }
+
+        Ok(WanTargetClusterConfig {
+            cluster_name,
+            endpoints: self.endpoints,
+            connection_timeout: self.connection_timeout.unwrap_or(DEFAULT_CONNECTION_TIMEOUT),
+        })
+    }
+}
+
+/// Configuration for a WAN replication scheme.
+#[derive(Debug, Clone)]
+pub struct WanReplicationConfig {
+    name: String,
+    target_clusters: Vec<WanTargetClusterConfig>,
+}
+
+impl WanReplicationConfig {
+    /// Returns the name of this WAN replication scheme.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the target cluster configurations.
+    pub fn target_clusters(&self) -> &[WanTargetClusterConfig] {
+        &self.target_clusters
+    }
+
+    /// Finds a target cluster by name.
+    pub fn find_target(&self, cluster_name: &str) -> Option<&WanTargetClusterConfig> {
+        self.target_clusters
+            .iter()
+            .find(|t| t.cluster_name() == cluster_name)
+    }
+}
+
+/// Builder for `WanReplicationConfig`.
+#[derive(Debug, Clone, Default)]
+pub struct WanReplicationConfigBuilder {
+    name: Option<String>,
+    target_clusters: Vec<WanTargetClusterConfig>,
+}
+
+impl WanReplicationConfigBuilder {
+    /// Creates a new WAN replication configuration builder.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Adds a target cluster configuration.
+    pub fn add_target_cluster(mut self, target: WanTargetClusterConfig) -> Self {
+        self.target_clusters.push(target);
+        self
+    }
+
+    /// Builds the WAN replication configuration.
+    pub fn build(self) -> Result<WanReplicationConfig, ConfigError> {
+        let name = self
+            .name
+            .ok_or_else(|| ConfigError::new("name is required for WAN replication config"))?;
+
+        if name.is_empty() {
+            return Err(ConfigError::new(
+                "WAN replication name must not be empty",
+            ));
+        }
+
+        if self.target_clusters.is_empty() {
+            return Err(ConfigError::new(
+                "at least one target cluster is required for WAN replication",
+            ));
+        }
+
+        Ok(WanReplicationConfig {
+            name,
+            target_clusters: self.target_clusters,
+        })
+    }
+}
+
+/// Reference to a WAN replication configuration for use in map settings.
+#[derive(Debug, Clone)]
+pub struct WanReplicationRef {
+    name: String,
+    merge_policy_class_name: String,
+    republishing_enabled: bool,
+    filters: Vec<String>,
+}
+
+impl WanReplicationRef {
+    /// Creates a new builder for WAN replication reference.
+    pub fn builder(name: impl Into<String>) -> WanReplicationRefBuilder {
+        WanReplicationRefBuilder::new(name)
+    }
+
+    /// Returns the name of the WAN replication configuration to use.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the merge policy class name.
+    pub fn merge_policy_class_name(&self) -> &str {
+        &self.merge_policy_class_name
+    }
+
+    /// Returns whether republishing is enabled.
+    pub fn republishing_enabled(&self) -> bool {
+        self.republishing_enabled
+    }
+
+    /// Returns the filter class names.
+    pub fn filters(&self) -> &[String] {
+        &self.filters
+    }
+}
+
+/// Default merge policy for WAN replication.
+const DEFAULT_WAN_MERGE_POLICY: &str = "com.hazelcast.spi.merge.PassThroughMergePolicy";
+
+/// Builder for `WanReplicationRef`.
+#[derive(Debug, Clone, Default)]
+pub struct WanReplicationRefBuilder {
+    name: Option<String>,
+    merge_policy_class_name: Option<String>,
+    republishing_enabled: Option<bool>,
+    filters: Vec<String>,
+}
+
+impl WanReplicationRefBuilder {
+    /// Creates a new WAN replication reference builder.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Sets the merge policy class name.
+    pub fn merge_policy_class_name(mut self, class_name: impl Into<String>) -> Self {
+        self.merge_policy_class_name = Some(class_name.into());
+        self
+    }
+
+    /// Enables or disables republishing of received WAN events.
+    pub fn republishing_enabled(mut self, enabled: bool) -> Self {
+        self.republishing_enabled = Some(enabled);
+        self
+    }
+
+    /// Adds a filter class name for filtering WAN replication events.
+    pub fn add_filter(mut self, filter_class_name: impl Into<String>) -> Self {
+        self.filters.push(filter_class_name.into());
+        self
+    }
+
+    /// Builds the WAN replication reference.
+    pub fn build(self) -> Result<WanReplicationRef, ConfigError> {
+        let name = self
+            .name
+            .ok_or_else(|| ConfigError::new("name is required for WAN replication ref"))?;
+
+        if name.is_empty() {
+            return Err(ConfigError::new(
+                "WAN replication ref name must not be empty",
+            ));
+        }
+
+        Ok(WanReplicationRef {
+            name,
+            merge_policy_class_name: self
+                .merge_policy_class_name
+                .unwrap_or_else(|| DEFAULT_WAN_MERGE_POLICY.to_string()),
+            republishing_enabled: self.republishing_enabled.unwrap_or(false),
+            filters: self.filters,
+        })
+    }
+}
+
 #[cfg(feature = "aws")]
 use crate::connection::AwsDiscoveryConfig;
 
@@ -69,6 +324,7 @@ pub struct NetworkConfig {
     heartbeat_interval: Duration,
     tls: TlsConfig,
     ws_url: Option<String>,
+    wan_replication: Vec<WanReplicationConfig>,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
     #[cfg(feature = "azure")]
@@ -136,6 +392,16 @@ impl NetworkConfig {
     pub fn cloud_discovery(&self) -> Option<&CloudDiscoveryConfig> {
         self.cloud_discovery.as_ref()
     }
+
+    /// Returns the WAN replication configurations.
+    pub fn wan_replication(&self) -> &[WanReplicationConfig] {
+        &self.wan_replication
+    }
+
+    /// Finds a WAN replication configuration by name.
+    pub fn find_wan_replication(&self, name: &str) -> Option<&WanReplicationConfig> {
+        self.wan_replication.iter().find(|w| w.name() == name)
+    }
 }
 
 impl Default for NetworkConfig {
@@ -146,6 +412,7 @@ impl Default for NetworkConfig {
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
             tls: TlsConfig::default(),
             ws_url: None,
+            wan_replication: Vec::new(),
             #[cfg(feature = "aws")]
             aws_discovery: None,
             #[cfg(feature = "azure")]
@@ -168,6 +435,7 @@ pub struct NetworkConfigBuilder {
     heartbeat_interval: Option<Duration>,
     tls: TlsConfigBuilder,
     ws_url: Option<String>,
+    wan_replication: Vec<WanReplicationConfig>,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
     #[cfg(feature = "azure")]
@@ -284,6 +552,15 @@ impl NetworkConfigBuilder {
         self
     }
 
+    /// Adds a WAN replication configuration.
+    ///
+    /// WAN replication allows data to be replicated across multiple clusters
+    /// in different geographic locations or data centers.
+    pub fn add_wan_replication(mut self, config: WanReplicationConfig) -> Self {
+        self.wan_replication.push(config);
+        self
+    }
+
     /// Builds the network configuration.
     pub fn build(self) -> Result<NetworkConfig, ConfigError> {
         let addresses = if self.addresses.is_empty() {
@@ -300,6 +577,7 @@ impl NetworkConfigBuilder {
             heartbeat_interval: self.heartbeat_interval.unwrap_or(DEFAULT_HEARTBEAT_INTERVAL),
             tls,
             ws_url: self.ws_url,
+            wan_replication: self.wan_replication,
             #[cfg(feature = "aws")]
             aws_discovery: self.aws_discovery,
             #[cfg(feature = "azure")]
@@ -2053,5 +2331,318 @@ mod tests {
 
         #[cfg(feature = "cloud")]
         assert!(config.cloud_discovery().is_none());
+    }
+
+    #[test]
+    fn test_wan_target_cluster_config_builder() {
+        let target = WanTargetClusterConfigBuilder::new("target-cluster")
+            .add_endpoint("192.168.1.100:5701".parse().unwrap())
+            .add_endpoint("192.168.1.101:5701".parse().unwrap())
+            .connection_timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        assert_eq!(target.cluster_name(), "target-cluster");
+        assert_eq!(target.endpoints().len(), 2);
+        assert_eq!(target.connection_timeout(), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_wan_target_cluster_config_default_timeout() {
+        let target = WanTargetClusterConfigBuilder::new("remote")
+            .add_endpoint("10.0.0.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        assert_eq!(target.connection_timeout(), DEFAULT_CONNECTION_TIMEOUT);
+    }
+
+    #[test]
+    fn test_wan_target_cluster_config_empty_name_fails() {
+        let result = WanTargetClusterConfigBuilder::new("")
+            .add_endpoint("10.0.0.1:5701".parse().unwrap())
+            .build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cluster_name must not be empty"));
+    }
+
+    #[test]
+    fn test_wan_target_cluster_config_no_endpoints_fails() {
+        let result = WanTargetClusterConfigBuilder::new("remote").build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("at least one endpoint is required"));
+    }
+
+    #[test]
+    fn test_wan_target_cluster_config_endpoints_replace() {
+        let target = WanTargetClusterConfigBuilder::new("remote")
+            .add_endpoint("10.0.0.1:5701".parse().unwrap())
+            .endpoints(["10.0.0.2:5701".parse().unwrap(), "10.0.0.3:5701".parse().unwrap()])
+            .build()
+            .unwrap();
+
+        assert_eq!(target.endpoints().len(), 2);
+        assert!(target.endpoints().contains(&"10.0.0.2:5701".parse().unwrap()));
+        assert!(target.endpoints().contains(&"10.0.0.3:5701".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_wan_replication_config_builder() {
+        let target1 = WanTargetClusterConfigBuilder::new("dc-west")
+            .add_endpoint("10.1.0.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let target2 = WanTargetClusterConfigBuilder::new("dc-east")
+            .add_endpoint("10.2.0.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let config = WanReplicationConfigBuilder::new("my-wan-replication")
+            .add_target_cluster(target1)
+            .add_target_cluster(target2)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.name(), "my-wan-replication");
+        assert_eq!(config.target_clusters().len(), 2);
+    }
+
+    #[test]
+    fn test_wan_replication_config_find_target() {
+        let target = WanTargetClusterConfigBuilder::new("dc-west")
+            .add_endpoint("10.1.0.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let config = WanReplicationConfigBuilder::new("wan-config")
+            .add_target_cluster(target)
+            .build()
+            .unwrap();
+
+        assert!(config.find_target("dc-west").is_some());
+        assert!(config.find_target("dc-east").is_none());
+    }
+
+    #[test]
+    fn test_wan_replication_config_empty_name_fails() {
+        let target = WanTargetClusterConfigBuilder::new("remote")
+            .add_endpoint("10.0.0.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let result = WanReplicationConfigBuilder::new("")
+            .add_target_cluster(target)
+            .build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("WAN replication name must not be empty"));
+    }
+
+    #[test]
+    fn test_wan_replication_config_no_targets_fails() {
+        let result = WanReplicationConfigBuilder::new("wan-config").build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("at least one target cluster is required"));
+    }
+
+    #[test]
+    fn test_wan_replication_ref_builder() {
+        let wan_ref = WanReplicationRefBuilder::new("my-wan-config")
+            .merge_policy_class_name("com.example.MyMergePolicy")
+            .republishing_enabled(true)
+            .add_filter("com.example.MyFilter")
+            .build()
+            .unwrap();
+
+        assert_eq!(wan_ref.name(), "my-wan-config");
+        assert_eq!(
+            wan_ref.merge_policy_class_name(),
+            "com.example.MyMergePolicy"
+        );
+        assert!(wan_ref.republishing_enabled());
+        assert_eq!(wan_ref.filters().len(), 1);
+        assert_eq!(wan_ref.filters()[0], "com.example.MyFilter");
+    }
+
+    #[test]
+    fn test_wan_replication_ref_defaults() {
+        let wan_ref = WanReplicationRefBuilder::new("wan-config")
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            wan_ref.merge_policy_class_name(),
+            "com.hazelcast.spi.merge.PassThroughMergePolicy"
+        );
+        assert!(!wan_ref.republishing_enabled());
+        assert!(wan_ref.filters().is_empty());
+    }
+
+    #[test]
+    fn test_wan_replication_ref_empty_name_fails() {
+        let result = WanReplicationRefBuilder::new("").build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("WAN replication ref name must not be empty"));
+    }
+
+    #[test]
+    fn test_wan_replication_ref_multiple_filters() {
+        let wan_ref = WanReplicationRefBuilder::new("wan-config")
+            .add_filter("com.example.Filter1")
+            .add_filter("com.example.Filter2")
+            .add_filter("com.example.Filter3")
+            .build()
+            .unwrap();
+
+        assert_eq!(wan_ref.filters().len(), 3);
+    }
+
+    #[test]
+    fn test_wan_replication_ref_via_builder_method() {
+        let wan_ref = WanReplicationRef::builder("test-wan")
+            .republishing_enabled(true)
+            .build()
+            .unwrap();
+
+        assert_eq!(wan_ref.name(), "test-wan");
+        assert!(wan_ref.republishing_enabled());
+    }
+
+    #[test]
+    fn test_network_config_with_wan_replication() {
+        let target = WanTargetClusterConfigBuilder::new("dc-remote")
+            .add_endpoint("10.0.0.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let wan_config = WanReplicationConfigBuilder::new("wan-scheme")
+            .add_target_cluster(target)
+            .build()
+            .unwrap();
+
+        let config = NetworkConfigBuilder::new()
+            .add_wan_replication(wan_config)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.wan_replication().len(), 1);
+        assert_eq!(config.wan_replication()[0].name(), "wan-scheme");
+    }
+
+    #[test]
+    fn test_network_config_find_wan_replication() {
+        let target = WanTargetClusterConfigBuilder::new("remote")
+            .add_endpoint("10.0.0.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let wan1 = WanReplicationConfigBuilder::new("wan-primary")
+            .add_target_cluster(target.clone())
+            .build()
+            .unwrap();
+
+        let wan2 = WanReplicationConfigBuilder::new("wan-secondary")
+            .add_target_cluster(target)
+            .build()
+            .unwrap();
+
+        let config = NetworkConfigBuilder::new()
+            .add_wan_replication(wan1)
+            .add_wan_replication(wan2)
+            .build()
+            .unwrap();
+
+        assert!(config.find_wan_replication("wan-primary").is_some());
+        assert!(config.find_wan_replication("wan-secondary").is_some());
+        assert!(config.find_wan_replication("wan-tertiary").is_none());
+    }
+
+    #[test]
+    fn test_network_config_default_no_wan_replication() {
+        let config = NetworkConfigBuilder::new().build().unwrap();
+        assert!(config.wan_replication().is_empty());
+    }
+
+    #[test]
+    fn test_client_config_with_wan_replication() {
+        let target = WanTargetClusterConfigBuilder::new("backup-dc")
+            .add_endpoint("192.168.100.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let wan_config = WanReplicationConfigBuilder::new("geo-replication")
+            .add_target_cluster(target)
+            .build()
+            .unwrap();
+
+        let config = ClientConfig::builder()
+            .cluster_name("primary")
+            .network(|n| n.add_wan_replication(wan_config))
+            .build()
+            .unwrap();
+
+        assert_eq!(config.network().wan_replication().len(), 1);
+        assert!(config
+            .network()
+            .find_wan_replication("geo-replication")
+            .is_some());
+    }
+
+    #[test]
+    fn test_wan_target_cluster_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<WanTargetClusterConfig>();
+    }
+
+    #[test]
+    fn test_wan_replication_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<WanReplicationConfig>();
+    }
+
+    #[test]
+    fn test_wan_replication_ref_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<WanReplicationRef>();
+    }
+
+    #[test]
+    fn test_wan_config_clone() {
+        let target = WanTargetClusterConfigBuilder::new("remote")
+            .add_endpoint("10.0.0.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let config = WanReplicationConfigBuilder::new("wan")
+            .add_target_cluster(target)
+            .build()
+            .unwrap();
+
+        let cloned = config.clone();
+        assert_eq!(cloned.name(), config.name());
+        assert_eq!(
+            cloned.target_clusters().len(),
+            config.target_clusters().len()
+        );
     }
 }

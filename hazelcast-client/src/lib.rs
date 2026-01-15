@@ -27,7 +27,9 @@ pub use executor::{
 pub use config::{
     ClientConfig, ClientConfigBuilder, ConfigError, DiagnosticsConfig, DiagnosticsConfigBuilder,
     NetworkConfig, NetworkConfigBuilder, PermissionAction, Permissions, RetryConfig,
-    RetryConfigBuilder, SecurityConfig, SecurityConfigBuilder,
+    RetryConfigBuilder, SecurityConfig, SecurityConfigBuilder, WanReplicationConfig,
+    WanReplicationConfigBuilder, WanReplicationRef, WanReplicationRefBuilder,
+    WanTargetClusterConfig, WanTargetClusterConfigBuilder,
 };
 pub use diagnostics::{OperationTracker, SlowOperationDetector};
 #[cfg(feature = "metrics")]
