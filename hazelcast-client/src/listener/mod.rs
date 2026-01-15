@@ -3,9 +3,197 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use hazelcast_core::Result;
 use tokio::sync::watch;
 use uuid::Uuid;
+
+/// Type of entry event fired by map listeners.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(i32)]
+pub enum EntryEventType {
+    /// Entry was added to the map.
+    Added = 1,
+    /// Entry was updated in the map.
+    Updated = 2,
+    /// Entry was removed from the map.
+    Removed = 4,
+    /// Entry was evicted from the map.
+    Evicted = 8,
+    /// Entry expired and was removed from the map.
+    Expired = 16,
+}
+
+impl EntryEventType {
+    /// Creates an event type from its wire format value.
+    pub fn from_value(value: i32) -> Option<Self> {
+        match value {
+            1 => Some(Self::Added),
+            2 => Some(Self::Updated),
+            4 => Some(Self::Removed),
+            8 => Some(Self::Evicted),
+            16 => Some(Self::Expired),
+            _ => None,
+        }
+    }
+
+    /// Returns the wire format value for this event type.
+    pub fn value(self) -> i32 {
+        self as i32
+    }
+}
+
+impl std::fmt::Display for EntryEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Added => write!(f, "ADDED"),
+            Self::Updated => write!(f, "UPDATED"),
+            Self::Removed => write!(f, "REMOVED"),
+            Self::Evicted => write!(f, "EVICTED"),
+            Self::Expired => write!(f, "EXPIRED"),
+        }
+    }
+}
+
+/// An event fired when a map entry is added, updated, removed, evicted, or expired.
+#[derive(Debug, Clone)]
+pub struct EntryEvent<K, V> {
+    /// The key of the affected entry.
+    pub key: K,
+    /// The old value before the operation (None for ADDED events).
+    pub old_value: Option<V>,
+    /// The new value after the operation (None for REMOVED/EVICTED/EXPIRED events).
+    pub new_value: Option<V>,
+    /// The type of event that occurred.
+    pub event_type: EntryEventType,
+    /// UUID of the cluster member that originated the event.
+    pub member_uuid: Uuid,
+    /// Timestamp when the event occurred (milliseconds since epoch).
+    pub timestamp: i64,
+}
+
+impl<K, V> EntryEvent<K, V> {
+    /// Creates a new entry event.
+    pub fn new(
+        key: K,
+        old_value: Option<V>,
+        new_value: Option<V>,
+        event_type: EntryEventType,
+        member_uuid: Uuid,
+        timestamp: i64,
+    ) -> Self {
+        Self {
+            key,
+            old_value,
+            new_value,
+            event_type,
+            member_uuid,
+            timestamp,
+        }
+    }
+}
+
+/// Configuration for entry listeners specifying which events to receive.
+#[derive(Debug, Clone, Default)]
+pub struct EntryListenerConfig {
+    /// Whether to include entry values in events.
+    pub include_value: bool,
+    /// Whether to receive ADDED events.
+    pub on_added: bool,
+    /// Whether to receive UPDATED events.
+    pub on_updated: bool,
+    /// Whether to receive REMOVED events.
+    pub on_removed: bool,
+    /// Whether to receive EVICTED events.
+    pub on_evicted: bool,
+    /// Whether to receive EXPIRED events.
+    pub on_expired: bool,
+}
+
+impl EntryListenerConfig {
+    /// Creates a new entry listener config with all events disabled.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a config that listens to all event types.
+    pub fn all() -> Self {
+        Self {
+            include_value: true,
+            on_added: true,
+            on_updated: true,
+            on_removed: true,
+            on_evicted: true,
+            on_expired: true,
+        }
+    }
+
+    /// Sets whether to include entry values in events.
+    pub fn include_value(mut self, include: bool) -> Self {
+        self.include_value = include;
+        self
+    }
+
+    /// Enables ADDED event notifications.
+    pub fn on_added(mut self) -> Self {
+        self.on_added = true;
+        self
+    }
+
+    /// Enables UPDATED event notifications.
+    pub fn on_updated(mut self) -> Self {
+        self.on_updated = true;
+        self
+    }
+
+    /// Enables REMOVED event notifications.
+    pub fn on_removed(mut self) -> Self {
+        self.on_removed = true;
+        self
+    }
+
+    /// Enables EVICTED event notifications.
+    pub fn on_evicted(mut self) -> Self {
+        self.on_evicted = true;
+        self
+    }
+
+    /// Enables EXPIRED event notifications.
+    pub fn on_expired(mut self) -> Self {
+        self.on_expired = true;
+        self
+    }
+
+    /// Returns the event type flags as a bitmask for the wire protocol.
+    pub fn event_flags(&self) -> i32 {
+        let mut flags = 0i32;
+        if self.on_added {
+            flags |= EntryEventType::Added.value();
+        }
+        if self.on_updated {
+            flags |= EntryEventType::Updated.value();
+        }
+        if self.on_removed {
+            flags |= EntryEventType::Removed.value();
+        }
+        if self.on_evicted {
+            flags |= EntryEventType::Evicted.value();
+        }
+        if self.on_expired {
+            flags |= EntryEventType::Expired.value();
+        }
+        flags
+    }
+
+    /// Returns true if the config accepts the given event type.
+    pub fn accepts(&self, event_type: EntryEventType) -> bool {
+        match event_type {
+            EntryEventType::Added => self.on_added,
+            EntryEventType::Updated => self.on_updated,
+            EntryEventType::Removed => self.on_removed,
+            EntryEventType::Evicted => self.on_evicted,
+            EntryEventType::Expired => self.on_expired,
+        }
+    }
+}
 
 /// Unique identifier for a listener registration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -194,5 +382,119 @@ mod tests {
     fn test_listener_id_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<ListenerId>();
+    }
+
+    #[test]
+    fn test_entry_event_type_values() {
+        assert_eq!(EntryEventType::Added.value(), 1);
+        assert_eq!(EntryEventType::Updated.value(), 2);
+        assert_eq!(EntryEventType::Removed.value(), 4);
+        assert_eq!(EntryEventType::Evicted.value(), 8);
+        assert_eq!(EntryEventType::Expired.value(), 16);
+    }
+
+    #[test]
+    fn test_entry_event_type_from_value() {
+        assert_eq!(EntryEventType::from_value(1), Some(EntryEventType::Added));
+        assert_eq!(EntryEventType::from_value(2), Some(EntryEventType::Updated));
+        assert_eq!(EntryEventType::from_value(4), Some(EntryEventType::Removed));
+        assert_eq!(EntryEventType::from_value(8), Some(EntryEventType::Evicted));
+        assert_eq!(EntryEventType::from_value(16), Some(EntryEventType::Expired));
+        assert_eq!(EntryEventType::from_value(0), None);
+        assert_eq!(EntryEventType::from_value(99), None);
+    }
+
+    #[test]
+    fn test_entry_event_type_display() {
+        assert_eq!(EntryEventType::Added.to_string(), "ADDED");
+        assert_eq!(EntryEventType::Updated.to_string(), "UPDATED");
+        assert_eq!(EntryEventType::Removed.to_string(), "REMOVED");
+        assert_eq!(EntryEventType::Evicted.to_string(), "EVICTED");
+        assert_eq!(EntryEventType::Expired.to_string(), "EXPIRED");
+    }
+
+    #[test]
+    fn test_entry_event_creation() {
+        let member = Uuid::new_v4();
+        let event: EntryEvent<String, i32> = EntryEvent::new(
+            "key1".to_string(),
+            None,
+            Some(42),
+            EntryEventType::Added,
+            member,
+            1234567890,
+        );
+
+        assert_eq!(event.key, "key1");
+        assert_eq!(event.old_value, None);
+        assert_eq!(event.new_value, Some(42));
+        assert_eq!(event.event_type, EntryEventType::Added);
+        assert_eq!(event.member_uuid, member);
+        assert_eq!(event.timestamp, 1234567890);
+    }
+
+    #[test]
+    fn test_entry_listener_config_default() {
+        let config = EntryListenerConfig::new();
+        assert!(!config.include_value);
+        assert!(!config.on_added);
+        assert!(!config.on_updated);
+        assert!(!config.on_removed);
+        assert!(!config.on_evicted);
+        assert!(!config.on_expired);
+        assert_eq!(config.event_flags(), 0);
+    }
+
+    #[test]
+    fn test_entry_listener_config_all() {
+        let config = EntryListenerConfig::all();
+        assert!(config.include_value);
+        assert!(config.on_added);
+        assert!(config.on_updated);
+        assert!(config.on_removed);
+        assert!(config.on_evicted);
+        assert!(config.on_expired);
+        assert_eq!(config.event_flags(), 1 | 2 | 4 | 8 | 16);
+    }
+
+    #[test]
+    fn test_entry_listener_config_builder() {
+        let config = EntryListenerConfig::new()
+            .include_value(true)
+            .on_added()
+            .on_removed();
+
+        assert!(config.include_value);
+        assert!(config.on_added);
+        assert!(!config.on_updated);
+        assert!(config.on_removed);
+        assert!(!config.on_evicted);
+        assert!(!config.on_expired);
+        assert_eq!(config.event_flags(), 1 | 4);
+    }
+
+    #[test]
+    fn test_entry_listener_config_accepts() {
+        let config = EntryListenerConfig::new()
+            .on_added()
+            .on_updated();
+
+        assert!(config.accepts(EntryEventType::Added));
+        assert!(config.accepts(EntryEventType::Updated));
+        assert!(!config.accepts(EntryEventType::Removed));
+        assert!(!config.accepts(EntryEventType::Evicted));
+        assert!(!config.accepts(EntryEventType::Expired));
+    }
+
+    #[test]
+    fn test_entry_event_type_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<EntryEventType>();
+    }
+
+    #[test]
+    fn test_entry_listener_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<EntryListenerConfig>();
     }
 }

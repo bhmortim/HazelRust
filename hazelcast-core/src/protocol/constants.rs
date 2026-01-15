@@ -187,3 +187,9 @@ pub const CP_ATOMIC_LONG_ADD_AND_GET: i32 = 0x090500;
 
 /// CP AtomicLong get and add request.
 pub const CP_ATOMIC_LONG_GET_AND_ADD: i32 = 0x090600;
+
+/// Map add entry listener request.
+pub const MAP_ADD_ENTRY_LISTENER: i32 = 0x011400;
+
+/// Map remove entry listener request.
+pub const MAP_REMOVE_ENTRY_LISTENER: i32 = 0x011500;
