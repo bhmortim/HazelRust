@@ -1424,6 +1424,212 @@ impl SecurityConfigBuilder {
     }
 }
 
+/// Log level configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogLevel {
+    /// Most verbose logging, includes all trace information.
+    Trace,
+    /// Debug-level logging for development.
+    Debug,
+    /// Standard informational logging (default).
+    #[default]
+    Info,
+    /// Warning-level logging.
+    Warn,
+    /// Error-level logging only.
+    Error,
+    /// Disable all logging.
+    Off,
+}
+
+impl LogLevel {
+    /// Converts to a `tracing::Level` filter string.
+    pub fn as_filter_str(&self) -> &'static str {
+        match self {
+            LogLevel::Trace => "trace",
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+            LogLevel::Off => "off",
+        }
+    }
+}
+
+/// Log output format configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogFormat {
+    /// Human-readable pretty-printed output (default).
+    #[default]
+    Pretty,
+    /// Compact single-line output.
+    Compact,
+    /// JSON-formatted output for log aggregation.
+    Json,
+    /// Full verbose output with all metadata.
+    Full,
+}
+
+/// Logging configuration for the Hazelcast client.
+///
+/// Controls the log level, format, and metadata included in log output.
+/// This configuration is used to initialize the `tracing` subscriber.
+#[derive(Debug, Clone)]
+pub struct LoggingConfig {
+    level: LogLevel,
+    format: LogFormat,
+    with_target: bool,
+    with_thread_ids: bool,
+    with_thread_names: bool,
+    with_file: bool,
+    with_line_number: bool,
+    with_ansi: bool,
+}
+
+impl LoggingConfig {
+    /// Creates a new builder for `LoggingConfig`.
+    pub fn builder() -> LoggingConfigBuilder {
+        LoggingConfigBuilder::new()
+    }
+
+    /// Returns the configured log level.
+    pub fn level(&self) -> LogLevel {
+        self.level
+    }
+
+    /// Returns the configured log format.
+    pub fn format(&self) -> LogFormat {
+        self.format
+    }
+
+    /// Returns whether to include the target module in logs.
+    pub fn with_target(&self) -> bool {
+        self.with_target
+    }
+
+    /// Returns whether to include thread IDs in logs.
+    pub fn with_thread_ids(&self) -> bool {
+        self.with_thread_ids
+    }
+
+    /// Returns whether to include thread names in logs.
+    pub fn with_thread_names(&self) -> bool {
+        self.with_thread_names
+    }
+
+    /// Returns whether to include file paths in logs.
+    pub fn with_file(&self) -> bool {
+        self.with_file
+    }
+
+    /// Returns whether to include line numbers in logs.
+    pub fn with_line_number(&self) -> bool {
+        self.with_line_number
+    }
+
+    /// Returns whether to use ANSI color codes in logs.
+    pub fn with_ansi(&self) -> bool {
+        self.with_ansi
+    }
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: LogLevel::Info,
+            format: LogFormat::Pretty,
+            with_target: true,
+            with_thread_ids: false,
+            with_thread_names: false,
+            with_file: false,
+            with_line_number: false,
+            with_ansi: true,
+        }
+    }
+}
+
+/// Builder for `LoggingConfig`.
+#[derive(Debug, Clone, Default)]
+pub struct LoggingConfigBuilder {
+    level: Option<LogLevel>,
+    format: Option<LogFormat>,
+    with_target: Option<bool>,
+    with_thread_ids: Option<bool>,
+    with_thread_names: Option<bool>,
+    with_file: Option<bool>,
+    with_line_number: Option<bool>,
+    with_ansi: Option<bool>,
+}
+
+impl LoggingConfigBuilder {
+    /// Creates a new logging configuration builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the log level.
+    pub fn level(mut self, level: LogLevel) -> Self {
+        self.level = Some(level);
+        self
+    }
+
+    /// Sets the log format.
+    pub fn format(mut self, format: LogFormat) -> Self {
+        self.format = Some(format);
+        self
+    }
+
+    /// Enables or disables including the target module in logs.
+    pub fn with_target(mut self, enabled: bool) -> Self {
+        self.with_target = Some(enabled);
+        self
+    }
+
+    /// Enables or disables including thread IDs in logs.
+    pub fn with_thread_ids(mut self, enabled: bool) -> Self {
+        self.with_thread_ids = Some(enabled);
+        self
+    }
+
+    /// Enables or disables including thread names in logs.
+    pub fn with_thread_names(mut self, enabled: bool) -> Self {
+        self.with_thread_names = Some(enabled);
+        self
+    }
+
+    /// Enables or disables including file paths in logs.
+    pub fn with_file(mut self, enabled: bool) -> Self {
+        self.with_file = Some(enabled);
+        self
+    }
+
+    /// Enables or disables including line numbers in logs.
+    pub fn with_line_number(mut self, enabled: bool) -> Self {
+        self.with_line_number = Some(enabled);
+        self
+    }
+
+    /// Enables or disables ANSI color codes in logs.
+    pub fn with_ansi(mut self, enabled: bool) -> Self {
+        self.with_ansi = Some(enabled);
+        self
+    }
+
+    /// Builds the logging configuration.
+    pub fn build(self) -> LoggingConfig {
+        LoggingConfig {
+            level: self.level.unwrap_or(LogLevel::Info),
+            format: self.format.unwrap_or(LogFormat::Pretty),
+            with_target: self.with_target.unwrap_or(true),
+            with_thread_ids: self.with_thread_ids.unwrap_or(false),
+            with_thread_names: self.with_thread_names.unwrap_or(false),
+            with_file: self.with_file.unwrap_or(false),
+            with_line_number: self.with_line_number.unwrap_or(false),
+            with_ansi: self.with_ansi.unwrap_or(true),
+        }
+    }
+}
+
 /// Diagnostics configuration for monitoring and troubleshooting.
 #[derive(Debug, Clone)]
 pub struct DiagnosticsConfig {
@@ -1510,6 +1716,7 @@ pub struct ClientConfig {
     near_caches: Vec<NearCacheConfig>,
     quorum_configs: Vec<QuorumConfig>,
     diagnostics: DiagnosticsConfig,
+    logging: LoggingConfig,
     user_code_deployment: Option<UserCodeDeploymentConfig>,
 }
 
@@ -1564,6 +1771,11 @@ impl ClientConfig {
         &self.diagnostics
     }
 
+    /// Returns the logging configuration.
+    pub fn logging(&self) -> &LoggingConfig {
+        &self.logging
+    }
+
     /// Returns the user code deployment configuration, if set.
     pub fn user_code_deployment(&self) -> Option<&UserCodeDeploymentConfig> {
         self.user_code_deployment.as_ref()
@@ -1586,6 +1798,7 @@ pub struct ClientConfigBuilder {
     near_caches: Vec<NearCacheConfig>,
     quorum_configs: Vec<QuorumConfig>,
     diagnostics: DiagnosticsConfigBuilder,
+    logging: LoggingConfigBuilder,
     user_code_deployment: Option<UserCodeDeploymentConfig>,
 }
 
@@ -1703,6 +1916,32 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures logging settings using a builder function.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::config::{ClientConfigBuilder, LogLevel, LogFormat};
+    ///
+    /// let config = ClientConfigBuilder::new()
+    ///     .logging(|l| l.level(LogLevel::Debug).format(LogFormat::Json))
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn logging<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(LoggingConfigBuilder) -> LoggingConfigBuilder,
+    {
+        self.logging = f(self.logging);
+        self
+    }
+
+    /// Sets the log level.
+    pub fn log_level(mut self, level: LogLevel) -> Self {
+        self.logging = self.logging.level(level);
+        self
+    }
+
     /// Sets the user code deployment configuration.
     ///
     /// User code deployment allows deploying Java classes to the cluster
@@ -1747,6 +1986,8 @@ impl ClientConfigBuilder {
         let security = self.security.build()?;
         let diagnostics = self.diagnostics.build()?;
 
+        let logging = self.logging.build();
+
         Ok(ClientConfig {
             cluster_name,
             network,
@@ -1755,6 +1996,7 @@ impl ClientConfigBuilder {
             near_caches: self.near_caches,
             quorum_configs: self.quorum_configs,
             diagnostics,
+            logging,
             user_code_deployment: self.user_code_deployment,
         })
     }
@@ -3228,6 +3470,106 @@ mod tests {
     fn test_client_config_default_no_user_code_deployment() {
         let config = ClientConfig::default();
         assert!(config.user_code_deployment().is_none());
+    }
+
+    #[test]
+    fn test_logging_config_defaults() {
+        let config = LoggingConfig::default();
+        assert_eq!(config.level(), LogLevel::Info);
+        assert_eq!(config.format(), LogFormat::Pretty);
+        assert!(config.with_target());
+        assert!(!config.with_thread_ids());
+        assert!(!config.with_thread_names());
+        assert!(!config.with_file());
+        assert!(!config.with_line_number());
+        assert!(config.with_ansi());
+    }
+
+    #[test]
+    fn test_logging_config_builder() {
+        let config = LoggingConfig::builder()
+            .level(LogLevel::Debug)
+            .format(LogFormat::Json)
+            .with_target(false)
+            .with_thread_ids(true)
+            .with_file(true)
+            .with_line_number(true)
+            .with_ansi(false)
+            .build();
+
+        assert_eq!(config.level(), LogLevel::Debug);
+        assert_eq!(config.format(), LogFormat::Json);
+        assert!(!config.with_target());
+        assert!(config.with_thread_ids());
+        assert!(config.with_file());
+        assert!(config.with_line_number());
+        assert!(!config.with_ansi());
+    }
+
+    #[test]
+    fn test_log_level_as_filter_str() {
+        assert_eq!(LogLevel::Trace.as_filter_str(), "trace");
+        assert_eq!(LogLevel::Debug.as_filter_str(), "debug");
+        assert_eq!(LogLevel::Info.as_filter_str(), "info");
+        assert_eq!(LogLevel::Warn.as_filter_str(), "warn");
+        assert_eq!(LogLevel::Error.as_filter_str(), "error");
+        assert_eq!(LogLevel::Off.as_filter_str(), "off");
+    }
+
+    #[test]
+    fn test_log_level_default() {
+        assert_eq!(LogLevel::default(), LogLevel::Info);
+    }
+
+    #[test]
+    fn test_log_format_default() {
+        assert_eq!(LogFormat::default(), LogFormat::Pretty);
+    }
+
+    #[test]
+    fn test_client_config_with_logging() {
+        let config = ClientConfig::builder()
+            .logging(|l| l.level(LogLevel::Debug).format(LogFormat::Compact))
+            .build()
+            .unwrap();
+
+        assert_eq!(config.logging().level(), LogLevel::Debug);
+        assert_eq!(config.logging().format(), LogFormat::Compact);
+    }
+
+    #[test]
+    fn test_client_config_log_level_shortcut() {
+        let config = ClientConfig::builder()
+            .log_level(LogLevel::Warn)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.logging().level(), LogLevel::Warn);
+    }
+
+    #[test]
+    fn test_logging_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<LoggingConfig>();
+    }
+
+    #[test]
+    fn test_log_level_is_copy() {
+        fn assert_copy<T: Copy>() {}
+        assert_copy::<LogLevel>();
+    }
+
+    #[test]
+    fn test_log_format_is_copy() {
+        fn assert_copy<T: Copy>() {}
+        assert_copy::<LogFormat>();
+    }
+
+    #[test]
+    fn test_client_config_default_logging() {
+        let config = ClientConfig::default();
+        assert_eq!(config.logging().level(), LogLevel::Info);
+        assert_eq!(config.logging().format(), LogFormat::Pretty);
     }
 
     #[test]

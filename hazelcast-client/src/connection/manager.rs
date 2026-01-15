@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::{interval, timeout};
+use tracing::{instrument, Span};
 use uuid::Uuid;
 
 use hazelcast_core::{HazelcastError, Result};
@@ -172,6 +173,11 @@ impl ConnectionManager {
     }
 
     /// Starts the connection manager, establishing initial connections.
+    #[instrument(
+        name = "connection_manager.start",
+        skip(self),
+        fields(cluster = %self.config.cluster_name())
+    )]
     pub async fn start(&self) -> Result<()> {
         let _ = self.lifecycle_sender.send(LifecycleEvent::Starting);
         tracing::debug!("client lifecycle: Starting");
@@ -179,6 +185,7 @@ impl ConnectionManager {
         let addresses = self.discovery.discover().await?;
 
         if addresses.is_empty() {
+            tracing::error!("no cluster addresses discovered");
             return Err(HazelcastError::Connection(
                 "no cluster addresses discovered".to_string(),
             ));
@@ -194,6 +201,7 @@ impl ConnectionManager {
 
         let has_connections = !self.connections.read().await.is_empty();
         if !has_connections {
+            tracing::error!("failed to establish any connections to cluster");
             return Err(HazelcastError::Connection(
                 "failed to establish any connections".to_string(),
             ));
@@ -211,12 +219,19 @@ impl ConnectionManager {
     }
 
     /// Establishes a connection to the specified address.
+    #[instrument(
+        name = "connection_manager.connect",
+        skip(self),
+        fields(address = %address)
+    )]
     pub async fn connect_to(&self, address: SocketAddr) -> Result<ConnectionId> {
         let connect_timeout = self.config.network().connection_timeout();
+        tracing::debug!(timeout = ?connect_timeout, "attempting connection");
 
         let connection = timeout(connect_timeout, self.create_connection(address))
             .await
             .map_err(|_| {
+                tracing::warn!(timeout = ?connect_timeout, "connection attempt timed out");
                 HazelcastError::Timeout(format!(
                     "connection to {} timed out after {:?}",
                     address, connect_timeout
@@ -228,7 +243,7 @@ impl ConnectionManager {
         self.connections.write().await.insert(address, connection);
 
         let _ = self.event_sender.send(ConnectionEvent::Connected { id, address });
-        tracing::info!(id = %id, address = %address, "connected to cluster member");
+        tracing::info!(id = %id, "connected to cluster member");
 
         Ok(id)
     }
@@ -246,6 +261,14 @@ impl ConnectionManager {
     }
 
     /// Reconnects to an address with exponential backoff.
+    #[instrument(
+        name = "connection_manager.reconnect",
+        skip(self),
+        fields(
+            address = %address,
+            max_retries = self.config.retry().max_retries()
+        )
+    )]
     pub async fn reconnect(&self, address: SocketAddr) -> Result<ConnectionId> {
         let retry_config = self.config.retry();
         let mut current_backoff = retry_config.initial_backoff();
@@ -259,6 +282,7 @@ impl ConnectionManager {
                     "failed to reconnect after {} attempts",
                     retry_config.max_retries()
                 );
+                tracing::error!(attempts = attempt, "reconnection failed permanently");
                 let _ = self.event_sender.send(ConnectionEvent::ReconnectFailed {
                     address,
                     error: error.clone(),
@@ -273,7 +297,6 @@ impl ConnectionManager {
             });
 
             tracing::debug!(
-                address = %address,
                 attempt = attempt,
                 backoff = ?current_backoff,
                 "attempting reconnection"
@@ -282,10 +305,12 @@ impl ConnectionManager {
             tokio::time::sleep(current_backoff).await;
 
             match self.connect_to(address).await {
-                Ok(id) => return Ok(id),
+                Ok(id) => {
+                    tracing::info!(attempt = attempt, "reconnection successful");
+                    return Ok(id);
+                }
                 Err(e) => {
                     tracing::warn!(
-                        address = %address,
                         attempt = attempt,
                         error = %e,
                         "reconnection attempt failed"
@@ -303,6 +328,11 @@ impl ConnectionManager {
     }
 
     /// Disconnects from the specified address.
+    #[instrument(
+        name = "connection_manager.disconnect",
+        skip(self),
+        fields(address = %address)
+    )]
     pub async fn disconnect(&self, address: SocketAddr) -> Result<()> {
         if let Some(connection) = self.connections.write().await.remove(&address) {
             let id = connection.id();
@@ -314,13 +344,20 @@ impl ConnectionManager {
             });
 
             connection.close().await?;
-            tracing::info!(id = %id, address = %address, "disconnected from cluster member");
+            tracing::info!(id = %id, "disconnected from cluster member");
+        } else {
+            tracing::debug!("no active connection to disconnect");
         }
 
         Ok(())
     }
 
     /// Disconnects from all cluster members and shuts down.
+    #[instrument(
+        name = "connection_manager.shutdown",
+        skip(self),
+        fields(cluster = %self.config.cluster_name())
+    )]
     pub async fn shutdown(&self) -> Result<()> {
         let _ = self.lifecycle_sender.send(LifecycleEvent::ShuttingDown);
         tracing::debug!("client lifecycle: ShuttingDown");
@@ -328,6 +365,7 @@ impl ConnectionManager {
         let _ = self.shutdown.send(true);
 
         let addresses: Vec<SocketAddr> = self.connections.read().await.keys().copied().collect();
+        tracing::debug!(connection_count = addresses.len(), "disconnecting all connections");
 
         for address in addresses {
             if let Err(e) = self.disconnect(address).await {
@@ -381,18 +419,41 @@ impl ConnectionManager {
     /// - The quorum is present (enough cluster members)
     ///
     /// Returns `Err(HazelcastError::QuorumNotPresent)` if quorum is not met.
+    #[instrument(
+        name = "connection_manager.check_quorum",
+        skip(self),
+        fields(
+            data_structure = %name,
+            operation = if is_read_operation { "read" } else { "write" }
+        ),
+        level = "debug"
+    )]
     pub async fn check_quorum(&self, name: &str, is_read_operation: bool) -> Result<()> {
         if let Some(quorum_config) = self.config.find_quorum_config(name) {
             if quorum_config.protects_operation(is_read_operation) {
                 let members = self.members().await;
+                let member_count = members.len();
+                let required = quorum_config.min_cluster_size();
+
+                tracing::trace!(
+                    member_count = member_count,
+                    required = required,
+                    "checking quorum"
+                );
+
                 if !quorum_config.check_quorum(&members) {
                     let op_type = if is_read_operation { "read" } else { "write" };
+                    tracing::warn!(
+                        member_count = member_count,
+                        required = required,
+                        "quorum not present"
+                    );
                     return Err(HazelcastError::QuorumNotPresent(format!(
                         "{} operation on '{}' requires quorum of {} members, but only {} present",
                         op_type,
                         name,
-                        quorum_config.min_cluster_size(),
-                        members.len()
+                        required,
+                        member_count
                     )));
                 }
             }
