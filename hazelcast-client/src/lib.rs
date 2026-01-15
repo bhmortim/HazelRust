@@ -7,6 +7,7 @@ pub mod config;
 pub mod connection;
 pub mod listener;
 pub mod proxy;
+pub mod query;
 pub mod sql;
 
 pub use client::HazelcastClient;
@@ -21,6 +22,11 @@ pub use connection::{
 pub use hazelcast_core as core;
 pub use listener::{ListenerId, ListenerRegistration, ListenerStats};
 pub use proxy::{IList, IMap, IQueue, ISet, ITopic, MultiMap, TopicMessage};
+pub use query::{
+    AndPredicate, BetweenPredicate, EqualPredicate, FalsePredicate, GreaterThanPredicate,
+    InPredicate, LessThanPredicate, LikePredicate, NotEqualPredicate, NotPredicate, OrPredicate,
+    Predicate, Predicates, RegexPredicate, SqlPredicate, TruePredicate,
+};
 pub use sql::{
     SqlColumnMetadata, SqlColumnType, SqlResult, SqlRow, SqlRowMetadata, SqlService, SqlStatement,
     SqlValue,
