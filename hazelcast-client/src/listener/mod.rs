@@ -1,7 +1,9 @@
 //! Event listener infrastructure for Hazelcast distributed data structures.
 
+mod lifecycle;
 mod membership;
 
+pub use lifecycle::LifecycleEvent;
 pub use membership::{Member, MemberEvent, MemberEventType, MembershipListener};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

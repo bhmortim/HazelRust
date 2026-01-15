@@ -32,7 +32,7 @@ pub use connection::{
     StaticAddressDiscovery,
 };
 pub use hazelcast_core as core;
-pub use listener::{ListenerId, ListenerRegistration, ListenerStats};
+pub use listener::{LifecycleEvent, ListenerId, ListenerRegistration, ListenerStats};
 pub use proxy::{IList, IMap, IQueue, ISet, ITopic, MultiMap, TopicMessage};
 pub use query::{
     AndPredicate, BetweenPredicate, EqualPredicate, FalsePredicate, GreaterThanPredicate,

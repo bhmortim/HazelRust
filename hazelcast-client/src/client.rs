@@ -8,7 +8,7 @@ use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};
 use crate::executor::ExecutorService;
-use crate::listener::{Member, MemberEvent};
+use crate::listener::{LifecycleEvent, Member, MemberEvent};
 use crate::proxy::{
     AtomicLong, CountDownLatch, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic,
     MultiMap, PNCounter, ReliableTopic, ReplicatedMap, Ringbuffer, Semaphore,
@@ -415,6 +415,26 @@ impl HazelcastClient {
     /// The returned receiver will emit events when members join or leave the cluster.
     pub fn subscribe_membership(&self) -> tokio::sync::broadcast::Receiver<MemberEvent> {
         self.connection_manager.subscribe_membership()
+    }
+
+    /// Subscribes to client lifecycle events.
+    ///
+    /// The returned receiver will emit events during client state transitions
+    /// such as starting, connected, disconnected, and shutdown.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut lifecycle = client.subscribe_lifecycle();
+    ///
+    /// tokio::spawn(async move {
+    ///     while let Ok(event) = lifecycle.recv().await {
+    ///         println!("Lifecycle event: {}", event);
+    ///     }
+    /// });
+    /// ```
+    pub fn subscribe_lifecycle(&self) -> tokio::sync::broadcast::Receiver<LifecycleEvent> {
+        self.connection_manager.subscribe_lifecycle()
     }
 
     /// Returns a snapshot of current client statistics.

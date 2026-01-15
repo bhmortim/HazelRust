@@ -14,7 +14,7 @@ use hazelcast_core::{HazelcastError, Result};
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
 use crate::config::ClientConfig;
-use crate::listener::{Member, MemberEvent, MemberEventType};
+use crate::listener::{LifecycleEvent, Member, MemberEvent, MemberEventType};
 
 /// Events emitted during connection lifecycle.
 #[derive(Debug, Clone)]
@@ -69,6 +69,7 @@ pub struct ConnectionManager {
     members: Arc<RwLock<HashMap<Uuid, Member>>>,
     event_sender: broadcast::Sender<ConnectionEvent>,
     membership_sender: broadcast::Sender<MemberEvent>,
+    lifecycle_sender: broadcast::Sender<LifecycleEvent>,
     shutdown: tokio::sync::watch::Sender<bool>,
 }
 
@@ -77,6 +78,7 @@ impl ConnectionManager {
     pub fn new(config: ClientConfig, discovery: impl ClusterDiscovery + 'static) -> Self {
         let (event_sender, _) = broadcast::channel(64);
         let (membership_sender, _) = broadcast::channel(64);
+        let (lifecycle_sender, _) = broadcast::channel(16);
         let (shutdown, _) = tokio::sync::watch::channel(false);
 
         Self {
@@ -86,6 +88,7 @@ impl ConnectionManager {
             members: Arc::new(RwLock::new(HashMap::new())),
             event_sender,
             membership_sender,
+            lifecycle_sender,
             shutdown,
         }
     }
@@ -106,6 +109,11 @@ impl ConnectionManager {
     /// Subscribes to cluster membership events.
     pub fn subscribe_membership(&self) -> broadcast::Receiver<MemberEvent> {
         self.membership_sender.subscribe()
+    }
+
+    /// Subscribes to client lifecycle events.
+    pub fn subscribe_lifecycle(&self) -> broadcast::Receiver<LifecycleEvent> {
+        self.lifecycle_sender.subscribe()
     }
 
     /// Returns the current list of known cluster members.
@@ -165,6 +173,9 @@ impl ConnectionManager {
 
     /// Starts the connection manager, establishing initial connections.
     pub async fn start(&self) -> Result<()> {
+        let _ = self.lifecycle_sender.send(LifecycleEvent::Starting);
+        tracing::debug!("client lifecycle: Starting");
+
         let addresses = self.discovery.discover().await?;
 
         if addresses.is_empty() {
@@ -189,6 +200,12 @@ impl ConnectionManager {
         }
 
         self.spawn_heartbeat_task();
+
+        let _ = self.lifecycle_sender.send(LifecycleEvent::ClientConnected);
+        tracing::debug!("client lifecycle: ClientConnected");
+
+        let _ = self.lifecycle_sender.send(LifecycleEvent::Started);
+        tracing::debug!("client lifecycle: Started");
 
         Ok(())
     }
@@ -305,6 +322,9 @@ impl ConnectionManager {
 
     /// Disconnects from all cluster members and shuts down.
     pub async fn shutdown(&self) -> Result<()> {
+        let _ = self.lifecycle_sender.send(LifecycleEvent::ShuttingDown);
+        tracing::debug!("client lifecycle: ShuttingDown");
+
         let _ = self.shutdown.send(true);
 
         let addresses: Vec<SocketAddr> = self.connections.read().await.keys().copied().collect();
@@ -314,6 +334,12 @@ impl ConnectionManager {
                 tracing::warn!(address = %address, error = %e, "error during disconnect");
             }
         }
+
+        let _ = self.lifecycle_sender.send(LifecycleEvent::ClientDisconnected);
+        tracing::debug!("client lifecycle: ClientDisconnected");
+
+        let _ = self.lifecycle_sender.send(LifecycleEvent::Shutdown);
+        tracing::debug!("client lifecycle: Shutdown");
 
         tracing::info!("connection manager shut down");
         Ok(())
@@ -813,5 +839,109 @@ mod tests {
 
         let not_found = manager.get_member(&uuid::Uuid::new_v4()).await;
         assert!(not_found.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_events_on_start() {
+        let (listener, addr) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let config = ClientConfigBuilder::new()
+            .add_address(addr)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::from_config(config);
+        let mut rx = manager.subscribe_lifecycle();
+
+        manager.start().await.unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(event) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
+            if let Ok(e) = event {
+                events.push(e);
+            }
+        }
+
+        assert!(events.contains(&crate::listener::LifecycleEvent::Starting));
+        assert!(events.contains(&crate::listener::LifecycleEvent::ClientConnected));
+        assert!(events.contains(&crate::listener::LifecycleEvent::Started));
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_events_on_shutdown() {
+        let (listener, addr) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let config = ClientConfigBuilder::new()
+            .add_address(addr)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::from_config(config);
+        manager.start().await.unwrap();
+
+        let mut rx = manager.subscribe_lifecycle();
+
+        manager.shutdown().await.unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(event) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
+            if let Ok(e) = event {
+                events.push(e);
+            }
+        }
+
+        assert!(events.contains(&crate::listener::LifecycleEvent::ShuttingDown));
+        assert!(events.contains(&crate::listener::LifecycleEvent::ClientDisconnected));
+        assert!(events.contains(&crate::listener::LifecycleEvent::Shutdown));
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_event_order_on_start() {
+        let (listener, addr) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let config = ClientConfigBuilder::new()
+            .add_address(addr)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::from_config(config);
+        let mut rx = manager.subscribe_lifecycle();
+
+        manager.start().await.unwrap();
+
+        let event1 = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let event2 = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let event3 = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(event1, crate::listener::LifecycleEvent::Starting);
+        assert_eq!(event2, crate::listener::LifecycleEvent::ClientConnected);
+        assert_eq!(event3, crate::listener::LifecycleEvent::Started);
+    }
+
+    #[test]
+    fn test_lifecycle_event_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<crate::listener::LifecycleEvent>();
     }
 }
