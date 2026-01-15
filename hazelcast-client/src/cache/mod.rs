@@ -1,4 +1,8 @@
-//! Near-cache configuration for client-side caching.
+//! Near-cache configuration and implementation for client-side caching.
+
+mod near_cache;
+
+pub use near_cache::{NearCache, NearCacheStats};
 
 use std::time::Duration;
 
