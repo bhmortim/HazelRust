@@ -1,5 +1,7 @@
 # Hazelcast Rust Client
 
+[![Coverage](https://codecov.io/gh/hazelcast/hazelcast-rust-client/branch/main/graph/badge.svg)](https://codecov.io/gh/hazelcast/hazelcast-rust-client)
+
 A Rust client library for Hazelcast.
 
 ## Project Structure

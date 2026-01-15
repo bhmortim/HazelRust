@@ -394,4 +394,129 @@ mod tests {
         assert!(msg.is_empty());
         assert_eq!(msg.frame_count(), 0);
     }
+
+    #[test]
+    fn test_frames_mut() {
+        let mut msg = ClientMessage::create_for_encode(MAP_GET, 0);
+        let initial_count = msg.frame_count();
+
+        msg.frames_mut().push(Frame::with_content(BytesMut::from(&b"extra"[..])));
+
+        assert_eq!(msg.frame_count(), initial_count + 1);
+    }
+
+    #[test]
+    fn test_message_type_with_short_content() {
+        let short_frame = Frame::with_content(BytesMut::from(&[0x01, 0x02][..]));
+        let msg = ClientMessage::from_frames(vec![short_frame]);
+
+        assert_eq!(msg.message_type(), Some(0));
+    }
+
+    #[test]
+    fn test_correlation_id_with_short_content() {
+        let short_frame = Frame::with_content(BytesMut::from(&[0x01, 0x02, 0x03, 0x04][..]));
+        let msg = ClientMessage::from_frames(vec![short_frame]);
+
+        assert_eq!(msg.correlation_id(), Some(0));
+    }
+
+    #[test]
+    fn test_partition_id_with_short_content() {
+        let short_frame = Frame::with_content(BytesMut::from(&[0x01; 10][..]));
+        let msg = ClientMessage::from_frames(vec![short_frame]);
+
+        assert_eq!(msg.partition_id(), Some(PARTITION_ID_ANY));
+    }
+
+    #[test]
+    fn test_set_correlation_id_with_short_content() {
+        let short_frame = Frame::with_content(BytesMut::from(&[0x01, 0x02][..]));
+        let mut msg = ClientMessage::from_frames(vec![short_frame]);
+
+        msg.set_correlation_id(999);
+        assert_eq!(msg.correlation_id(), Some(0));
+    }
+
+    #[test]
+    fn test_set_partition_id_with_short_content() {
+        let short_frame = Frame::with_content(BytesMut::from(&[0x01; 10][..]));
+        let mut msg = ClientMessage::from_frames(vec![short_frame]);
+
+        msg.set_partition_id(42);
+        assert_eq!(msg.partition_id(), Some(PARTITION_ID_ANY));
+    }
+
+    #[test]
+    fn test_is_event() {
+        let event_frame = Frame::with_flags(IS_EVENT_FLAG | BEGIN_FLAG);
+        let msg = ClientMessage::from_frames(vec![event_frame]);
+
+        assert!(msg.is_event());
+    }
+
+    #[test]
+    fn test_is_not_event() {
+        let normal_frame = Frame::with_flags(BEGIN_FLAG);
+        let msg = ClientMessage::from_frames(vec![normal_frame]);
+
+        assert!(!msg.is_event());
+    }
+
+    #[test]
+    fn test_is_event_empty_message() {
+        let msg = ClientMessage::new();
+        assert!(!msg.is_event());
+    }
+
+    #[test]
+    fn test_message_type_empty_message() {
+        let msg = ClientMessage::new();
+        assert!(msg.message_type().is_none());
+    }
+
+    #[test]
+    fn test_correlation_id_empty_message() {
+        let msg = ClientMessage::new();
+        assert!(msg.correlation_id().is_none());
+    }
+
+    #[test]
+    fn test_partition_id_empty_message() {
+        let msg = ClientMessage::new();
+        assert!(msg.partition_id().is_none());
+    }
+
+    #[test]
+    fn test_wire_size_empty_message() {
+        let msg = ClientMessage::new();
+        assert_eq!(msg.wire_size(), 0);
+    }
+
+    #[test]
+    fn test_write_to_empty_message() {
+        let mut msg = ClientMessage::new();
+        let mut buf = BytesMut::new();
+
+        msg.write_to(&mut buf);
+
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_murmur_hash_alignment_edge_cases() {
+        assert_ne!(compute_partition_hash(b"1234"), 0);
+        assert_ne!(compute_partition_hash(b"12345"), 0);
+        assert_ne!(compute_partition_hash(b"123456"), 0);
+        assert_ne!(compute_partition_hash(b"1234567"), 0);
+        assert_ne!(compute_partition_hash(b"12345678"), 0);
+    }
+
+    #[test]
+    fn test_create_for_encode_any_partition() {
+        let msg = ClientMessage::create_for_encode_any_partition(MAP_GET);
+
+        assert_eq!(msg.message_type(), Some(MAP_GET));
+        assert_eq!(msg.partition_id(), Some(PARTITION_ID_ANY));
+    }
 }

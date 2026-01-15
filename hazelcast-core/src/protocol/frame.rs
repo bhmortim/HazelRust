@@ -246,4 +246,80 @@ mod tests {
         assert!(frame.is_begin_frame());
         assert!(frame.is_end_frame());
     }
+
+    #[test]
+    fn test_new_begin_frame() {
+        let content = BytesMut::from(&[0xAB, 0xCD][..]);
+        let frame = Frame::new_begin_frame(content.clone());
+
+        assert!(frame.is_begin_frame());
+        assert!(!frame.is_end_frame());
+        assert_eq!(frame.content, content);
+        assert_eq!(frame.flags, BEGIN_FLAG);
+    }
+
+    #[test]
+    fn test_with_capacity() {
+        let frame = Frame::with_capacity(1024, BEGIN_FLAG | END_FLAG);
+
+        assert!(frame.is_begin_frame());
+        assert!(frame.is_end_frame());
+        assert!(frame.content.is_empty());
+        assert!(frame.content.capacity() >= 1024);
+    }
+
+    #[test]
+    fn test_frame_roundtrip_with_all_flags() {
+        let flags = BEGIN_FLAG | END_FLAG | IS_FINAL_FLAG | IS_EVENT_FLAG;
+        let content = BytesMut::from(&[1, 2, 3, 4, 5, 6, 7, 8][..]);
+        let original = Frame::new(content.clone(), flags);
+
+        let mut buf = BytesMut::new();
+        original.write_to(&mut buf);
+
+        let decoded = Frame::read_from(&mut buf).unwrap();
+
+        assert_eq!(decoded.flags, flags);
+        assert_eq!(decoded.content, content);
+        assert!(decoded.is_begin_frame());
+        assert!(decoded.is_end_frame());
+        assert!(decoded.is_final_frame());
+        assert!(decoded.is_event_frame());
+    }
+
+    #[test]
+    fn test_read_large_frame() {
+        let content: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
+        let original = Frame::new(BytesMut::from(&content[..]), DEFAULT_FLAGS);
+
+        let mut buf = BytesMut::new();
+        original.write_to(&mut buf);
+
+        let decoded = Frame::read_from(&mut buf).unwrap();
+        assert_eq!(decoded.content.len(), 1000);
+        assert_eq!(&decoded.content[..], &content[..]);
+    }
+
+    #[test]
+    fn test_write_to_reserves_capacity() {
+        let frame = Frame::with_content(BytesMut::from(&[1, 2, 3][..]));
+        let mut buf = BytesMut::new();
+
+        frame.write_to(&mut buf);
+
+        assert_eq!(buf.len(), frame.wire_size());
+    }
+
+    #[test]
+    fn test_default_frame_properties() {
+        let frame = Frame::default();
+
+        assert!(!frame.is_begin_frame());
+        assert!(!frame.is_end_frame());
+        assert!(!frame.is_null_frame());
+        assert!(!frame.is_final_frame());
+        assert!(!frame.is_event_frame());
+        assert!(!frame.is_backup_event_frame());
+        assert!(frame.content.is_empty());
+    }
 }

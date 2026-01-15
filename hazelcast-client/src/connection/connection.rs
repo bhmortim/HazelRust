@@ -361,4 +361,72 @@ mod tests {
         let id = ConnectionId(123);
         assert_eq!(id.value(), 123);
     }
+
+    #[test]
+    fn test_connection_id_default() {
+        let id1 = ConnectionId::default();
+        let id2 = ConnectionId::default();
+
+        assert_ne!(id1, id2);
+        assert!(id1.value() > 0);
+        assert!(id2.value() > 0);
+    }
+
+    #[test]
+    fn test_connection_id_hash() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        let id1 = ConnectionId(1);
+        let id2 = ConnectionId(2);
+        let id3 = ConnectionId(1);
+
+        set.insert(id1);
+        set.insert(id2);
+        set.insert(id3);
+
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn test_connection_id_copy() {
+        let id1 = ConnectionId(42);
+        let id2 = id1;
+
+        assert_eq!(id1, id2);
+        assert_eq!(id1.value(), 42);
+        assert_eq!(id2.value(), 42);
+    }
+
+    #[test]
+    fn test_connection_id_clone() {
+        let id1 = ConnectionId(99);
+        let id2 = id1.clone();
+
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_connection_stream_debug_plain() {
+        use tokio::runtime::Runtime;
+
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+
+            let connect_handle = tokio::spawn(async move {
+                TcpStream::connect(addr).await.unwrap()
+            });
+
+            let (_, stream) = tokio::join!(
+                async { listener.accept().await.unwrap() },
+                connect_handle
+            );
+
+            let conn_stream = ConnectionStream::Plain(stream.unwrap());
+            let debug_str = format!("{:?}", conn_stream);
+            assert!(debug_str.contains("Plain"));
+        });
+    }
 }

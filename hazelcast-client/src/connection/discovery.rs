@@ -114,4 +114,35 @@ mod tests {
         let debug_str = format!("{:?}", discovery);
         assert!(debug_str.contains("StaticAddressDiscovery"));
     }
+
+    #[test]
+    fn test_static_discovery_clone() {
+        let original = StaticAddressDiscovery::new(vec![
+            "192.168.1.1:5701".parse().unwrap(),
+            "192.168.1.2:5701".parse().unwrap(),
+        ]);
+
+        let cloned = original.clone();
+
+        assert_eq!(original.addresses(), cloned.addresses());
+    }
+
+    #[tokio::test]
+    async fn test_static_discovery_empty_addresses() {
+        let discovery = StaticAddressDiscovery::new(vec![]);
+        let result = discovery.discover().await.unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_static_discovery_from_array() {
+        let addrs: [SocketAddr; 2] = [
+            "192.168.1.1:5701".parse().unwrap(),
+            "192.168.1.2:5701".parse().unwrap(),
+        ];
+
+        let discovery: StaticAddressDiscovery = addrs.into();
+        assert_eq!(discovery.addresses().len(), 2);
+    }
 }

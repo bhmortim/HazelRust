@@ -1424,4 +1424,143 @@ mod tests {
         fn assert_send<T: Send>() {}
         assert_send::<crate::listener::LifecycleEvent>();
     }
+
+    #[test]
+    fn test_find_quorum_config_returns_none_when_no_match() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        assert!(manager.find_quorum_config("any-map").is_none());
+    }
+
+    #[test]
+    fn test_find_quorum_config_returns_matching() {
+        use crate::config::{QuorumConfig, QuorumType};
+
+        let quorum = QuorumConfig::builder("test-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let found = manager.find_quorum_config("test-map");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().min_cluster_size(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_handle_member_removed_unknown_uuid() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let unknown_uuid = uuid::Uuid::new_v4();
+        manager.handle_member_removed(unknown_uuid).await;
+
+        assert_eq!(manager.member_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_receive_from_nonexistent_connection() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let manager = ConnectionManager::from_config(config);
+
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let result = manager.receive_from(addr).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_nonexistent_address() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let manager = ConnectionManager::from_config(config);
+
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let result = manager.disconnect(addr).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_set_initial_members_clears_existing() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let member1 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        manager.handle_member_added(member1).await;
+        assert_eq!(manager.member_count().await, 1);
+
+        let new_members = vec![
+            crate::listener::Member::new(
+                uuid::Uuid::new_v4(),
+                "127.0.0.1:5702".parse().unwrap(),
+            ),
+            crate::listener::Member::new(
+                uuid::Uuid::new_v4(),
+                "127.0.0.1:5703".parse().unwrap(),
+            ),
+        ];
+
+        manager.set_initial_members(new_members).await;
+        assert_eq!(manager.member_count().await, 2);
+    }
+
+    #[test]
+    fn test_connection_event_variants() {
+        let id = super::super::connection::ConnectionId::new();
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+
+        let connected = ConnectionEvent::Connected { id, address: addr };
+        let disconnected = ConnectionEvent::Disconnected {
+            id,
+            address: addr,
+            error: Some("test error".to_string()),
+        };
+        let heartbeat = ConnectionEvent::HeartbeatReceived { id, address: addr };
+        let reconnect_attempt = ConnectionEvent::ReconnectAttempt {
+            address: addr,
+            attempt: 1,
+            next_delay: Duration::from_secs(1),
+        };
+        let reconnect_failed = ConnectionEvent::ReconnectFailed {
+            address: addr,
+            error: "failed".to_string(),
+        };
+
+        assert!(format!("{:?}", connected).contains("Connected"));
+        assert!(format!("{:?}", disconnected).contains("Disconnected"));
+        assert!(format!("{:?}", heartbeat).contains("HeartbeatReceived"));
+        assert!(format!("{:?}", reconnect_attempt).contains("ReconnectAttempt"));
+        assert!(format!("{:?}", reconnect_failed).contains("ReconnectFailed"));
+    }
+
+    #[test]
+    fn test_connection_event_clone() {
+        let id = super::super::connection::ConnectionId::new();
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+
+        let event = ConnectionEvent::Connected { id, address: addr };
+        let cloned = event.clone();
+
+        match cloned {
+            ConnectionEvent::Connected { address, .. } => {
+                assert_eq!(address, addr);
+            }
+            _ => panic!("expected Connected event"),
+        }
+    }
 }

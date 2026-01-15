@@ -255,4 +255,87 @@ mod tests {
         let decoded = codec.decode(&mut partial_buf).unwrap().unwrap();
         assert_eq!(decoded.message_type(), Some(MAP_SIZE));
     }
+
+    #[test]
+    fn test_decode_frame_without_begin_flag_ignored() {
+        let mut codec = ClientMessageCodec::new();
+
+        let middle_frame = Frame::with_content(BytesMut::from(&b"orphan"[..]));
+        let mut buf = BytesMut::new();
+        middle_frame.write_to(&mut buf);
+
+        let result = codec.decode(&mut buf).unwrap();
+        assert!(result.is_none());
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_decode_end_frame_without_begin_ignored() {
+        let mut codec = ClientMessageCodec::new();
+
+        let end_frame = Frame::new_end_frame();
+        let mut buf = BytesMut::new();
+        end_frame.write_to(&mut buf);
+
+        let result = codec.decode(&mut buf).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_codec_state_reset_on_new_message() {
+        let mut codec = ClientMessageCodec::new();
+
+        let msg1 = create_simple_message(MAP_GET);
+        let msg2 = create_simple_message(MAP_PUT);
+
+        let mut buf = BytesMut::new();
+        codec.encode(msg1, &mut buf).unwrap();
+        codec.encode(msg2, &mut buf).unwrap();
+
+        let decoded1 = codec.decode(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded1.message_type(), Some(MAP_GET));
+
+        let decoded2 = codec.decode(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded2.message_type(), Some(MAP_PUT));
+    }
+
+    #[test]
+    fn test_decode_interleaved_partial_frames() {
+        let mut codec = ClientMessageCodec::new();
+        let msg = create_simple_message(MAP_GET);
+
+        let mut full_buf = BytesMut::new();
+        codec.encode(msg, &mut full_buf).unwrap();
+
+        let mut partial = full_buf.split_to(4);
+        assert!(codec.decode(&mut partial).unwrap().is_none());
+
+        partial.unsplit(full_buf.split_to(2));
+        assert!(codec.decode(&mut partial).unwrap().is_none());
+
+        partial.unsplit(full_buf);
+        let decoded = codec.decode(&mut partial).unwrap().unwrap();
+        assert_eq!(decoded.message_type(), Some(MAP_GET));
+    }
+
+    #[test]
+    fn test_codec_default() {
+        let codec = ClientMessageCodec::default();
+        assert!(!codec.in_message);
+        assert!(codec.pending_frames.is_empty());
+    }
+
+    #[test]
+    fn test_encode_single_frame_message() {
+        let mut codec = ClientMessageCodec::new();
+        let msg = create_simple_message(CLIENT_AUTHENTICATION);
+
+        let mut buf = BytesMut::new();
+        codec.encode(msg, &mut buf).unwrap();
+
+        assert!(!buf.is_empty());
+
+        let decoded = codec.decode(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded.frame_count(), 1);
+    }
 }
