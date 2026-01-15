@@ -13,6 +13,7 @@ use crate::proxy::{
     MultiMap, PNCounter, ReplicatedMap, Ringbuffer, Semaphore,
 };
 use crate::sql::SqlService;
+use crate::transaction::{TransactionContext, TransactionOptions};
 
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
@@ -321,6 +322,30 @@ impl HazelcastClient {
     /// ```
     pub fn sql(&self) -> SqlService {
         SqlService::new(Arc::clone(&self.connection_manager))
+    }
+
+    /// Creates a new transaction context with the specified options.
+    ///
+    /// The transaction context allows performing atomic operations across
+    /// multiple data structures.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let options = TransactionOptions::new()
+    ///     .with_timeout(Duration::from_secs(30))
+    ///     .with_type(TransactionType::TwoPhase);
+    ///
+    /// let mut txn = client.new_transaction_context(options);
+    /// txn.begin().await?;
+    ///
+    /// let map = txn.get_map::<String, String>("my-map");
+    /// map.put("key".to_string(), "value".to_string()).await?;
+    ///
+    /// txn.commit().await?;
+    /// ```
+    pub fn new_transaction_context(&self, options: TransactionOptions) -> TransactionContext {
+        TransactionContext::new(Arc::clone(&self.connection_manager), options)
     }
 
     /// Returns the cluster name this client is connected to.

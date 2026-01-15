@@ -10,6 +10,7 @@ pub mod listener;
 pub mod proxy;
 pub mod query;
 pub mod sql;
+pub mod transaction;
 
 pub use client::HazelcastClient;
 pub use executor::{
@@ -35,4 +36,8 @@ pub use query::{
 pub use sql::{
     SqlColumnMetadata, SqlColumnType, SqlResult, SqlRow, SqlRowMetadata, SqlService, SqlStatement,
     SqlValue,
+};
+pub use transaction::{
+    TransactionContext, TransactionOptions, TransactionState, TransactionType,
+    TransactionalList, TransactionalMap, TransactionalQueue, TransactionalSet,
 };

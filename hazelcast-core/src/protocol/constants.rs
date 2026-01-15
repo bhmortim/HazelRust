@@ -382,3 +382,66 @@ pub const SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION: i32 = 0x1A0C00;
 
 /// Scheduled executor is shutdown request.
 pub const SCHEDULED_EXECUTOR_IS_SHUTDOWN: i32 = 0x1A0E00;
+
+/// Transaction create request.
+pub const TXN_CREATE: i32 = 0x150100;
+
+/// Transaction commit request.
+pub const TXN_COMMIT: i32 = 0x150200;
+
+/// Transaction rollback request.
+pub const TXN_ROLLBACK: i32 = 0x150300;
+
+/// Transactional map contains key request.
+pub const TXN_MAP_CONTAINS_KEY: i32 = 0x0E0100;
+
+/// Transactional map get request.
+pub const TXN_MAP_GET: i32 = 0x0E0200;
+
+/// Transactional map put request.
+pub const TXN_MAP_PUT: i32 = 0x0E0300;
+
+/// Transactional map set request.
+pub const TXN_MAP_SET: i32 = 0x0E0400;
+
+/// Transactional map put if absent request.
+pub const TXN_MAP_PUT_IF_ABSENT: i32 = 0x0E0500;
+
+/// Transactional map replace request.
+pub const TXN_MAP_REPLACE: i32 = 0x0E0600;
+
+/// Transactional map remove request.
+pub const TXN_MAP_REMOVE: i32 = 0x0E0800;
+
+/// Transactional map delete request.
+pub const TXN_MAP_DELETE: i32 = 0x0E0900;
+
+/// Transactional map size request.
+pub const TXN_MAP_SIZE: i32 = 0x0E0B00;
+
+/// Transactional queue offer request.
+pub const TXN_QUEUE_OFFER: i32 = 0x100100;
+
+/// Transactional queue poll request.
+pub const TXN_QUEUE_POLL: i32 = 0x100300;
+
+/// Transactional queue size request.
+pub const TXN_QUEUE_SIZE: i32 = 0x100500;
+
+/// Transactional set add request.
+pub const TXN_SET_ADD: i32 = 0x110100;
+
+/// Transactional set remove request.
+pub const TXN_SET_REMOVE: i32 = 0x110200;
+
+/// Transactional set size request.
+pub const TXN_SET_SIZE: i32 = 0x110300;
+
+/// Transactional list add request.
+pub const TXN_LIST_ADD: i32 = 0x120100;
+
+/// Transactional list remove request.
+pub const TXN_LIST_REMOVE: i32 = 0x120200;
+
+/// Transactional list size request.
+pub const TXN_LIST_SIZE: i32 = 0x120300;
