@@ -208,6 +208,94 @@ where
         &self.config
     }
 
+    /// Preloads entries for specific keys from an async data source.
+    ///
+    /// The `fetcher` function receives a batch of keys and should return
+    /// the corresponding (key, value) pairs from the remote data source.
+    /// Keys are processed in batches according to the configured batch size.
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - The keys to preload
+    /// * `fetcher` - An async function that fetches values for a batch of keys
+    ///
+    /// # Returns
+    ///
+    /// Statistics about the preload operation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let keys_to_preload = vec!["key1".to_string(), "key2".to_string()];
+    /// let stats = cache.preload_keys(keys_to_preload, |batch_keys| async move {
+    ///     // Fetch from cluster using getAll or similar
+    ///     map.get_all(&batch_keys).await
+    /// }).await?;
+    /// ```
+    pub async fn preload_keys<F, Fut, E>(
+        &mut self,
+        keys: Vec<K>,
+        mut fetcher: F,
+    ) -> Result<PreloadStats, E>
+    where
+        F: FnMut(Vec<K>) -> Fut,
+        Fut: Future<Output = Result<Vec<(K, V)>, E>>,
+    {
+        let mut stats = PreloadStats::default();
+
+        if keys.is_empty() {
+            return Ok(stats);
+        }
+
+        let batch_size = self.config.preload_config().batch_size() as usize;
+
+        for chunk in keys.chunks(batch_size) {
+            let entries = fetcher(chunk.to_vec()).await?;
+            stats.batches_processed += 1;
+
+            for (key, value) in entries {
+                if self.put(key, value) {
+                    stats.entries_loaded += 1;
+                } else {
+                    stats.entries_skipped += 1;
+                }
+            }
+        }
+
+        Ok(stats)
+    }
+
+    /// Preloads all entries from an async data source.
+    ///
+    /// This is a convenience wrapper around [`preload`](Self::preload) that
+    /// makes the intent clearer when preloading the entire dataset.
+    ///
+    /// The `fetcher` function is called repeatedly with the batch number (starting from 0)
+    /// until it returns an empty vector, indicating no more data.
+    ///
+    /// # Arguments
+    ///
+    /// * `fetcher` - An async function that takes a batch number and returns entries
+    ///
+    /// # Returns
+    ///
+    /// Statistics about the preload operation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let stats = cache.preload_all(|batch_num| async move {
+    ///     map.get_entries_batch(batch_num).await
+    /// }).await?;
+    /// ```
+    pub async fn preload_all<F, Fut, E>(&mut self, fetcher: F) -> Result<PreloadStats, E>
+    where
+        F: FnMut(u32) -> Fut,
+        Fut: Future<Output = Result<Vec<(K, V)>, E>>,
+    {
+        self.preload(fetcher).await
+    }
+
     /// Preloads entries into the cache from an async data source.
     ///
     /// The `fetcher` function is called repeatedly with the batch number (starting from 0)
@@ -881,5 +969,295 @@ mod tests {
         assert_eq!(stats.entries_skipped(), 0);
         assert_eq!(stats.batches_processed(), 1);
         assert_eq!(cache.size(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_preload_keys() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .preload_batch_size(10)
+            .build()
+            .unwrap();
+        let mut cache = NearCache::new(config);
+
+        let keys = vec![
+            "key1".to_string(),
+            "key2".to_string(),
+            "key3".to_string(),
+        ];
+
+        let result: Result<PreloadStats, String> = cache
+            .preload_keys(keys, |batch_keys| async move {
+                Ok(batch_keys
+                    .into_iter()
+                    .map(|k| {
+                        let v = format!("value-{}", k);
+                        (k, v)
+                    })
+                    .collect())
+            })
+            .await;
+
+        let stats = result.unwrap();
+        assert_eq!(stats.entries_loaded(), 3);
+        assert_eq!(stats.entries_skipped(), 0);
+        assert_eq!(stats.batches_processed(), 1);
+        assert_eq!(cache.size(), 3);
+        assert_eq!(
+            cache.get(&"key1".to_string()),
+            Some("value-key1".to_string())
+        );
+        assert_eq!(
+            cache.get(&"key2".to_string()),
+            Some("value-key2".to_string())
+        );
+        assert_eq!(
+            cache.get(&"key3".to_string()),
+            Some("value-key3".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_preload_keys_respects_batch_size() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .preload_batch_size(2)
+            .build()
+            .unwrap();
+        let mut cache = NearCache::new(config);
+
+        let keys = vec![
+            "k1".to_string(),
+            "k2".to_string(),
+            "k3".to_string(),
+            "k4".to_string(),
+            "k5".to_string(),
+        ];
+
+        let batch_sizes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let batch_sizes_clone = batch_sizes.clone();
+
+        let result: Result<PreloadStats, String> = cache
+            .preload_keys(keys, |batch_keys| {
+                let batch_sizes = batch_sizes_clone.clone();
+                async move {
+                    batch_sizes.lock().unwrap().push(batch_keys.len());
+                    Ok(batch_keys
+                        .into_iter()
+                        .map(|k| (k.clone(), k))
+                        .collect())
+                }
+            })
+            .await;
+
+        let stats = result.unwrap();
+        assert_eq!(stats.entries_loaded(), 5);
+        assert_eq!(stats.batches_processed(), 3);
+
+        let sizes = batch_sizes.lock().unwrap();
+        assert_eq!(*sizes, vec![2, 2, 1]);
+    }
+
+    #[tokio::test]
+    async fn test_preload_keys_empty() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .build()
+            .unwrap();
+        let mut cache: NearCache<String, String> = NearCache::new(config);
+
+        let result: Result<PreloadStats, String> = cache
+            .preload_keys(vec![], |_batch_keys| async move {
+                panic!("fetcher should not be called for empty keys")
+            })
+            .await;
+
+        let stats = result.unwrap();
+        assert_eq!(stats.entries_loaded(), 0);
+        assert_eq!(stats.entries_skipped(), 0);
+        assert_eq!(stats.batches_processed(), 0);
+        assert_eq!(cache.size(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_preload_keys_respects_capacity() {
+        let config = NearCacheConfig::builder("test")
+            .max_size(2)
+            .eviction_policy(super::EvictionPolicy::None)
+            .preload_enabled(true)
+            .preload_batch_size(10)
+            .build()
+            .unwrap();
+        let mut cache = NearCache::new(config);
+
+        let keys = vec![
+            "k1".to_string(),
+            "k2".to_string(),
+            "k3".to_string(),
+            "k4".to_string(),
+        ];
+
+        let result: Result<PreloadStats, String> = cache
+            .preload_keys(keys, |batch_keys| async move {
+                Ok(batch_keys
+                    .into_iter()
+                    .map(|k| (k.clone(), k))
+                    .collect())
+            })
+            .await;
+
+        let stats = result.unwrap();
+        assert_eq!(stats.entries_loaded(), 2);
+        assert_eq!(stats.entries_skipped(), 2);
+        assert_eq!(cache.size(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_preload_keys_error_handling() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .preload_batch_size(2)
+            .build()
+            .unwrap();
+        let mut cache: NearCache<String, String> = NearCache::new(config);
+
+        let keys = vec![
+            "k1".to_string(),
+            "k2".to_string(),
+            "k3".to_string(),
+        ];
+
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let call_count_clone = call_count.clone();
+
+        let result: Result<PreloadStats, &str> = cache
+            .preload_keys(keys, |batch_keys| {
+                let call_count = call_count_clone.clone();
+                async move {
+                    let count = call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if count == 0 {
+                        Ok(batch_keys
+                            .into_iter()
+                            .map(|k| (k.clone(), k))
+                            .collect())
+                    } else {
+                        Err("Simulated error on second batch")
+                    }
+                }
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Simulated error on second batch");
+        assert_eq!(cache.size(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_preload_all() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .preload_batch_size(2)
+            .build()
+            .unwrap();
+        let mut cache = NearCache::new(config);
+
+        let batches: Vec<Vec<(String, String)>> = vec![
+            vec![
+                ("k1".to_string(), "v1".to_string()),
+                ("k2".to_string(), "v2".to_string()),
+            ],
+            vec![("k3".to_string(), "v3".to_string())],
+            vec![],
+        ];
+
+        let batch_idx = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let batches_clone = batches.clone();
+
+        let result: Result<PreloadStats, String> = cache
+            .preload_all(|_batch_num| {
+                let batch_idx = batch_idx.clone();
+                let batches = batches_clone.clone();
+                async move {
+                    let idx = batch_idx.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok(batches.get(idx).cloned().unwrap_or_default())
+                }
+            })
+            .await;
+
+        let stats = result.unwrap();
+        assert_eq!(stats.entries_loaded(), 3);
+        assert_eq!(stats.batches_processed(), 2);
+        assert_eq!(cache.size(), 3);
+        assert_eq!(cache.get(&"k1".to_string()), Some("v1".to_string()));
+        assert_eq!(cache.get(&"k2".to_string()), Some("v2".to_string()));
+        assert_eq!(cache.get(&"k3".to_string()), Some("v3".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_preload_keys_verifies_cache_populated() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .build()
+            .unwrap();
+        let mut cache = NearCache::new(config);
+
+        let keys: Vec<i32> = (1..=10).collect();
+
+        let result: Result<PreloadStats, String> = cache
+            .preload_keys(keys, |batch_keys| async move {
+                Ok(batch_keys
+                    .into_iter()
+                    .map(|k| (k, k * 100))
+                    .collect())
+            })
+            .await;
+
+        result.unwrap();
+
+        for i in 1..=10 {
+            let cached_value = cache.get(&i);
+            assert_eq!(cached_value, Some(i * 100), "Key {} should be cached", i);
+        }
+
+        let stats = cache.stats();
+        assert_eq!(stats.hits(), 10);
+        assert_eq!(stats.misses(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_preload_keys_partial_fetch() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .preload_batch_size(10)
+            .build()
+            .unwrap();
+        let mut cache = NearCache::new(config);
+
+        let keys = vec![
+            "exists1".to_string(),
+            "missing".to_string(),
+            "exists2".to_string(),
+        ];
+
+        let result: Result<PreloadStats, String> = cache
+            .preload_keys(keys, |batch_keys| async move {
+                Ok(batch_keys
+                    .into_iter()
+                    .filter(|k| k.starts_with("exists"))
+                    .map(|k| {
+                        let v = format!("value-{}", k);
+                        (k, v)
+                    })
+                    .collect())
+            })
+            .await;
+
+        let stats = result.unwrap();
+        assert_eq!(stats.entries_loaded(), 2);
+        assert_eq!(cache.size(), 2);
+
+        assert!(cache.get(&"exists1".to_string()).is_some());
+        assert!(cache.get(&"exists2".to_string()).is_some());
+        assert!(cache.get(&"missing".to_string()).is_none());
     }
 }
