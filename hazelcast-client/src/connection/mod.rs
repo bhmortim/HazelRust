@@ -10,6 +10,9 @@ mod aws;
 #[cfg(feature = "kubernetes")]
 mod kubernetes;
 
+#[cfg(feature = "cloud")]
+mod cloud;
+
 pub use connection::{Connection, ConnectionId};
 pub use discovery::{ClusterDiscovery, StaticAddressDiscovery};
 pub use manager::{ConnectionEvent, ConnectionManager};
@@ -19,3 +22,6 @@ pub use aws::{AwsDiscovery, AwsDiscoveryConfig};
 
 #[cfg(feature = "kubernetes")]
 pub use kubernetes::{KubernetesDiscovery, KubernetesDiscoveryConfig};
+
+#[cfg(feature = "cloud")]
+pub use cloud::{CloudDiscovery, CloudDiscoveryConfig};
