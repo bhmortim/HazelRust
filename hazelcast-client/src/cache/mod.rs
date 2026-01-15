@@ -2,8 +2,8 @@
 
 mod near_cache;
 
-pub use near_cache::{NearCache, NearCacheStats};
-pub use self::{EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder};
+pub use near_cache::{NearCache, NearCacheStats, PreloadStats};
+pub use self::{EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder, PreloadConfig, PreloadConfigBuilder};
 
 use std::time::Duration;
 
@@ -42,6 +42,88 @@ pub enum EvictionPolicy {
     None,
 }
 
+/// Configuration for near-cache preloading.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreloadConfig {
+    enabled: bool,
+    batch_size: u32,
+    store_initial_value: bool,
+}
+
+impl Default for PreloadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            batch_size: 1000,
+            store_initial_value: true,
+        }
+    }
+}
+
+impl PreloadConfig {
+    /// Creates a new preload configuration builder.
+    pub fn builder() -> PreloadConfigBuilder {
+        PreloadConfigBuilder::default()
+    }
+
+    /// Returns whether preloading is enabled.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Returns the batch size for preloading operations.
+    pub fn batch_size(&self) -> u32 {
+        self.batch_size
+    }
+
+    /// Returns whether to store the initial value during preload.
+    pub fn store_initial_value(&self) -> bool {
+        self.store_initial_value
+    }
+}
+
+/// Builder for `PreloadConfig`.
+#[derive(Debug, Clone, Default)]
+pub struct PreloadConfigBuilder {
+    enabled: Option<bool>,
+    batch_size: Option<u32>,
+    store_initial_value: Option<bool>,
+}
+
+impl PreloadConfigBuilder {
+    /// Enables or disables preloading.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    /// Sets the batch size for preloading.
+    ///
+    /// Default is 1000 entries per batch.
+    pub fn batch_size(mut self, size: u32) -> Self {
+        self.batch_size = Some(size);
+        self
+    }
+
+    /// Sets whether to store the initial value during preload.
+    ///
+    /// When true, both key and value are stored. When false, only keys
+    /// are tracked and values are fetched on first access.
+    pub fn store_initial_value(mut self, store: bool) -> Self {
+        self.store_initial_value = Some(store);
+        self
+    }
+
+    /// Builds the preload configuration.
+    pub fn build(self) -> PreloadConfig {
+        PreloadConfig {
+            enabled: self.enabled.unwrap_or(false),
+            batch_size: self.batch_size.unwrap_or(1000),
+            store_initial_value: self.store_initial_value.unwrap_or(true),
+        }
+    }
+}
+
 /// Configuration for a near-cache associated with a distributed map.
 ///
 /// Near-caches provide local caching of frequently accessed entries to reduce
@@ -56,6 +138,7 @@ pub struct NearCacheConfig {
     eviction_policy: EvictionPolicy,
     invalidate_on_change: bool,
     serialize_keys: bool,
+    preload_config: PreloadConfig,
 }
 
 impl NearCacheConfig {
@@ -110,6 +193,11 @@ impl NearCacheConfig {
         self.serialize_keys
     }
 
+    /// Returns the preload configuration.
+    pub fn preload_config(&self) -> &PreloadConfig {
+        &self.preload_config
+    }
+
     /// Checks if this configuration matches the given map name.
     ///
     /// Supports exact matches and simple wildcard patterns with `*` at the end.
@@ -134,6 +222,7 @@ pub struct NearCacheConfigBuilder {
     eviction_policy: Option<EvictionPolicy>,
     invalidate_on_change: Option<bool>,
     serialize_keys: Option<bool>,
+    preload_config: Option<PreloadConfig>,
 }
 
 impl NearCacheConfigBuilder {
@@ -148,6 +237,7 @@ impl NearCacheConfigBuilder {
             eviction_policy: None,
             invalidate_on_change: None,
             serialize_keys: None,
+            preload_config: None,
         }
     }
 
@@ -199,6 +289,32 @@ impl NearCacheConfigBuilder {
         self
     }
 
+    /// Sets the preload configuration.
+    pub fn preload_config(mut self, config: PreloadConfig) -> Self {
+        self.preload_config = Some(config);
+        self
+    }
+
+    /// Enables preloading with default settings.
+    pub fn preload_enabled(mut self, enabled: bool) -> Self {
+        let config = self.preload_config.take().unwrap_or_default();
+        self.preload_config = Some(PreloadConfig {
+            enabled,
+            ..config
+        });
+        self
+    }
+
+    /// Sets the preload batch size.
+    pub fn preload_batch_size(mut self, size: u32) -> Self {
+        let config = self.preload_config.take().unwrap_or_default();
+        self.preload_config = Some(PreloadConfig {
+            batch_size: size,
+            ..config
+        });
+        self
+    }
+
     /// Builds the near-cache configuration.
     ///
     /// # Errors
@@ -225,6 +341,7 @@ impl NearCacheConfigBuilder {
             eviction_policy: self.eviction_policy.unwrap_or_default(),
             invalidate_on_change: self.invalidate_on_change.unwrap_or(true),
             serialize_keys: self.serialize_keys.unwrap_or(true),
+            preload_config: self.preload_config.unwrap_or_default(),
         })
     }
 }
@@ -381,5 +498,61 @@ mod tests {
 
         assert_eq!(config1.max_size(), config2.max_size());
         assert_eq!(config1.eviction_policy(), config2.eviction_policy());
+    }
+
+    #[test]
+    fn test_preload_config_defaults() {
+        let config = PreloadConfig::default();
+        assert!(!config.enabled());
+        assert_eq!(config.batch_size(), 1000);
+        assert!(config.store_initial_value());
+    }
+
+    #[test]
+    fn test_preload_config_builder() {
+        let config = PreloadConfig::builder()
+            .enabled(true)
+            .batch_size(500)
+            .store_initial_value(false)
+            .build();
+
+        assert!(config.enabled());
+        assert_eq!(config.batch_size(), 500);
+        assert!(!config.store_initial_value());
+    }
+
+    #[test]
+    fn test_near_cache_config_with_preload() {
+        let preload = PreloadConfig::builder()
+            .enabled(true)
+            .batch_size(2000)
+            .build();
+
+        let config = NearCacheConfig::builder("test")
+            .preload_config(preload)
+            .build()
+            .unwrap();
+
+        assert!(config.preload_config().enabled());
+        assert_eq!(config.preload_config().batch_size(), 2000);
+    }
+
+    #[test]
+    fn test_near_cache_config_preload_shortcuts() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .preload_batch_size(500)
+            .build()
+            .unwrap();
+
+        assert!(config.preload_config().enabled());
+        assert_eq!(config.preload_config().batch_size(), 500);
+    }
+
+    #[test]
+    fn test_preload_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PreloadConfig>();
+        assert_send_sync::<PreloadConfigBuilder>();
     }
 }

@@ -1,6 +1,7 @@
 //! Near-cache implementation for client-side caching.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::hash::Hash;
 use std::time::Instant;
 
@@ -46,6 +47,31 @@ impl NearCacheStats {
         } else {
             self.hits as f64 / total as f64
         }
+    }
+}
+
+/// Statistics from a preload operation.
+#[derive(Debug, Clone, Default)]
+pub struct PreloadStats {
+    entries_loaded: u64,
+    entries_skipped: u64,
+    batches_processed: u32,
+}
+
+impl PreloadStats {
+    /// Returns the number of entries successfully loaded.
+    pub fn entries_loaded(&self) -> u64 {
+        self.entries_loaded
+    }
+
+    /// Returns the number of entries skipped (e.g., due to capacity).
+    pub fn entries_skipped(&self) -> u64 {
+        self.entries_skipped
+    }
+
+    /// Returns the number of batches processed.
+    pub fn batches_processed(&self) -> u32 {
+        self.batches_processed
     }
 }
 
@@ -180,6 +206,101 @@ where
     /// Returns a reference to the cache configuration.
     pub fn config(&self) -> &NearCacheConfig {
         &self.config
+    }
+
+    /// Preloads entries into the cache from an async data source.
+    ///
+    /// The `fetcher` function is called repeatedly with the batch number (starting from 0)
+    /// until it returns an empty vector, indicating no more data.
+    ///
+    /// # Arguments
+    ///
+    /// * `fetcher` - An async function that takes a batch number and returns a vector of (key, value) pairs.
+    ///
+    /// # Returns
+    ///
+    /// Statistics about the preload operation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let stats = cache.preload(|batch_num| async move {
+    ///     // Fetch batch from cluster
+    ///     map.get_all_batch(batch_num, batch_size).await
+    /// }).await;
+    /// ```
+    pub async fn preload<F, Fut, E>(&mut self, fetcher: F) -> Result<PreloadStats, E>
+    where
+        F: FnMut(u32) -> Fut,
+        Fut: Future<Output = Result<Vec<(K, V)>, E>>,
+    {
+        let batch_size = self.config.preload_config().batch_size();
+        self.preload_batched(fetcher, batch_size).await
+    }
+
+    /// Preloads entries with a custom batch size.
+    ///
+    /// Similar to `preload`, but allows overriding the configured batch size.
+    pub async fn preload_batched<F, Fut, E>(
+        &mut self,
+        mut fetcher: F,
+        _batch_size: u32,
+    ) -> Result<PreloadStats, E>
+    where
+        F: FnMut(u32) -> Fut,
+        Fut: Future<Output = Result<Vec<(K, V)>, E>>,
+    {
+        let mut stats = PreloadStats::default();
+        let mut batch_num = 0u32;
+
+        loop {
+            let entries = fetcher(batch_num).await?;
+
+            if entries.is_empty() {
+                break;
+            }
+
+            stats.batches_processed += 1;
+
+            for (key, value) in entries {
+                if self.put(key, value) {
+                    stats.entries_loaded += 1;
+                } else {
+                    stats.entries_skipped += 1;
+                }
+            }
+
+            batch_num += 1;
+        }
+
+        Ok(stats)
+    }
+
+    /// Preloads entries from an iterator synchronously.
+    ///
+    /// This is useful when entries are already available in memory.
+    ///
+    /// # Returns
+    ///
+    /// Statistics about the preload operation.
+    pub fn preload_entries(&mut self, entries: impl IntoIterator<Item = (K, V)>) -> PreloadStats {
+        let mut stats = PreloadStats::default();
+        stats.batches_processed = 1;
+
+        for (key, value) in entries {
+            if self.put(key, value) {
+                stats.entries_loaded += 1;
+            } else {
+                stats.entries_skipped += 1;
+            }
+        }
+
+        stats
+    }
+
+    /// Returns whether preloading is enabled for this cache.
+    pub fn is_preload_enabled(&self) -> bool {
+        self.config.preload_config().enabled()
     }
 
     fn is_expired(&self, entry: &CacheEntry<V>, now: Instant) -> bool {
@@ -580,5 +701,185 @@ mod tests {
         let cache: NearCache<String, String> = NearCache::new(config);
         assert_eq!(cache.config().name(), "my-cache");
         assert_eq!(cache.config().max_size(), 500);
+    }
+
+    #[test]
+    fn test_preload_entries() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .build()
+            .unwrap();
+        let mut cache = NearCache::new(config);
+
+        let entries = vec![
+            ("key1".to_string(), "value1".to_string()),
+            ("key2".to_string(), "value2".to_string()),
+            ("key3".to_string(), "value3".to_string()),
+        ];
+
+        let stats = cache.preload_entries(entries);
+
+        assert_eq!(stats.entries_loaded(), 3);
+        assert_eq!(stats.entries_skipped(), 0);
+        assert_eq!(stats.batches_processed(), 1);
+        assert_eq!(cache.size(), 3);
+        assert_eq!(cache.get(&"key1".to_string()), Some("value1".to_string()));
+    }
+
+    #[test]
+    fn test_preload_entries_respects_capacity() {
+        let config = NearCacheConfig::builder("test")
+            .max_size(2)
+            .eviction_policy(EvictionPolicy::None)
+            .preload_enabled(true)
+            .build()
+            .unwrap();
+        let mut cache = NearCache::new(config);
+
+        let entries = vec![
+            ("key1".to_string(), "value1".to_string()),
+            ("key2".to_string(), "value2".to_string()),
+            ("key3".to_string(), "value3".to_string()),
+        ];
+
+        let stats = cache.preload_entries(entries);
+
+        assert_eq!(stats.entries_loaded(), 2);
+        assert_eq!(stats.entries_skipped(), 1);
+        assert_eq!(cache.size(), 2);
+    }
+
+    #[test]
+    fn test_preload_entries_with_eviction() {
+        let config = NearCacheConfig::builder("test")
+            .max_size(2)
+            .eviction_policy(EvictionPolicy::Lru)
+            .preload_enabled(true)
+            .build()
+            .unwrap();
+        let mut cache = NearCache::new(config);
+
+        let entries = vec![
+            ("key1".to_string(), "value1".to_string()),
+            ("key2".to_string(), "value2".to_string()),
+            ("key3".to_string(), "value3".to_string()),
+        ];
+
+        let stats = cache.preload_entries(entries);
+
+        assert_eq!(stats.entries_loaded(), 3);
+        assert_eq!(stats.entries_skipped(), 0);
+        assert_eq!(cache.size(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_async_preload() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .preload_batch_size(2)
+            .build()
+            .unwrap();
+        let mut cache = NearCache::new(config);
+
+        let batches: Vec<Vec<(String, String)>> = vec![
+            vec![
+                ("key1".to_string(), "value1".to_string()),
+                ("key2".to_string(), "value2".to_string()),
+            ],
+            vec![("key3".to_string(), "value3".to_string())],
+            vec![],
+        ];
+
+        let batches_clone = batches.clone();
+        let mut batch_idx = 0usize;
+
+        let result: Result<PreloadStats, String> = cache
+            .preload(|_batch_num| {
+                let batch = if batch_idx < batches_clone.len() {
+                    batches_clone[batch_idx].clone()
+                } else {
+                    vec![]
+                };
+                batch_idx += 1;
+                async move { Ok(batch) }
+            })
+            .await;
+
+        let stats = result.unwrap();
+        assert_eq!(stats.entries_loaded(), 3);
+        assert_eq!(stats.batches_processed(), 2);
+        assert_eq!(cache.size(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_async_preload_error_handling() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .build()
+            .unwrap();
+        let mut cache: NearCache<String, String> = NearCache::new(config);
+
+        let result: Result<PreloadStats, &str> = cache
+            .preload(|batch_num| async move {
+                if batch_num == 0 {
+                    Ok(vec![("key1".to_string(), "value1".to_string())])
+                } else {
+                    Err("Simulated error")
+                }
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Simulated error");
+        assert_eq!(cache.size(), 1);
+    }
+
+    #[test]
+    fn test_is_preload_enabled() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .build()
+            .unwrap();
+        let cache: NearCache<String, String> = NearCache::new(config);
+        assert!(cache.is_preload_enabled());
+
+        let config2 = NearCacheConfig::builder("test").build().unwrap();
+        let cache2: NearCache<String, String> = NearCache::new(config2);
+        assert!(!cache2.is_preload_enabled());
+    }
+
+    #[test]
+    fn test_preload_stats_default() {
+        let stats = PreloadStats::default();
+        assert_eq!(stats.entries_loaded(), 0);
+        assert_eq!(stats.entries_skipped(), 0);
+        assert_eq!(stats.batches_processed(), 0);
+    }
+
+    #[test]
+    fn test_preload_stats_clone() {
+        let mut stats = PreloadStats::default();
+        stats.entries_loaded = 10;
+        stats.batches_processed = 2;
+
+        let cloned = stats.clone();
+        assert_eq!(cloned.entries_loaded(), 10);
+        assert_eq!(cloned.batches_processed(), 2);
+    }
+
+    #[test]
+    fn test_preload_empty_iterator() {
+        let config = NearCacheConfig::builder("test")
+            .preload_enabled(true)
+            .build()
+            .unwrap();
+        let mut cache: NearCache<String, String> = NearCache::new(config);
+
+        let stats = cache.preload_entries(std::iter::empty());
+
+        assert_eq!(stats.entries_loaded(), 0);
+        assert_eq!(stats.entries_skipped(), 0);
+        assert_eq!(stats.batches_processed(), 1);
+        assert_eq!(cache.size(), 0);
     }
 }
