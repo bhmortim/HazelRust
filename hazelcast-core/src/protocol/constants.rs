@@ -319,3 +319,12 @@ pub const SQL_FETCH: i32 = 0x210200;
 
 /// SQL close request.
 pub const SQL_CLOSE: i32 = 0x210300;
+
+/// Map values with predicate request.
+pub const MAP_VALUES_WITH_PREDICATE: i32 = 0x010E00;
+
+/// Map entries with predicate request.
+pub const MAP_ENTRIES_WITH_PREDICATE: i32 = 0x010F00;
+
+/// Map key set with predicate request.
+pub const MAP_KEYS_WITH_PREDICATE: i32 = 0x011100;

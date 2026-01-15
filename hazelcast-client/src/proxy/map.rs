@@ -9,7 +9,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use bytes::BytesMut;
 use tokio::spawn;
 use uuid::Uuid;
-use hazelcast_core::protocol::constants::*;
+use hazelcast_core::protocol::constants::{
+    IS_EVENT_FLAG, IS_NULL_FLAG, END_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_CLEAR, MAP_CONTAINS_KEY,
+    MAP_ENTRIES_WITH_PREDICATE, MAP_GET, MAP_KEYS_WITH_PREDICATE, MAP_PUT, MAP_REMOVE,
+    MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
+    RESPONSE_HEADER_SIZE,
+};
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{
@@ -21,6 +26,7 @@ use crate::listener::{
     EntryEvent, EntryEventType, EntryListenerConfig, ListenerId, ListenerRegistration,
     ListenerStats,
 };
+use crate::query::Predicate;
 
 /// A distributed map proxy for performing key-value operations on a Hazelcast cluster.
 ///
@@ -493,6 +499,137 @@ where
     pub fn listener_stats(&self) -> &ListenerStats {
         &self.listener_stats
     }
+
+    /// Returns all values matching the given predicate.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::Predicates;
+    ///
+    /// let predicate = Predicates::greater_than("age", &18i32)?;
+    /// let values = map.values_with_predicate(&predicate).await?;
+    /// ```
+    pub async fn values_with_predicate(&self, predicate: &dyn Predicate) -> Result<Vec<V>> {
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_values_response(&response)
+    }
+
+    /// Returns all keys matching the given predicate.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::Predicates;
+    ///
+    /// let predicate = Predicates::like("name", "John%");
+    /// let keys = map.keys_with_predicate(&predicate).await?;
+    /// ```
+    pub async fn keys_with_predicate(&self, predicate: &dyn Predicate) -> Result<Vec<K>> {
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_KEYS_WITH_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_keys_response(&response)
+    }
+
+    /// Returns all entries matching the given predicate.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::Predicates;
+    ///
+    /// let predicate = Predicates::between("score", &0i32, &100i32)?;
+    /// let entries = map.entries_with_predicate(&predicate).await?;
+    /// for (key, value) in entries {
+    ///     println!("{}: {:?}", key, value);
+    /// }
+    /// ```
+    pub async fn entries_with_predicate(&self, predicate: &dyn Predicate) -> Result<Vec<(K, V)>> {
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_ENTRIES_WITH_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_entries_response(&response)
+    }
+
+    fn decode_values_response<T: Deserializable>(response: &ClientMessage) -> Result<Vec<T>> {
+        let frames = response.frames();
+        let mut values = Vec::new();
+
+        // Skip initial frame, iterate over data frames
+        for frame in frames.iter().skip(1) {
+            if frame.flags & IS_NULL_FLAG != 0 {
+                continue;
+            }
+            if frame.flags & END_FLAG != 0 && frame.content.is_empty() {
+                break;
+            }
+            if frame.content.is_empty() {
+                continue;
+            }
+
+            let mut input = ObjectDataInput::new(&frame.content);
+            if let Ok(value) = T::deserialize(&mut input) {
+                values.push(value);
+            }
+        }
+
+        Ok(values)
+    }
+
+    fn decode_keys_response<T: Deserializable>(response: &ClientMessage) -> Result<Vec<T>> {
+        Self::decode_values_response(response)
+    }
+
+    fn decode_entries_response(response: &ClientMessage) -> Result<Vec<(K, V)>> {
+        let frames = response.frames();
+        let mut entries = Vec::new();
+
+        // Skip initial frame, pairs of frames are key/value
+        let data_frames: Vec<_> = frames
+            .iter()
+            .skip(1)
+            .filter(|f| f.flags & IS_NULL_FLAG == 0 && !f.content.is_empty())
+            .collect();
+
+        let mut i = 0;
+        while i + 1 < data_frames.len() {
+            let key_frame = data_frames[i];
+            let value_frame = data_frames[i + 1];
+
+            if key_frame.flags & END_FLAG != 0 && key_frame.content.is_empty() {
+                break;
+            }
+
+            let mut key_input = ObjectDataInput::new(&key_frame.content);
+            let mut value_input = ObjectDataInput::new(&value_frame.content);
+
+            if let (Ok(key), Ok(value)) = (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
+                entries.push((key, value));
+            }
+
+            i += 2;
+        }
+
+        Ok(entries)
+    }
 }
 
 impl<K, V> Clone for IMap<K, V> {
@@ -572,5 +709,20 @@ mod tests {
             Uuid::from_bytes(frame.content[..16].try_into().unwrap()),
             uuid
         );
+    }
+
+    #[test]
+    fn test_decode_empty_values_response() {
+        let mut message = ClientMessage::create_for_encode(0, -1);
+        let values: Vec<String> = IMap::<String, String>::decode_values_response(&message).unwrap();
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn test_decode_empty_entries_response() {
+        let message = ClientMessage::create_for_encode(0, -1);
+        let entries: Vec<(String, String)> =
+            IMap::<String, String>::decode_entries_response(&message).unwrap();
+        assert!(entries.is_empty());
     }
 }
