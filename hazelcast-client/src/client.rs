@@ -6,7 +6,7 @@ use hazelcast_core::{Deserializable, Result, Serializable};
 
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
-use crate::proxy::IMap;
+use crate::proxy::{IMap, IQueue};
 
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
@@ -82,6 +82,21 @@ impl HazelcastClient {
         V: Serializable + Deserializable + Send + Sync,
     {
         IMap::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed queue proxy for the given name.
+    ///
+    /// The queue proxy allows performing FIFO operations on the cluster.
+    /// The actual queue is created on the cluster lazily when first accessed.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `T`: The element type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    pub fn get_queue<T>(&self, name: &str) -> IQueue<T>
+    where
+        T: Serializable + Deserializable + Send + Sync,
+    {
+        IQueue::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.

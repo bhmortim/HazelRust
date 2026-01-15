@@ -79,3 +79,15 @@ pub const MAP_SIZE: i32 = 0x010500;
 
 /// Map clear request.
 pub const MAP_CLEAR: i32 = 0x010D00;
+
+/// Queue offer request.
+pub const QUEUE_OFFER: i32 = 0x030100;
+
+/// Queue poll request.
+pub const QUEUE_POLL: i32 = 0x030200;
+
+/// Queue size request.
+pub const QUEUE_SIZE: i32 = 0x030300;
+
+/// Queue peek request.
+pub const QUEUE_PEEK: i32 = 0x030400;

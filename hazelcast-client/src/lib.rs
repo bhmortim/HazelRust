@@ -17,4 +17,4 @@ pub use connection::{
     StaticAddressDiscovery,
 };
 pub use hazelcast_core as core;
-pub use proxy::IMap;
+pub use proxy::{IMap, IQueue};
