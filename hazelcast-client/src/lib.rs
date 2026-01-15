@@ -2,6 +2,7 @@
 
 #![warn(missing_docs)]
 
+pub mod cache;
 mod client;
 pub mod config;
 pub mod connection;
@@ -12,6 +13,7 @@ pub mod query;
 pub mod sql;
 pub mod transaction;
 
+pub use cache::{EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder};
 pub use client::HazelcastClient;
 pub use executor::{
     Callable, CallableTask, ExecutionCallback, ExecutionTarget, ExecutorService,

@@ -4,6 +4,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::cache::NearCacheConfig;
+
 /// Default cluster name.
 const DEFAULT_CLUSTER_NAME: &str = "dev";
 /// Default connection timeout.
@@ -486,6 +488,7 @@ pub struct ClientConfig {
     network: NetworkConfig,
     retry: RetryConfig,
     security: SecurityConfig,
+    near_caches: Vec<NearCacheConfig>,
 }
 
 impl ClientConfig {
@@ -513,6 +516,16 @@ impl ClientConfig {
     pub fn security(&self) -> &SecurityConfig {
         &self.security
     }
+
+    /// Returns the near-cache configurations.
+    pub fn near_caches(&self) -> &[NearCacheConfig] {
+        &self.near_caches
+    }
+
+    /// Finds a near-cache configuration matching the given map name.
+    pub fn find_near_cache(&self, map_name: &str) -> Option<&NearCacheConfig> {
+        self.near_caches.iter().find(|nc| nc.matches(map_name))
+    }
 }
 
 impl Default for ClientConfig {
@@ -528,6 +541,7 @@ pub struct ClientConfigBuilder {
     network: NetworkConfigBuilder,
     retry: RetryConfigBuilder,
     security: SecurityConfigBuilder,
+    near_caches: Vec<NearCacheConfig>,
 }
 
 impl ClientConfigBuilder {
@@ -593,6 +607,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Adds a near-cache configuration.
+    ///
+    /// Near-caches provide local caching of map entries to reduce network latency.
+    /// Multiple configurations can be added, each matching different map name patterns.
+    pub fn add_near_cache_config(mut self, config: NearCacheConfig) -> Self {
+        self.near_caches.push(config);
+        self
+    }
+
     /// Builds the client configuration, returning an error if validation fails.
     pub fn build(self) -> Result<ClientConfig, ConfigError> {
         let cluster_name = self
@@ -612,6 +635,7 @@ impl ClientConfigBuilder {
             network,
             retry,
             security,
+            near_caches: self.near_caches,
         })
     }
 }
@@ -941,5 +965,65 @@ mod tests {
     fn test_tls_config_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<TlsConfig>();
+    }
+
+    #[test]
+    fn test_client_config_with_near_cache() {
+        use crate::cache::{EvictionPolicy, InMemoryFormat, NearCacheConfig};
+
+        let near_cache = NearCacheConfig::builder("user-*")
+            .max_size(1000)
+            .eviction_policy(EvictionPolicy::Lfu)
+            .in_memory_format(InMemoryFormat::Object)
+            .build()
+            .unwrap();
+
+        let config = ClientConfig::builder()
+            .add_near_cache_config(near_cache)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.near_caches().len(), 1);
+        assert_eq!(config.near_caches()[0].name(), "user-*");
+    }
+
+    #[test]
+    fn test_client_config_find_near_cache() {
+        use crate::cache::NearCacheConfig;
+
+        let user_cache = NearCacheConfig::builder("user-*").build().unwrap();
+        let product_cache = NearCacheConfig::builder("product-map").build().unwrap();
+
+        let config = ClientConfig::builder()
+            .add_near_cache_config(user_cache)
+            .add_near_cache_config(product_cache)
+            .build()
+            .unwrap();
+
+        assert!(config.find_near_cache("user-data").is_some());
+        assert!(config.find_near_cache("user-sessions").is_some());
+        assert!(config.find_near_cache("product-map").is_some());
+        assert!(config.find_near_cache("product-other").is_none());
+        assert!(config.find_near_cache("orders").is_none());
+    }
+
+    #[test]
+    fn test_client_config_multiple_near_caches() {
+        use crate::cache::NearCacheConfig;
+
+        let config = ClientConfig::builder()
+            .add_near_cache_config(NearCacheConfig::builder("cache1").build().unwrap())
+            .add_near_cache_config(NearCacheConfig::builder("cache2").build().unwrap())
+            .add_near_cache_config(NearCacheConfig::builder("cache3").build().unwrap())
+            .build()
+            .unwrap();
+
+        assert_eq!(config.near_caches().len(), 3);
+    }
+
+    #[test]
+    fn test_client_config_default_no_near_caches() {
+        let config = ClientConfig::default();
+        assert!(config.near_caches().is_empty());
     }
 }
