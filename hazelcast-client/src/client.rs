@@ -6,6 +6,7 @@ use hazelcast_core::{Deserializable, Result, Serializable};
 
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
+use crate::diagnostics::{ClientStatistics, StatisticsCollector};
 use crate::executor::ExecutorService;
 use crate::listener::{Member, MemberEvent};
 use crate::proxy::{
@@ -45,6 +46,7 @@ use crate::transaction::{TransactionContext, TransactionOptions};
 pub struct HazelcastClient {
     config: Arc<ClientConfig>,
     connection_manager: Arc<ConnectionManager>,
+    statistics_collector: Arc<StatisticsCollector>,
 }
 
 impl HazelcastClient {
@@ -71,6 +73,7 @@ impl HazelcastClient {
         Ok(Self {
             config: Arc::new(config),
             connection_manager: Arc::new(connection_manager),
+            statistics_collector: Arc::new(StatisticsCollector::new()),
         })
     }
 
@@ -412,6 +415,31 @@ impl HazelcastClient {
     /// The returned receiver will emit events when members join or leave the cluster.
     pub fn subscribe_membership(&self) -> tokio::sync::broadcast::Receiver<MemberEvent> {
         self.connection_manager.subscribe_membership()
+    }
+
+    /// Returns a snapshot of current client statistics.
+    ///
+    /// Statistics include connection counts, operation metrics, near cache
+    /// hit/miss ratios, and memory usage estimates.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let stats = client.statistics().await;
+    /// println!("Active connections: {}", stats.connection_stats().active_connections());
+    /// println!("Total operations: {}", stats.total_operations());
+    /// println!("Near cache hit ratio: {:.2}%", stats.aggregate_near_cache_hit_ratio() * 100.0);
+    /// ```
+    pub async fn statistics(&self) -> ClientStatistics {
+        let connection_count = self.connection_count().await as u64;
+        self.statistics_collector.collect(connection_count).await
+    }
+
+    /// Returns the statistics collector for recording metrics.
+    ///
+    /// This is primarily used internally by proxies to record operation counts.
+    pub fn statistics_collector(&self) -> &Arc<StatisticsCollector> {
+        &self.statistics_collector
     }
 
     /// Shuts down the client and closes all connections.
