@@ -6,6 +6,7 @@ pub mod cache;
 mod client;
 pub mod config;
 pub mod connection;
+pub mod diagnostics;
 pub mod executor;
 pub mod listener;
 pub mod proxy;
@@ -21,9 +22,11 @@ pub use executor::{
     FnExecutionCallback, Runnable, RunnableTask,
 };
 pub use config::{
-    ClientConfig, ClientConfigBuilder, ConfigError, NetworkConfig, NetworkConfigBuilder,
-    RetryConfig, RetryConfigBuilder, SecurityConfig, SecurityConfigBuilder,
+    ClientConfig, ClientConfigBuilder, ConfigError, DiagnosticsConfig, DiagnosticsConfigBuilder,
+    NetworkConfig, NetworkConfigBuilder, RetryConfig, RetryConfigBuilder, SecurityConfig,
+    SecurityConfigBuilder,
 };
+pub use diagnostics::{OperationTracker, SlowOperationDetector};
 pub use connection::{
     ClusterDiscovery, Connection, ConnectionEvent, ConnectionId, ConnectionManager,
     StaticAddressDiscovery,

@@ -9,6 +9,8 @@ use crate::cache::NearCacheConfig;
 
 /// Default cluster name.
 const DEFAULT_CLUSTER_NAME: &str = "dev";
+/// Default slow operation threshold.
+const DEFAULT_SLOW_OPERATION_THRESHOLD: Duration = Duration::from_millis(100);
 /// Default connection timeout.
 const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default heartbeat interval.
@@ -748,6 +750,82 @@ impl SecurityConfigBuilder {
     }
 }
 
+/// Diagnostics configuration for monitoring and troubleshooting.
+#[derive(Debug, Clone)]
+pub struct DiagnosticsConfig {
+    enabled: bool,
+    slow_operation_threshold: Duration,
+}
+
+impl DiagnosticsConfig {
+    /// Returns whether diagnostics are enabled.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Returns the slow operation threshold.
+    ///
+    /// Operations exceeding this duration will trigger warnings.
+    pub fn slow_operation_threshold(&self) -> Duration {
+        self.slow_operation_threshold
+    }
+}
+
+impl Default for DiagnosticsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            slow_operation_threshold: DEFAULT_SLOW_OPERATION_THRESHOLD,
+        }
+    }
+}
+
+/// Builder for `DiagnosticsConfig`.
+#[derive(Debug, Clone, Default)]
+pub struct DiagnosticsConfigBuilder {
+    enabled: Option<bool>,
+    slow_operation_threshold: Option<Duration>,
+}
+
+impl DiagnosticsConfigBuilder {
+    /// Creates a new diagnostics configuration builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enables or disables diagnostics.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    /// Sets the slow operation threshold.
+    ///
+    /// Operations exceeding this duration will trigger warnings.
+    pub fn slow_operation_threshold(mut self, threshold: Duration) -> Self {
+        self.slow_operation_threshold = Some(threshold);
+        self
+    }
+
+    /// Builds the diagnostics configuration.
+    pub fn build(self) -> Result<DiagnosticsConfig, ConfigError> {
+        let threshold = self
+            .slow_operation_threshold
+            .unwrap_or(DEFAULT_SLOW_OPERATION_THRESHOLD);
+
+        if threshold.is_zero() {
+            return Err(ConfigError::new(
+                "slow_operation_threshold must be greater than zero",
+            ));
+        }
+
+        Ok(DiagnosticsConfig {
+            enabled: self.enabled.unwrap_or(true),
+            slow_operation_threshold: threshold,
+        })
+    }
+}
+
 /// Main client configuration.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
@@ -756,6 +834,7 @@ pub struct ClientConfig {
     retry: RetryConfig,
     security: SecurityConfig,
     near_caches: Vec<NearCacheConfig>,
+    diagnostics: DiagnosticsConfig,
 }
 
 impl ClientConfig {
@@ -793,6 +872,11 @@ impl ClientConfig {
     pub fn find_near_cache(&self, map_name: &str) -> Option<&NearCacheConfig> {
         self.near_caches.iter().find(|nc| nc.matches(map_name))
     }
+
+    /// Returns the diagnostics configuration.
+    pub fn diagnostics(&self) -> &DiagnosticsConfig {
+        &self.diagnostics
+    }
 }
 
 impl Default for ClientConfig {
@@ -809,6 +893,7 @@ pub struct ClientConfigBuilder {
     retry: RetryConfigBuilder,
     security: SecurityConfigBuilder,
     near_caches: Vec<NearCacheConfig>,
+    diagnostics: DiagnosticsConfigBuilder,
 }
 
 impl ClientConfigBuilder {
@@ -883,6 +968,21 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures diagnostics settings using a builder function.
+    pub fn diagnostics<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(DiagnosticsConfigBuilder) -> DiagnosticsConfigBuilder,
+    {
+        self.diagnostics = f(self.diagnostics);
+        self
+    }
+
+    /// Sets the slow operation threshold for diagnostics.
+    pub fn slow_operation_threshold(mut self, threshold: Duration) -> Self {
+        self.diagnostics = self.diagnostics.slow_operation_threshold(threshold);
+        self
+    }
+
     /// Builds the client configuration, returning an error if validation fails.
     pub fn build(self) -> Result<ClientConfig, ConfigError> {
         let cluster_name = self
@@ -896,6 +996,7 @@ impl ClientConfigBuilder {
         let network = self.network.build()?;
         let retry = self.retry.build()?;
         let security = self.security.build()?;
+        let diagnostics = self.diagnostics.build()?;
 
         Ok(ClientConfig {
             cluster_name,
@@ -903,6 +1004,7 @@ impl ClientConfigBuilder {
             retry,
             security,
             near_caches: self.near_caches,
+            diagnostics,
         })
     }
 }
@@ -1495,5 +1597,93 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.network().ws_url(), Some("ws://localhost:8080"));
+    }
+
+    #[test]
+    fn test_diagnostics_config_defaults() {
+        let config = DiagnosticsConfigBuilder::new().build().unwrap();
+        assert!(config.enabled());
+        assert_eq!(
+            config.slow_operation_threshold(),
+            DEFAULT_SLOW_OPERATION_THRESHOLD
+        );
+    }
+
+    #[test]
+    fn test_diagnostics_config_custom_threshold() {
+        let config = DiagnosticsConfigBuilder::new()
+            .slow_operation_threshold(Duration::from_millis(500))
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            config.slow_operation_threshold(),
+            Duration::from_millis(500)
+        );
+    }
+
+    #[test]
+    fn test_diagnostics_config_disabled() {
+        let config = DiagnosticsConfigBuilder::new()
+            .enabled(false)
+            .build()
+            .unwrap();
+
+        assert!(!config.enabled());
+    }
+
+    #[test]
+    fn test_diagnostics_config_zero_threshold_fails() {
+        let result = DiagnosticsConfigBuilder::new()
+            .slow_operation_threshold(Duration::ZERO)
+            .build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("slow_operation_threshold must be greater than zero"));
+    }
+
+    #[test]
+    fn test_client_config_with_diagnostics() {
+        let config = ClientConfig::builder()
+            .diagnostics(|d| d.slow_operation_threshold(Duration::from_secs(1)))
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            config.diagnostics().slow_operation_threshold(),
+            Duration::from_secs(1)
+        );
+    }
+
+    #[test]
+    fn test_client_config_slow_operation_threshold_shortcut() {
+        let config = ClientConfig::builder()
+            .slow_operation_threshold(Duration::from_millis(250))
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            config.diagnostics().slow_operation_threshold(),
+            Duration::from_millis(250)
+        );
+    }
+
+    #[test]
+    fn test_diagnostics_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<DiagnosticsConfig>();
+    }
+
+    #[test]
+    fn test_client_config_default_diagnostics() {
+        let config = ClientConfig::default();
+        assert!(config.diagnostics().enabled());
+        assert_eq!(
+            config.diagnostics().slow_operation_threshold(),
+            DEFAULT_SLOW_OPERATION_THRESHOLD
+        );
     }
 }
