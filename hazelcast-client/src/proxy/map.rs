@@ -12,11 +12,11 @@ use bytes::BytesMut;
 use tokio::spawn;
 use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
-    IS_EVENT_FLAG, IS_NULL_FLAG, END_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_ADD_INDEX, MAP_CLEAR,
-    MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PREDICATE, MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY,
-    MAP_EXECUTE_ON_KEYS, MAP_GET, MAP_KEYS_WITH_PREDICATE, MAP_PUT, MAP_REMOVE,
-    MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
-    RESPONSE_HEADER_SIZE,
+    IS_EVENT_FLAG, IS_NULL_FLAG, END_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_ADD_INDEX, MAP_AGGREGATE,
+    MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PREDICATE,
+    MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_GET,
+    MAP_KEYS_WITH_PREDICATE, MAP_PUT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE,
+    MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -190,7 +190,7 @@ use crate::listener::{
     ListenerStats,
 };
 use crate::proxy::entry_processor::{EntryProcessor, EntryProcessorResult};
-use crate::query::Predicate;
+use crate::query::{Aggregator, Predicate};
 
 /// A distributed map proxy for performing key-value operations on a Hazelcast cluster.
 ///
@@ -1099,6 +1099,112 @@ where
         Ok(())
     }
 
+    /// Aggregates map entries using the given aggregator.
+    ///
+    /// The aggregation is performed on the cluster and only the final result
+    /// is returned to the client.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `A`: The aggregator type implementing [`Aggregator`]
+    ///
+    /// # Returns
+    ///
+    /// The aggregated result computed over all map entries.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::Aggregators;
+    ///
+    /// // Count all entries
+    /// let count: i64 = map.aggregate(&Aggregators::count()).await?;
+    ///
+    /// // Sum all salaries
+    /// let total: i64 = map.aggregate(&Aggregators::long_sum("salary")).await?;
+    /// ```
+    pub async fn aggregate<A>(&self, aggregator: &A) -> Result<A::Output>
+    where
+        A: Aggregator,
+        A::Output: Deserializable,
+    {
+        let aggregator_data = aggregator.to_aggregator_data()?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_AGGREGATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&aggregator_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_aggregate_response::<A::Output>(&response)
+    }
+
+    /// Aggregates map entries matching a predicate using the given aggregator.
+    ///
+    /// The predicate filters which entries are included in the aggregation.
+    /// Both the predicate evaluation and aggregation are performed on the cluster.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `A`: The aggregator type implementing [`Aggregator`]
+    ///
+    /// # Returns
+    ///
+    /// The aggregated result computed over matching map entries.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::{Aggregators, Predicates};
+    ///
+    /// // Count active users
+    /// let predicate = Predicates::equal("status", &"active".to_string())?;
+    /// let count: i64 = map.aggregate_with_predicate(&Aggregators::count(), &predicate).await?;
+    ///
+    /// // Average salary for employees over 30
+    /// let age_predicate = Predicates::greater_than("age", &30i32)?;
+    /// let avg: f64 = map.aggregate_with_predicate(&Aggregators::double_avg("salary"), &age_predicate).await?;
+    /// ```
+    pub async fn aggregate_with_predicate<A>(
+        &self,
+        aggregator: &A,
+        predicate: &dyn Predicate,
+    ) -> Result<A::Output>
+    where
+        A: Aggregator,
+        A::Output: Deserializable,
+    {
+        let aggregator_data = aggregator.to_aggregator_data()?;
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_AGGREGATE_WITH_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&aggregator_data));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_aggregate_response::<A::Output>(&response)
+    }
+
+    fn decode_aggregate_response<T: Deserializable>(response: &ClientMessage) -> Result<T> {
+        let frames = response.frames();
+        if frames.len() < 2 {
+            return Err(HazelcastError::Serialization(
+                "empty aggregate response".to_string(),
+            ));
+        }
+
+        let data_frame = &frames[1];
+        if data_frame.content.is_empty() {
+            return Err(HazelcastError::Serialization(
+                "empty aggregate result".to_string(),
+            ));
+        }
+
+        let mut input = ObjectDataInput::new(&data_frame.content);
+        T::deserialize(&mut input)
+    }
+
     fn decode_entry_processor_results<R>(
         &self,
         response: &ClientMessage,
@@ -1504,6 +1610,32 @@ mod tests {
 
         assert_eq!(config.name(), Some("my-index"));
         assert_eq!(config.attributes().len(), 3);
+    }
+
+    #[test]
+    fn test_aggregator_serialization() {
+        use crate::query::Aggregators;
+
+        let count = Aggregators::count();
+        let data = count.to_aggregator_data().unwrap();
+        assert!(!data.is_empty());
+
+        let sum = Aggregators::long_sum("value");
+        let data = sum.to_aggregator_data().unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_aggregator_with_predicate_types() {
+        use crate::query::{Aggregators, Predicates};
+
+        let _count = Aggregators::count();
+        let _sum = Aggregators::integer_sum("value");
+        let _avg = Aggregators::double_avg("price");
+        let _min: crate::query::MinAggregator<i64> = Aggregators::min("score");
+        let _max: crate::query::MaxAggregator<i64> = Aggregators::max("score");
+
+        let _pred = Predicates::greater_than("age", &18i32).unwrap();
     }
 
     #[test]

@@ -19,6 +19,9 @@
 //! ]);
 //! ```
 
+pub mod aggregations;
+pub use aggregations::*;
+
 use std::fmt::Debug;
 
 use hazelcast_core::serialization::ObjectDataOutput;

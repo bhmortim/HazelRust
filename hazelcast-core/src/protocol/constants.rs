@@ -341,6 +341,12 @@ pub const MAP_EXECUTE_ON_ALL_KEYS: i32 = 0x013000;
 /// Map add index request.
 pub const MAP_ADD_INDEX: i32 = 0x013100;
 
+/// Map aggregate request.
+pub const MAP_AGGREGATE: i32 = 0x013900;
+
+/// Map aggregate with predicate request.
+pub const MAP_AGGREGATE_WITH_PREDICATE: i32 = 0x013A00;
+
 /// Executor submit to partition request.
 pub const EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x0E0100;
 
