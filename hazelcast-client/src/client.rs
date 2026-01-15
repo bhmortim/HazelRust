@@ -8,8 +8,8 @@ use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::listener::{Member, MemberEvent};
 use crate::proxy::{
-    AtomicLong, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic, MultiMap,
-    PNCounter, ReplicatedMap, Ringbuffer, Semaphore,
+    AtomicLong, CountDownLatch, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic,
+    MultiMap, PNCounter, ReplicatedMap, Ringbuffer, Semaphore,
 };
 
 /// The main entry point for connecting to a Hazelcast cluster.
@@ -266,6 +266,21 @@ impl HazelcastClient {
     /// - Coordinating access to bounded resources
     pub fn get_semaphore(&self, name: &str) -> Semaphore {
         Semaphore::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed CountDownLatch proxy for the given name.
+    ///
+    /// The CountDownLatch provides a distributed synchronization primitive that
+    /// allows one or more tasks to wait until a set of operations completes.
+    ///
+    /// Note: CountDownLatch requires the CP subsystem to be enabled on the Hazelcast cluster.
+    ///
+    /// CountDownLatches are ideal for:
+    /// - Waiting for multiple distributed tasks to complete
+    /// - Implementing barrier synchronization across processes
+    /// - Coordinating startup sequences in distributed systems
+    pub fn get_countdown_latch(&self, name: &str) -> CountDownLatch {
+        CountDownLatch::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.
