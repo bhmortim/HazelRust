@@ -469,3 +469,24 @@ pub const TXN_LIST_REMOVE: i32 = 0x120200;
 
 /// Transactional list size request.
 pub const TXN_LIST_SIZE: i32 = 0x120300;
+
+/// XA transaction create request.
+pub const XA_TXN_CREATE: i32 = 0x150400;
+
+/// XA transaction prepare request.
+pub const XA_TXN_PREPARE: i32 = 0x150500;
+
+/// XA transaction commit request.
+pub const XA_TXN_COMMIT: i32 = 0x150600;
+
+/// XA transaction rollback request.
+pub const XA_TXN_ROLLBACK: i32 = 0x150700;
+
+/// XA transaction clear remote request.
+pub const XA_TXN_CLEAR_REMOTE: i32 = 0x150800;
+
+/// XA transaction collect transactions request.
+pub const XA_TXN_COLLECT_TRANSACTIONS: i32 = 0x150900;
+
+/// XA transaction finalize request.
+pub const XA_TXN_FINALIZE: i32 = 0x150A00;

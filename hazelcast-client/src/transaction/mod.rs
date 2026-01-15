@@ -38,6 +38,9 @@ use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Seri
 
 use crate::connection::ConnectionManager;
 
+pub mod xa;
+pub use xa::*;
+
 // ============================================================================
 // Transaction Types and Options
 // ============================================================================
@@ -343,6 +346,27 @@ impl TransactionContext {
             self.txn_id,
             self.thread_id,
         )
+    }
+
+    /// Creates a new XA transaction associated with this context's connection.
+    ///
+    /// # Arguments
+    ///
+    /// * `xid` - The XA transaction identifier
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let xid = Xid::new(0, b"global-txn", b"branch-1");
+    /// let xa_txn = ctx.create_xa_transaction(xid);
+    /// ```
+    pub fn create_xa_transaction(&self, xid: xa::Xid) -> xa::XATransaction {
+        xa::XATransaction::new(Arc::clone(&self.connection_manager), xid)
+    }
+
+    /// Creates a new XA transaction with an auto-generated Xid.
+    pub fn create_xa_transaction_auto(&self) -> xa::XATransaction {
+        xa::XATransaction::with_generated_xid(Arc::clone(&self.connection_manager))
     }
 
     fn long_frame(value: i64) -> Frame {
