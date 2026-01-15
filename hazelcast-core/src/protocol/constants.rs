@@ -259,3 +259,9 @@ pub const RINGBUFFER_ADD_ALL: i32 = 0x190800;
 
 /// Ringbuffer read many request.
 pub const RINGBUFFER_READ_MANY: i32 = 0x190900;
+
+/// PN Counter get request.
+pub const PN_COUNTER_GET: i32 = 0x200100;
+
+/// PN Counter add request.
+pub const PN_COUNTER_ADD: i32 = 0x200200;

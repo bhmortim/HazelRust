@@ -8,7 +8,7 @@ use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::listener::{Member, MemberEvent};
 use crate::proxy::{
-    AtomicLong, IList, IMap, IQueue, ISet, ITopic, MultiMap, ReplicatedMap, Ringbuffer,
+    AtomicLong, IList, IMap, IQueue, ISet, ITopic, MultiMap, PNCounter, ReplicatedMap, Ringbuffer,
 };
 
 /// The main entry point for connecting to a Hazelcast cluster.
@@ -206,6 +206,20 @@ impl HazelcastClient {
         T: Serializable + Deserializable + Send + Sync,
     {
         Ringbuffer::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed PN Counter proxy for the given name.
+    ///
+    /// The PN Counter (Positive-Negative Counter) is a CRDT that supports both
+    /// increment and decrement operations with eventual consistency guarantees.
+    /// Unlike `AtomicLong`, it does not require the CP subsystem.
+    ///
+    /// PN Counters are ideal for use cases where:
+    /// - High availability is more important than strong consistency
+    /// - Concurrent increments and decrements from multiple cluster members are common
+    /// - Conflict-free merge semantics are acceptable
+    pub fn get_pn_counter(&self, name: &str) -> PNCounter {
+        PNCounter::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.
