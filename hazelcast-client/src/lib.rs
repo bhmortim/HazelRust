@@ -32,8 +32,9 @@ pub use listener::{ListenerId, ListenerRegistration, ListenerStats};
 pub use proxy::{IList, IMap, IQueue, ISet, ITopic, MultiMap, TopicMessage};
 pub use query::{
     AndPredicate, BetweenPredicate, EqualPredicate, FalsePredicate, GreaterThanPredicate,
-    InPredicate, LessThanPredicate, LikePredicate, NotEqualPredicate, NotPredicate, OrPredicate,
-    Predicate, Predicates, RegexPredicate, SqlPredicate, TruePredicate,
+    InPredicate, LessThanPredicate, LikePredicate, MultiAttributeProjection, NotEqualPredicate,
+    NotPredicate, OrPredicate, Predicate, Predicates, Projection, Projections, RegexPredicate,
+    SingleAttributeProjection, SqlPredicate, TruePredicate,
 };
 pub use sql::{
     SqlColumnMetadata, SqlColumnType, SqlResult, SqlRow, SqlRowMetadata, SqlService, SqlStatement,

@@ -20,7 +20,10 @@
 //! ```
 
 pub mod aggregations;
+pub mod projections;
+
 pub use aggregations::*;
+pub use projections::*;
 
 use std::fmt::Debug;
 

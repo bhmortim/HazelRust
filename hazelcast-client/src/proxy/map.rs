@@ -15,8 +15,9 @@ use hazelcast_core::protocol::constants::{
     IS_EVENT_FLAG, IS_NULL_FLAG, END_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_ADD_INDEX, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PREDICATE,
     MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_GET,
-    MAP_KEYS_WITH_PREDICATE, MAP_PUT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE,
-    MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    MAP_KEYS_WITH_PREDICATE, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_REMOVE,
+    MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
+    RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -190,7 +191,7 @@ use crate::listener::{
     ListenerStats,
 };
 use crate::proxy::entry_processor::{EntryProcessor, EntryProcessorResult};
-use crate::query::{Aggregator, Predicate};
+use crate::query::{Aggregator, Predicate, Projection};
 
 /// A distributed map proxy for performing key-value operations on a Hazelcast cluster.
 ///
@@ -1184,6 +1185,123 @@ where
 
         let response = self.invoke(message).await?;
         Self::decode_aggregate_response::<A::Output>(&response)
+    }
+
+    /// Projects specific attributes from all map entries.
+    ///
+    /// The projection is performed on the cluster and only the projected
+    /// attributes are returned to the client, reducing data transfer.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `P`: The projection type implementing [`Projection`]
+    ///
+    /// # Returns
+    ///
+    /// A vector of projected values for all map entries.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::Projections;
+    ///
+    /// // Project a single attribute from all entries
+    /// let names: Vec<String> = map.project(&Projections::single("name")).await?;
+    ///
+    /// // Project multiple attributes
+    /// let projection = Projections::multi::<String>(["firstName", "lastName"]);
+    /// let results: Vec<Vec<Option<String>>> = map.project(&projection).await?;
+    /// ```
+    pub async fn project<P>(&self, projection: &P) -> Result<Vec<P::Output>>
+    where
+        P: Projection,
+        P::Output: Deserializable,
+    {
+        let projection_data = projection.to_projection_data()?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_PROJECT, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&projection_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_projection_response::<P::Output>(&response)
+    }
+
+    /// Projects specific attributes from map entries matching a predicate.
+    ///
+    /// The predicate filters which entries are included in the projection.
+    /// Both the predicate evaluation and projection are performed on the cluster.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `P`: The projection type implementing [`Projection`]
+    ///
+    /// # Returns
+    ///
+    /// A vector of projected values for matching map entries.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::{Projections, Predicates};
+    ///
+    /// // Project names of active users
+    /// let predicate = Predicates::equal("status", &"active".to_string())?;
+    /// let names: Vec<String> = map
+    ///     .project_with_predicate(&Projections::single("name"), &predicate)
+    ///     .await?;
+    ///
+    /// // Project contact info for users over 18
+    /// let age_predicate = Predicates::greater_than("age", &18i32)?;
+    /// let projection = Projections::multi::<String>(["email", "phone"]);
+    /// let contacts: Vec<Vec<Option<String>>> = map
+    ///     .project_with_predicate(&projection, &age_predicate)
+    ///     .await?;
+    /// ```
+    pub async fn project_with_predicate<P>(
+        &self,
+        projection: &P,
+        predicate: &dyn Predicate,
+    ) -> Result<Vec<P::Output>>
+    where
+        P: Projection,
+        P::Output: Deserializable,
+    {
+        let projection_data = projection.to_projection_data()?;
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_PROJECT_WITH_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&projection_data));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_projection_response::<P::Output>(&response)
+    }
+
+    fn decode_projection_response<T: Deserializable>(response: &ClientMessage) -> Result<Vec<T>> {
+        let frames = response.frames();
+        let mut results = Vec::new();
+
+        for frame in frames.iter().skip(1) {
+            if frame.flags & IS_NULL_FLAG != 0 {
+                continue;
+            }
+            if frame.flags & END_FLAG != 0 && frame.content.is_empty() {
+                break;
+            }
+            if frame.content.is_empty() {
+                continue;
+            }
+
+            let mut input = ObjectDataInput::new(&frame.content);
+            if let Ok(value) = T::deserialize(&mut input) {
+                results.push(value);
+            }
+        }
+
+        Ok(results)
     }
 
     fn decode_aggregate_response<T: Deserializable>(response: &ClientMessage) -> Result<T> {

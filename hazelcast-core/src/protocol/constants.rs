@@ -347,6 +347,12 @@ pub const MAP_AGGREGATE: i32 = 0x013900;
 /// Map aggregate with predicate request.
 pub const MAP_AGGREGATE_WITH_PREDICATE: i32 = 0x013A00;
 
+/// Map project request.
+pub const MAP_PROJECT: i32 = 0x013B00;
+
+/// Map project with predicate request.
+pub const MAP_PROJECT_WITH_PREDICATE: i32 = 0x013C00;
+
 /// Executor submit to partition request.
 pub const EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x0E0100;
 
