@@ -23,7 +23,7 @@ pub use countdown_latch::CountDownLatch;
 pub use fenced_lock::FencedLock;
 pub use flake_id::{FlakeIdGenerator, IdBatch};
 pub use list::IList;
-pub use map::IMap;
+pub use map::{IMap, IndexConfig, IndexConfigBuilder, IndexType};
 pub use multimap::MultiMap;
 pub use pn_counter::PNCounter;
 pub use queue::IQueue;

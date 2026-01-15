@@ -12,10 +12,11 @@ use bytes::BytesMut;
 use tokio::spawn;
 use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
-    IS_EVENT_FLAG, IS_NULL_FLAG, END_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_CLEAR, MAP_CONTAINS_KEY,
-    MAP_ENTRIES_WITH_PREDICATE, MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS,
-    MAP_GET, MAP_KEYS_WITH_PREDICATE, MAP_PUT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE,
-    MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    IS_EVENT_FLAG, IS_NULL_FLAG, END_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_ADD_INDEX, MAP_CLEAR,
+    MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PREDICATE, MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY,
+    MAP_EXECUTE_ON_KEYS, MAP_GET, MAP_KEYS_WITH_PREDICATE, MAP_PUT, MAP_REMOVE,
+    MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
+    RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -24,6 +25,165 @@ use hazelcast_core::{
 };
 
 use crate::cache::{NearCache, NearCacheConfig, NearCacheStats};
+
+/// The type of index to create on a map attribute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IndexType {
+    /// A sorted (ordered) index for range queries.
+    ///
+    /// Supports equality, comparison, and range predicates efficiently.
+    /// Uses a B-tree structure internally.
+    Sorted = 0,
+
+    /// A hash index for equality queries.
+    ///
+    /// Optimized for exact-match lookups. Does not support range queries.
+    Hash = 1,
+}
+
+impl IndexType {
+    fn as_i32(self) -> i32 {
+        self as i32
+    }
+}
+
+/// Configuration for a map index.
+///
+/// Use [`IndexConfig::builder`] to create a new configuration with the builder pattern.
+///
+/// # Example
+///
+/// ```ignore
+/// let config = IndexConfig::builder()
+///     .name("age-index")
+///     .index_type(IndexType::Sorted)
+///     .add_attribute("age")
+///     .build();
+/// ```
+#[derive(Debug, Clone)]
+pub struct IndexConfig {
+    name: Option<String>,
+    index_type: IndexType,
+    attributes: Vec<String>,
+}
+
+impl IndexConfig {
+    /// Creates a new builder for `IndexConfig`.
+    pub fn builder() -> IndexConfigBuilder {
+        IndexConfigBuilder::new()
+    }
+
+    /// Returns the name of this index, if set.
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Returns the type of this index.
+    pub fn index_type(&self) -> IndexType {
+        self.index_type
+    }
+
+    /// Returns the attributes this index covers.
+    pub fn attributes(&self) -> &[String] {
+        &self.attributes
+    }
+}
+
+/// Builder for creating [`IndexConfig`] instances.
+#[derive(Debug, Clone)]
+pub struct IndexConfigBuilder {
+    name: Option<String>,
+    index_type: IndexType,
+    attributes: Vec<String>,
+}
+
+impl IndexConfigBuilder {
+    /// Creates a new builder with default values.
+    fn new() -> Self {
+        Self {
+            name: None,
+            index_type: IndexType::Sorted,
+            attributes: Vec::new(),
+        }
+    }
+
+    /// Sets the name of the index.
+    ///
+    /// Index names must be unique within a map. If not set, Hazelcast
+    /// will generate a name based on the indexed attributes.
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Sets the type of the index.
+    ///
+    /// Defaults to [`IndexType::Sorted`] if not specified.
+    pub fn index_type(mut self, index_type: IndexType) -> Self {
+        self.index_type = index_type;
+        self
+    }
+
+    /// Adds an attribute to be indexed.
+    ///
+    /// At least one attribute must be added before building.
+    /// For composite indexes, add multiple attributes in order.
+    pub fn add_attribute(mut self, attribute: impl Into<String>) -> Self {
+        self.attributes.push(attribute.into());
+        self
+    }
+
+    /// Adds multiple attributes to be indexed.
+    pub fn add_attributes<I, S>(mut self, attributes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.attributes.extend(attributes.into_iter().map(Into::into));
+        self
+    }
+
+    /// Builds the [`IndexConfig`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if no attributes have been added.
+    pub fn build(self) -> IndexConfig {
+        assert!(
+            !self.attributes.is_empty(),
+            "IndexConfig requires at least one attribute"
+        );
+
+        IndexConfig {
+            name: self.name,
+            index_type: self.index_type,
+            attributes: self.attributes,
+        }
+    }
+
+    /// Builds the [`IndexConfig`], returning an error if invalid.
+    ///
+    /// Returns an error if no attributes have been added.
+    pub fn try_build(self) -> Result<IndexConfig> {
+        if self.attributes.is_empty() {
+            return Err(HazelcastError::Configuration(
+                "IndexConfig requires at least one attribute".to_string(),
+            ));
+        }
+
+        Ok(IndexConfig {
+            name: self.name,
+            index_type: self.index_type,
+            attributes: self.attributes,
+        })
+    }
+}
+
+impl Default for IndexConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 use crate::connection::ConnectionManager;
 use crate::listener::{
     EntryEvent, EntryEventType, EntryListenerConfig, ListenerId, ListenerRegistration,
@@ -871,6 +1031,74 @@ where
         self.decode_entry_processor_results::<E::Output>(&response)
     }
 
+    /// Adds an index to this map with the given configuration.
+    ///
+    /// Indexes improve query performance for predicates that filter on the
+    /// indexed attributes. Creating an index on a populated map will trigger
+    /// a full scan to build the index.
+    ///
+    /// # Index Types
+    ///
+    /// - [`IndexType::Sorted`]: Best for range queries (`<`, `>`, `BETWEEN`).
+    ///   Also supports equality checks.
+    /// - [`IndexType::Hash`]: Best for equality queries (`=`). Does not support
+    ///   range queries but has faster lookups for exact matches.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Create a sorted index on the "age" attribute
+    /// let config = IndexConfig::builder()
+    ///     .name("age-idx")
+    ///     .index_type(IndexType::Sorted)
+    ///     .add_attribute("age")
+    ///     .build();
+    ///
+    /// map.add_index(config).await?;
+    ///
+    /// // Create a hash index for exact-match lookups on "email"
+    /// let email_index = IndexConfig::builder()
+    ///     .index_type(IndexType::Hash)
+    ///     .add_attribute("email")
+    ///     .build();
+    ///
+    /// map.add_index(email_index).await?;
+    ///
+    /// // Create a composite index on multiple attributes
+    /// let composite = IndexConfig::builder()
+    ///     .index_type(IndexType::Sorted)
+    ///     .add_attributes(["lastName", "firstName"])
+    ///     .build();
+    ///
+    /// map.add_index(composite).await?;
+    /// ```
+    pub async fn add_index(&self, config: IndexConfig) -> Result<()> {
+        let mut message = ClientMessage::create_for_encode(MAP_ADD_INDEX, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        // Encode index config as nested structure
+        // Index type
+        message.add_frame(Self::int_frame(config.index_type.as_i32()));
+
+        // Index name (nullable)
+        if let Some(ref name) = config.name {
+            message.add_frame(Self::string_frame(name));
+        } else {
+            message.add_frame(Frame::null());
+        }
+
+        // Attributes count
+        message.add_frame(Self::int_frame(config.attributes.len() as i32));
+
+        // Encode each attribute
+        for attr in &config.attributes {
+            message.add_frame(Self::string_frame(attr));
+        }
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
     fn decode_entry_processor_results<R>(
         &self,
         response: &ClientMessage,
@@ -1161,6 +1389,121 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result.get(&"key1".to_string()), Some(&100i64));
         assert_eq!(result.get(&"key2".to_string()), Some(&200i64));
+    }
+
+    #[test]
+    fn test_index_type_values() {
+        assert_eq!(IndexType::Sorted.as_i32(), 0);
+        assert_eq!(IndexType::Hash.as_i32(), 1);
+    }
+
+    #[test]
+    fn test_index_config_builder() {
+        let config = IndexConfig::builder()
+            .name("test-index")
+            .index_type(IndexType::Hash)
+            .add_attribute("field1")
+            .build();
+
+        assert_eq!(config.name(), Some("test-index"));
+        assert_eq!(config.index_type(), IndexType::Hash);
+        assert_eq!(config.attributes(), &["field1".to_string()]);
+    }
+
+    #[test]
+    fn test_index_config_builder_multiple_attributes() {
+        let config = IndexConfig::builder()
+            .index_type(IndexType::Sorted)
+            .add_attribute("lastName")
+            .add_attribute("firstName")
+            .build();
+
+        assert_eq!(config.name(), None);
+        assert_eq!(config.index_type(), IndexType::Sorted);
+        assert_eq!(
+            config.attributes(),
+            &["lastName".to_string(), "firstName".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_index_config_builder_add_attributes() {
+        let config = IndexConfig::builder()
+            .add_attributes(["a", "b", "c"])
+            .build();
+
+        assert_eq!(config.attributes().len(), 3);
+        assert_eq!(
+            config.attributes(),
+            &["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_index_config_builder_default_type() {
+        let config = IndexConfig::builder().add_attribute("field").build();
+
+        assert_eq!(config.index_type(), IndexType::Sorted);
+    }
+
+    #[test]
+    #[should_panic(expected = "requires at least one attribute")]
+    fn test_index_config_builder_no_attributes_panics() {
+        IndexConfig::builder().build();
+    }
+
+    #[test]
+    fn test_index_config_try_build_no_attributes() {
+        let result = IndexConfig::builder().try_build();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_index_config_try_build_success() {
+        let result = IndexConfig::builder()
+            .add_attribute("field")
+            .try_build();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_index_config_clone() {
+        let config = IndexConfig::builder()
+            .name("idx")
+            .add_attribute("field")
+            .build();
+
+        let cloned = config.clone();
+        assert_eq!(config.name(), cloned.name());
+        assert_eq!(config.index_type(), cloned.index_type());
+        assert_eq!(config.attributes(), cloned.attributes());
+    }
+
+    #[test]
+    fn test_index_type_equality() {
+        assert_eq!(IndexType::Sorted, IndexType::Sorted);
+        assert_eq!(IndexType::Hash, IndexType::Hash);
+        assert_ne!(IndexType::Sorted, IndexType::Hash);
+    }
+
+    #[test]
+    fn test_index_type_copy() {
+        let t1 = IndexType::Hash;
+        let t2 = t1;
+        assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn test_index_config_builder_chaining() {
+        let config = IndexConfig::builder()
+            .name("my-index")
+            .index_type(IndexType::Hash)
+            .add_attribute("attr1")
+            .add_attributes(vec!["attr2", "attr3"])
+            .build();
+
+        assert_eq!(config.name(), Some("my-index"));
+        assert_eq!(config.attributes().len(), 3);
     }
 
     #[test]
