@@ -275,6 +275,38 @@ mod tests {
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
+    #[tokio::test]
+    async fn test_atomic_long_quorum_not_present_blocks_operations() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let counter = AtomicLong::new("protected-counter".to_string(), cm);
+
+        let result = counter.get().await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+
+        let result = counter.set(42).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+
+        let result = counter.increment_and_get().await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+
+        let result = counter.compare_and_set(0, 1).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
     #[test]
     fn test_atomic_long_clone() {
         fn assert_clone<T: Clone>() {}

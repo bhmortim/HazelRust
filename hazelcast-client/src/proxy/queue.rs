@@ -309,6 +309,38 @@ mod tests {
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
+    #[tokio::test]
+    async fn test_queue_quorum_not_present_blocks_operations() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let queue: IQueue<String> = IQueue::new("protected-queue".to_string(), cm);
+
+        let result = queue.offer("item".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+
+        let result = queue.poll().await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+
+        let result = queue.peek().await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+
+        let result = queue.size().await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
     #[test]
     fn test_iqueue_clone() {
         fn assert_clone<T: Clone>() {}

@@ -1501,6 +1501,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_map_quorum_not_present_blocks_operations() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.get(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+
+        let result = map.put("key".to_string(), "value".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+
+        let result = map.remove(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
+    async fn test_map_quorum_read_only_allows_writes() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("read-protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Read)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("read-protected-map".to_string(), cm);
+
+        let result = map.get(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
     async fn test_map_permission_allowed_with_all() {
         use crate::config::ClientConfigBuilder;
         use crate::connection::ConnectionManager;

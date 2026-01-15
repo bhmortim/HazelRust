@@ -1007,6 +1007,322 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_quorum_check_passes_with_enough_members() {
+        use crate::config::{QuorumConfig, QuorumType};
+
+        let quorum = QuorumConfig::builder("test-*")
+            .min_cluster_size(2)
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let member1 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        let member2 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5702".parse().unwrap(),
+        );
+
+        manager.handle_member_added(member1).await;
+        manager.handle_member_added(member2).await;
+
+        let result = manager.check_quorum("test-map", true).await;
+        assert!(result.is_ok());
+
+        let result = manager.check_quorum("test-map", false).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_quorum_check_fails_with_insufficient_members() {
+        use crate::config::{QuorumConfig, QuorumType};
+
+        let quorum = QuorumConfig::builder("critical-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let member1 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        let member2 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5702".parse().unwrap(),
+        );
+
+        manager.handle_member_added(member1).await;
+        manager.handle_member_added(member2).await;
+
+        let result = manager.check_quorum("critical-data", true).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            HazelcastError::QuorumNotPresent(msg) => {
+                assert!(msg.contains("requires quorum of 3 members"));
+                assert!(msg.contains("only 2 present"));
+            }
+            e => panic!("expected QuorumNotPresent error, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_quorum_check_after_network_partition() {
+        use crate::config::{QuorumConfig, QuorumType};
+
+        let quorum = QuorumConfig::builder("important-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let member1 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        let member2 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5702".parse().unwrap(),
+        );
+        let member3 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5703".parse().unwrap(),
+        );
+
+        manager.handle_member_added(member1.clone()).await;
+        manager.handle_member_added(member2.clone()).await;
+        manager.handle_member_added(member3.clone()).await;
+
+        assert!(manager.check_quorum("important-map", false).await.is_ok());
+
+        manager.handle_member_removed(member3.uuid()).await;
+
+        let result = manager.check_quorum("important-map", false).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), HazelcastError::QuorumNotPresent(_)));
+
+        let member4 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5704".parse().unwrap(),
+        );
+        manager.handle_member_added(member4).await;
+
+        assert!(manager.check_quorum("important-map", false).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_quorum_read_only_allows_writes() {
+        use crate::config::{QuorumConfig, QuorumType};
+
+        let quorum = QuorumConfig::builder("read-protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Read)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let member = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        manager.handle_member_added(member).await;
+
+        let read_result = manager.check_quorum("read-protected-map", true).await;
+        assert!(read_result.is_err());
+
+        let write_result = manager.check_quorum("read-protected-map", false).await;
+        assert!(write_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_quorum_write_only_allows_reads() {
+        use crate::config::{QuorumConfig, QuorumType};
+
+        let quorum = QuorumConfig::builder("write-protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let member = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        manager.handle_member_added(member).await;
+
+        let read_result = manager.check_quorum("write-protected-map", true).await;
+        assert!(read_result.is_ok());
+
+        let write_result = manager.check_quorum("write-protected-map", false).await;
+        assert!(write_result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_quorum_no_config_always_passes() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        assert!(manager.check_quorum("any-map", true).await.is_ok());
+        assert!(manager.check_quorum("any-map", false).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_quorum_pattern_matching() {
+        use crate::config::{QuorumConfig, QuorumType};
+
+        let quorum = QuorumConfig::builder("user-*")
+            .min_cluster_size(2)
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        assert!(manager.check_quorum("user-sessions", false).await.is_err());
+        assert!(manager.check_quorum("user-data", false).await.is_err());
+
+        assert!(manager.check_quorum("product-catalog", false).await.is_ok());
+        assert!(manager.check_quorum("admin-users", false).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_quorum_custom_function() {
+        use crate::config::{QuorumConfig, QuorumFunction, QuorumType};
+
+        struct OddMemberQuorum;
+        impl QuorumFunction for OddMemberQuorum {
+            fn is_present(&self, members: &[crate::listener::Member]) -> bool {
+                members.len() % 2 == 1
+            }
+        }
+
+        let quorum = QuorumConfig::builder("custom-*")
+            .min_cluster_size(0)
+            .quorum_type(QuorumType::ReadWrite)
+            .quorum_function(std::sync::Arc::new(OddMemberQuorum))
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        assert!(manager.check_quorum("custom-map", false).await.is_err());
+
+        let member1 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        manager.handle_member_added(member1.clone()).await;
+        assert!(manager.check_quorum("custom-map", false).await.is_ok());
+
+        let member2 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5702".parse().unwrap(),
+        );
+        manager.handle_member_added(member2).await;
+        assert!(manager.check_quorum("custom-map", false).await.is_err());
+
+        let member3 = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5703".parse().unwrap(),
+        );
+        manager.handle_member_added(member3).await;
+        assert!(manager.check_quorum("custom-map", false).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_quorum_multiple_configs() {
+        use crate::config::{QuorumConfig, QuorumType};
+
+        let critical_quorum = QuorumConfig::builder("critical-*")
+            .min_cluster_size(5)
+            .quorum_type(QuorumType::ReadWrite)
+            .build()
+            .unwrap();
+
+        let standard_quorum = QuorumConfig::builder("standard-*")
+            .min_cluster_size(2)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(critical_quorum)
+            .add_quorum_config(standard_quorum)
+            .build()
+            .unwrap();
+
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        for i in 0..3 {
+            let member = crate::listener::Member::new(
+                uuid::Uuid::new_v4(),
+                format!("127.0.0.1:{}", 5701 + i).parse().unwrap(),
+            );
+            manager.handle_member_added(member).await;
+        }
+
+        assert!(manager.check_quorum("critical-data", false).await.is_err());
+        assert!(manager.check_quorum("standard-data", false).await.is_ok());
+        assert!(manager.check_quorum("standard-data", true).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn test_lifecycle_event_order_on_start() {
         let (listener, addr) = create_mock_server().await;
 
