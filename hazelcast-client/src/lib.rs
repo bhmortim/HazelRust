@@ -5,12 +5,17 @@
 mod client;
 pub mod config;
 pub mod connection;
+pub mod executor;
 pub mod listener;
 pub mod proxy;
 pub mod query;
 pub mod sql;
 
 pub use client::HazelcastClient;
+pub use executor::{
+    Callable, CallableTask, ExecutionCallback, ExecutionTarget, ExecutorService,
+    FnExecutionCallback, Runnable, RunnableTask,
+};
 pub use config::{
     ClientConfig, ClientConfigBuilder, ConfigError, NetworkConfig, NetworkConfigBuilder,
     RetryConfig, RetryConfigBuilder, SecurityConfig, SecurityConfigBuilder,

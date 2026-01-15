@@ -328,3 +328,21 @@ pub const MAP_ENTRIES_WITH_PREDICATE: i32 = 0x010F00;
 
 /// Map key set with predicate request.
 pub const MAP_KEYS_WITH_PREDICATE: i32 = 0x011100;
+
+/// Executor submit to partition request.
+pub const EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x0E0100;
+
+/// Executor submit to member request.
+pub const EXECUTOR_SUBMIT_TO_MEMBER: i32 = 0x0E0200;
+
+/// Executor shutdown request.
+pub const EXECUTOR_SHUTDOWN: i32 = 0x0E0300;
+
+/// Executor is shutdown request.
+pub const EXECUTOR_IS_SHUTDOWN: i32 = 0x0E0400;
+
+/// Executor cancel on partition request.
+pub const EXECUTOR_CANCEL_ON_PARTITION: i32 = 0x0E0500;
+
+/// Executor cancel on member request.
+pub const EXECUTOR_CANCEL_ON_MEMBER: i32 = 0x0E0600;
