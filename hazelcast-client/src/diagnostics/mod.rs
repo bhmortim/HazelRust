@@ -8,3 +8,9 @@ pub use statistics::{
     ClientStatistics, ConnectionStats, MemoryStats, NearCacheRatioStats, OperationType,
     StatisticsCollector, StatisticsReporter, StatisticsReporterConfig,
 };
+
+#[cfg(feature = "metrics")]
+pub use crate::metrics::{
+    MetricsRecorderHandle, OperationLatencyGuard, PrometheusError, PrometheusExporter,
+    PrometheusExporterBuilder,
+};

@@ -7,7 +7,7 @@ license.workspace = true
 [features]
 default = []
 tls = ["tokio-rustls", "rustls-pemfile", "webpki-roots", "rustls-pki-types"]
-metrics = ["prometheus"]
+metrics = ["dep:metrics", "metrics-exporter-prometheus"]
 aws = ["aws-config", "aws-sdk-ec2"]
 kubernetes = ["kube", "k8s-openapi"]
 cloud = ["reqwest"]
@@ -29,7 +29,8 @@ tokio-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2", optional = true }
 webpki-roots = { version = "0.26", optional = true }
 rustls-pki-types = { version = "1", optional = true }
-prometheus = { version = "0.13", optional = true }
+metrics = { version = "0.23", optional = true }
+metrics-exporter-prometheus = { version = "0.15", optional = true, default-features = false }
 
 # AWS SDK (optional, for AWS discovery)
 aws-config = { version = "1", optional = true }

@@ -9,6 +9,8 @@ pub mod connection;
 pub mod diagnostics;
 pub mod executor;
 pub mod listener;
+#[cfg(feature = "metrics")]
+pub mod metrics;
 pub mod proxy;
 pub mod query;
 pub mod security;
@@ -27,6 +29,11 @@ pub use config::{
     SecurityConfigBuilder,
 };
 pub use diagnostics::{OperationTracker, SlowOperationDetector};
+#[cfg(feature = "metrics")]
+pub use metrics::{
+    MetricsRecorderHandle, OperationLatencyGuard, PrometheusError, PrometheusExporter,
+    PrometheusExporterBuilder,
+};
 pub use connection::{
     ClusterDiscovery, Connection, ConnectionEvent, ConnectionId, ConnectionManager,
     StaticAddressDiscovery,
