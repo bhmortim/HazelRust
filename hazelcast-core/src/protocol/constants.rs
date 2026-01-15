@@ -268,3 +268,15 @@ pub const PN_COUNTER_ADD: i32 = 0x200200;
 
 /// FlakeIdGenerator new ID batch request.
 pub const FLAKE_ID_GENERATOR_NEW_ID_BATCH: i32 = 0x1C0100;
+
+/// CP FencedLock lock request.
+pub const CP_FENCED_LOCK_LOCK: i32 = 0x070100;
+
+/// CP FencedLock try lock request.
+pub const CP_FENCED_LOCK_TRY_LOCK: i32 = 0x070200;
+
+/// CP FencedLock unlock request.
+pub const CP_FENCED_LOCK_UNLOCK: i32 = 0x070300;
+
+/// CP FencedLock get lock ownership state request.
+pub const CP_FENCED_LOCK_GET_LOCK_OWNERSHIP_STATE: i32 = 0x070400;

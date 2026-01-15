@@ -8,8 +8,8 @@ use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::listener::{Member, MemberEvent};
 use crate::proxy::{
-    AtomicLong, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic, MultiMap, PNCounter,
-    ReplicatedMap, Ringbuffer,
+    AtomicLong, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic, MultiMap,
+    PNCounter, ReplicatedMap, Ringbuffer,
 };
 
 /// The main entry point for connecting to a Hazelcast cluster.
@@ -235,6 +235,22 @@ impl HazelcastClient {
     /// - High-throughput ID generation scenarios
     pub fn get_flake_id_generator(&self, name: &str) -> FlakeIdGenerator {
         FlakeIdGenerator::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed FencedLock proxy for the given name.
+    ///
+    /// The FencedLock provides a distributed mutual exclusion primitive with fencing
+    /// tokens. Each successful lock acquisition returns a monotonically increasing
+    /// fence token that can be used to detect stale lock holders.
+    ///
+    /// Note: FencedLock requires the CP subsystem to be enabled on the Hazelcast cluster.
+    ///
+    /// FencedLocks are ideal for:
+    /// - Distributed coordination requiring strong consistency
+    /// - Protecting critical sections across multiple processes
+    /// - Scenarios where detecting stale lock holders is important
+    pub fn get_fenced_lock(&self, name: &str) -> FencedLock {
+        FencedLock::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns the cluster name this client is connected to.

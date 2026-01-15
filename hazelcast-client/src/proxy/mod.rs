@@ -1,6 +1,7 @@
 //! Distributed data structure proxies.
 
 mod atomic_long;
+mod fenced_lock;
 mod flake_id;
 mod list;
 mod map;
@@ -13,6 +14,7 @@ mod set;
 mod topic;
 
 pub use atomic_long::AtomicLong;
+pub use fenced_lock::FencedLock;
 pub use flake_id::{FlakeIdGenerator, IdBatch};
 pub use list::IList;
 pub use map::IMap;
