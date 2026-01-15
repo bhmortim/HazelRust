@@ -204,6 +204,7 @@ pub struct IMap<K, V> {
     connection_manager: Arc<ConnectionManager>,
     listener_stats: Arc<ListenerStats>,
     near_cache: Option<Arc<Mutex<NearCache<Vec<u8>, Vec<u8>>>>>,
+    invalidation_registration: Arc<Mutex<Option<ListenerRegistration>>>,
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
@@ -215,6 +216,7 @@ impl<K, V> IMap<K, V> {
             connection_manager,
             listener_stats: Arc::new(ListenerStats::new()),
             near_cache: None,
+            invalidation_registration: Arc::new(Mutex::new(None)),
             _phantom: PhantomData,
         }
     }
@@ -230,6 +232,7 @@ impl<K, V> IMap<K, V> {
             connection_manager,
             listener_stats: Arc::new(ListenerStats::new()),
             near_cache: Some(Arc::new(Mutex::new(NearCache::new(config)))),
+            invalidation_registration: Arc::new(Mutex::new(None)),
             _phantom: PhantomData,
         }
     }
@@ -1366,6 +1369,100 @@ where
         T::deserialize(&mut input)
     }
 
+    /// Starts automatic near-cache invalidation by registering a server-side entry listener.
+    ///
+    /// When entries are updated, removed, evicted, or expired on the cluster,
+    /// the corresponding entries in the local near-cache are automatically invalidated.
+    /// This ensures the near-cache stays consistent with the cluster state even when
+    /// other clients modify the data.
+    ///
+    /// This method is idempotent - calling it multiple times has no additional effect.
+    /// Returns `Ok(())` if invalidation was started, was already running, or if
+    /// no near-cache is configured.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = NearCacheConfig::builder("my-map").build().unwrap();
+    /// let map: IMap<String, String> = client.get_map_with_near_cache("my-map", config).await?;
+    /// map.start_near_cache_invalidation().await?;
+    /// // Now the near-cache will auto-invalidate when cluster data changes
+    /// ```
+    pub async fn start_near_cache_invalidation(&self) -> Result<()>
+    where
+        K: 'static,
+        V: 'static,
+    {
+        let near_cache = match &self.near_cache {
+            Some(cache) => Arc::clone(cache),
+            None => return Ok(()),
+        };
+
+        {
+            let reg_guard = self.invalidation_registration.lock().unwrap();
+            if reg_guard.is_some() {
+                return Ok(());
+            }
+        }
+
+        let config = EntryListenerConfig::new()
+            .include_value(false)
+            .on_updated()
+            .on_removed()
+            .on_evicted()
+            .on_expired();
+
+        let registration = self.add_entry_listener(config, move |event: EntryEvent<K, V>| {
+            let mut output = ObjectDataOutput::new();
+            if event.key.serialize(&mut output).is_ok() {
+                let key_data = output.into_bytes();
+                let mut cache_guard = near_cache.lock().unwrap();
+                cache_guard.invalidate(&key_data);
+            }
+        }).await?;
+
+        let mut reg_guard = self.invalidation_registration.lock().unwrap();
+        *reg_guard = Some(registration);
+
+        Ok(())
+    }
+
+    /// Stops automatic near-cache invalidation by removing the server-side entry listener.
+    ///
+    /// Returns `Ok(true)` if the listener was successfully removed, `Ok(false)` if
+    /// no invalidation listener was active.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Stop automatic invalidation
+    /// map.stop_near_cache_invalidation().await?;
+    /// ```
+    pub async fn stop_near_cache_invalidation(&self) -> Result<bool> {
+        let registration = {
+            let mut reg_guard = self.invalidation_registration.lock().unwrap();
+            reg_guard.take()
+        };
+
+        match registration {
+            Some(reg) => self.remove_entry_listener(&reg).await,
+            None => Ok(false),
+        }
+    }
+
+    /// Returns `true` if automatic near-cache invalidation is currently active.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// if !map.is_near_cache_invalidation_active() {
+    ///     map.start_near_cache_invalidation().await?;
+    /// }
+    /// ```
+    pub fn is_near_cache_invalidation_active(&self) -> bool {
+        self.invalidation_registration.lock().unwrap().is_some()
+    }
+
     fn decode_entry_processor_results<R>(
         &self,
         response: &ClientMessage,
@@ -1422,6 +1519,7 @@ impl<K, V> Clone for IMap<K, V> {
             connection_manager: Arc::clone(&self.connection_manager),
             listener_stats: Arc::clone(&self.listener_stats),
             near_cache: self.near_cache.as_ref().map(Arc::clone),
+            invalidation_registration: Arc::clone(&self.invalidation_registration),
             _phantom: PhantomData,
         }
     }
@@ -1949,6 +2047,83 @@ mod tests {
         assert_eq!(hash_config.name(), Some("email-hash-idx"));
         assert_eq!(hash_config.index_type(), IndexType::Hash);
         assert_eq!(hash_config.attributes(), &["email".to_string()]);
+    }
+
+    #[test]
+    fn test_invalidation_registration_initial_state() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(!map.is_near_cache_invalidation_active());
+    }
+
+    #[test]
+    fn test_invalidation_registration_not_active_without_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        assert!(!map.is_near_cache_invalidation_active());
+    }
+
+    #[test]
+    fn test_invalidation_registration_shared_on_clone() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map1: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map2 = map1.clone();
+
+        assert!(!map1.is_near_cache_invalidation_active());
+        assert!(!map2.is_near_cache_invalidation_active());
+
+        assert!(Arc::ptr_eq(
+            &map1.invalidation_registration,
+            &map2.invalidation_registration
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_start_invalidation_no_op_without_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        assert!(!map.has_near_cache());
+        let result = map.start_near_cache_invalidation().await;
+        assert!(result.is_ok());
+        assert!(!map.is_near_cache_invalidation_active());
+    }
+
+    #[tokio::test]
+    async fn test_stop_invalidation_returns_false_when_not_active() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        let result = map.stop_near_cache_invalidation().await;
+        assert!(matches!(result, Ok(false)));
     }
 
     #[test]
