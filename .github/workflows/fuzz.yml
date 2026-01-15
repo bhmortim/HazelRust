@@ -1,0 +1,78 @@
+name: Fuzz Testing
+
+on:
+  pull_request:
+    paths:
+      - 'hazelcast-core/src/protocol/**'
+      - 'hazelcast-core/src/serialization/**'
+      - 'hazelcast-core/fuzz/**'
+  workflow_dispatch:
+    inputs:
+      fuzz_seconds:
+        description: 'Seconds to run each fuzzer'
+        required: false
+        default: '60'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Protocol Fuzzing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-action@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Cache fuzz corpus
+        uses: actions/cache@v4
+        with:
+          path: |
+            hazelcast-core/fuzz/corpus
+            hazelcast-core/fuzz/artifacts
+          key: fuzz-corpus-${{ github.sha }}
+          restore-keys: |
+            fuzz-corpus-
+
+      - name: Run fuzz_frame_decode
+        working-directory: hazelcast-core
+        run: |
+          cargo +nightly fuzz run fuzz_frame_decode -- \
+            -max_total_time=${{ inputs.fuzz_seconds || '30' }} \
+            -max_len=4096
+
+      - name: Run fuzz_portable_deserialize
+        working-directory: hazelcast-core
+        run: |
+          cargo +nightly fuzz run fuzz_portable_deserialize -- \
+            -max_total_time=${{ inputs.fuzz_seconds || '30' }} \
+            -max_len=8192
+
+      - name: Run fuzz_compact_deserialize
+        working-directory: hazelcast-core
+        run: |
+          cargo +nightly fuzz run fuzz_compact_deserialize -- \
+            -max_total_time=${{ inputs.fuzz_seconds || '30' }} \
+            -max_len=8192
+
+      - name: Run fuzz_client_message_decode
+        working-directory: hazelcast-core
+        run: |
+          cargo +nightly fuzz run fuzz_client_message_decode -- \
+            -max_total_time=${{ inputs.fuzz_seconds || '30' }} \
+            -max_len=16384
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: hazelcast-core/fuzz/artifacts/
+          retention-days: 30

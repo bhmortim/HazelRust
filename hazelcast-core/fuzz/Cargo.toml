@@ -1,0 +1,46 @@
+[package]
+name = "hazelcast-core-fuzz"
+version = "0.0.0"
+authors = ["Automated"]
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bytes = "1"
+arbitrary = { version = "1", features = ["derive"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+
+[dependencies.hazelcast-core]
+path = ".."
+
+[[bin]]
+name = "fuzz_frame_decode"
+path = "fuzz_targets/fuzz_frame_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_portable_deserialize"
+path = "fuzz_targets/fuzz_portable_deserialize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_compact_deserialize"
+path = "fuzz_targets/fuzz_compact_deserialize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_client_message_decode"
+path = "fuzz_targets/fuzz_client_message_decode.rs"
+test = false
+doc = false
+bench = false
