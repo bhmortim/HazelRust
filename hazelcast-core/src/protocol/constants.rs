@@ -91,3 +91,18 @@ pub const QUEUE_SIZE: i32 = 0x030300;
 
 /// Queue peek request.
 pub const QUEUE_PEEK: i32 = 0x030400;
+
+/// Set add request.
+pub const SET_ADD: i32 = 0x060100;
+
+/// Set remove request.
+pub const SET_REMOVE: i32 = 0x060200;
+
+/// Set contains request.
+pub const SET_CONTAINS: i32 = 0x060400;
+
+/// Set clear request.
+pub const SET_CLEAR: i32 = 0x060500;
+
+/// Set size request.
+pub const SET_SIZE: i32 = 0x060800;
