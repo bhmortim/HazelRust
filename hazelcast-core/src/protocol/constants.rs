@@ -236,6 +236,30 @@ pub const MULTI_MAP_CONTAINS_ENTRY: i32 = 0x020B00;
 /// MultiMap remove entry request.
 pub const MULTI_MAP_REMOVE_ENTRY: i32 = 0x020C00;
 
+/// MultiMap key set request.
+pub const MULTI_MAP_KEY_SET: i32 = 0x020400;
+
+/// MultiMap values request.
+pub const MULTI_MAP_VALUES: i32 = 0x020500;
+
+/// MultiMap entry set request.
+pub const MULTI_MAP_ENTRY_SET: i32 = 0x020D00;
+
+/// MultiMap lock request.
+pub const MULTI_MAP_LOCK: i32 = 0x020E00;
+
+/// MultiMap try lock request.
+pub const MULTI_MAP_TRY_LOCK: i32 = 0x020F00;
+
+/// MultiMap unlock request.
+pub const MULTI_MAP_UNLOCK: i32 = 0x021000;
+
+/// MultiMap is locked request.
+pub const MULTI_MAP_IS_LOCKED: i32 = 0x021100;
+
+/// MultiMap force unlock request.
+pub const MULTI_MAP_FORCE_UNLOCK: i32 = 0x021200;
+
 /// Topic publish request.
 pub const TOPIC_PUBLISH: i32 = 0x040100;
 
