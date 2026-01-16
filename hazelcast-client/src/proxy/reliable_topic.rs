@@ -231,6 +231,60 @@ where
         Ok(sequence)
     }
 
+    /// Publishes multiple messages to this reliable topic in a single batch.
+    ///
+    /// This is more efficient than publishing messages individually as it
+    /// uses the underlying ringbuffer's batch add operation.
+    ///
+    /// Returns the sequence of the last written message.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - The messages to publish
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let topic = client.get_reliable_topic::<String>("my-reliable-topic");
+    /// let last_seq = topic.publish_all(vec!["msg1".to_string(), "msg2".to_string()]).await?;
+    /// ```
+    pub async fn publish_all(&self, messages: Vec<T>) -> Result<i64> {
+        if messages.is_empty() {
+            return self.tail_sequence().await;
+        }
+
+        let count = messages.len();
+        let sequence = self.ringbuffer().add_all(messages).await?;
+
+        for _ in 0..count {
+            self.stats.record_publish();
+        }
+
+        Ok(sequence)
+    }
+
+    /// Publishes multiple messages with a specific overflow policy.
+    ///
+    /// Returns the sequence of the last written message.
+    pub async fn publish_all_with_policy(
+        &self,
+        messages: Vec<T>,
+        policy: OverflowPolicy,
+    ) -> Result<i64> {
+        if messages.is_empty() {
+            return self.tail_sequence().await;
+        }
+
+        let count = messages.len();
+        let sequence = self.ringbuffer().add_all_with_policy(messages, policy).await?;
+
+        for _ in 0..count {
+            self.stats.record_publish();
+        }
+
+        Ok(sequence)
+    }
+
     /// Registers a message listener with default configuration.
     ///
     /// The listener will receive messages starting from the next published message.
@@ -499,5 +553,20 @@ mod tests {
     fn test_reliable_topic_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<ReliableTopic<String>>();
+    }
+
+    #[test]
+    fn test_reliable_topic_stats_batch_recording() {
+        let stats = ReliableTopicStats::new();
+
+        for _ in 0..5 {
+            stats.record_publish();
+        }
+        assert_eq!(stats.messages_published(), 5);
+
+        for _ in 0..3 {
+            stats.record_receive();
+        }
+        assert_eq!(stats.messages_received(), 3);
     }
 }

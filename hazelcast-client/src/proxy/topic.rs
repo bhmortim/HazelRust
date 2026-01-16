@@ -130,6 +130,50 @@ where
         Ok(())
     }
 
+    /// Publishes multiple messages to all subscribers of this topic.
+    ///
+    /// Messages are published in order. This is more efficient than calling
+    /// `publish` repeatedly as it reuses the connection for all messages.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - The messages to publish
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let topic = client.get_topic::<String>("my-topic");
+    /// topic.publish_all(vec!["msg1".to_string(), "msg2".to_string()]).await?;
+    /// ```
+    pub async fn publish_all(&self, messages: Vec<T>) -> Result<()> {
+        if messages.is_empty() {
+            return Ok(());
+        }
+
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+
+        let address = self.get_connection_address().await?;
+
+        for message in messages {
+            let message_data = Self::serialize_value(&message)?;
+
+            let mut msg = ClientMessage::create_for_encode_any_partition(TOPIC_PUBLISH);
+            msg.add_frame(Self::string_frame(&self.name));
+            msg.add_frame(Self::data_frame(&message_data));
+
+            self.connection_manager.send_to(address, msg).await?;
+            self.connection_manager
+                .receive_from(address)
+                .await?
+                .ok_or_else(|| {
+                    HazelcastError::Connection("connection closed unexpectedly".to_string())
+                })?;
+        }
+
+        Ok(())
+    }
+
     /// Registers a message listener for this topic.
     ///
     /// The provided handler will be called for each message published to this topic.
@@ -418,6 +462,19 @@ mod tests {
     fn test_serialize_string() {
         let data = ITopic::<String>::serialize_value(&"hello".to_string()).unwrap();
         assert!(!data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_topic_publish_all_empty() {
+        use crate::config::ClientConfigBuilder;
+        use crate::connection::ConnectionManager;
+
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let topic: ITopic<String> = ITopic::new("test".to_string(), cm);
+
+        let result = topic.publish_all(vec![]).await;
+        assert!(result.is_ok());
     }
 
     #[test]
