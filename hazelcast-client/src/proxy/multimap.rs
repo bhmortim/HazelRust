@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -26,6 +26,136 @@ use crate::listener::{
 
 static MULTIMAP_INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// Local statistics for MultiMap operations.
+#[derive(Debug)]
+pub struct LocalMultiMapStats {
+    creation_time: i64,
+    put_count: AtomicI64,
+    get_count: AtomicI64,
+    remove_count: AtomicI64,
+    hit_count: AtomicI64,
+    miss_count: AtomicI64,
+    last_access_time: AtomicI64,
+    last_update_time: AtomicI64,
+}
+
+impl LocalMultiMapStats {
+    /// Creates a new LocalMultiMapStats with the current time as creation time.
+    pub fn new() -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        Self {
+            creation_time: now,
+            put_count: AtomicI64::new(0),
+            get_count: AtomicI64::new(0),
+            remove_count: AtomicI64::new(0),
+            hit_count: AtomicI64::new(0),
+            miss_count: AtomicI64::new(0),
+            last_access_time: AtomicI64::new(0),
+            last_update_time: AtomicI64::new(0),
+        }
+    }
+
+    /// Returns the creation time of this stats instance.
+    pub fn creation_time(&self) -> i64 {
+        self.creation_time
+    }
+
+    /// Returns the number of put operations.
+    pub fn put_count(&self) -> i64 {
+        self.put_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of get operations.
+    pub fn get_count(&self) -> i64 {
+        self.get_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of remove operations.
+    pub fn remove_count(&self) -> i64 {
+        self.remove_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of cache hits.
+    pub fn hit_count(&self) -> i64 {
+        self.hit_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of cache misses.
+    pub fn miss_count(&self) -> i64 {
+        self.miss_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the last access time in milliseconds since epoch.
+    pub fn last_access_time(&self) -> i64 {
+        self.last_access_time.load(Ordering::Relaxed)
+    }
+
+    /// Returns the last update time in milliseconds since epoch.
+    pub fn last_update_time(&self) -> i64 {
+        self.last_update_time.load(Ordering::Relaxed)
+    }
+
+    fn record_put(&self) {
+        self.put_count.fetch_add(1, Ordering::Relaxed);
+        self.update_last_update_time();
+    }
+
+    fn record_get(&self, hit: bool) {
+        self.get_count.fetch_add(1, Ordering::Relaxed);
+        if hit {
+            self.hit_count.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.miss_count.fetch_add(1, Ordering::Relaxed);
+        }
+        self.update_last_access_time();
+    }
+
+    fn record_remove(&self) {
+        self.remove_count.fetch_add(1, Ordering::Relaxed);
+        self.update_last_update_time();
+    }
+
+    fn update_last_access_time(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        self.last_access_time.store(now, Ordering::Relaxed);
+    }
+
+    fn update_last_update_time(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        self.last_update_time.store(now, Ordering::Relaxed);
+    }
+}
+
+impl Default for LocalMultiMapStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clone for LocalMultiMapStats {
+    fn clone(&self) -> Self {
+        Self {
+            creation_time: self.creation_time,
+            put_count: AtomicI64::new(self.put_count.load(Ordering::Relaxed)),
+            get_count: AtomicI64::new(self.get_count.load(Ordering::Relaxed)),
+            remove_count: AtomicI64::new(self.remove_count.load(Ordering::Relaxed)),
+            hit_count: AtomicI64::new(self.hit_count.load(Ordering::Relaxed)),
+            miss_count: AtomicI64::new(self.miss_count.load(Ordering::Relaxed)),
+            last_access_time: AtomicI64::new(self.last_access_time.load(Ordering::Relaxed)),
+            last_update_time: AtomicI64::new(self.last_update_time.load(Ordering::Relaxed)),
+        }
+    }
+}
+
 /// A distributed multi-value map proxy for storing multiple values per key.
 ///
 /// `MultiMap` provides async operations for managing key-value pairs where
@@ -35,6 +165,7 @@ pub struct MultiMap<K, V> {
     name: String,
     connection_manager: Arc<ConnectionManager>,
     listener_stats: Arc<ListenerStats>,
+    local_stats: Arc<LocalMultiMapStats>,
     thread_id: i64,
     _phantom: PhantomData<fn() -> (K, V)>,
 }
@@ -46,6 +177,7 @@ impl<K, V> MultiMap<K, V> {
             name,
             connection_manager,
             listener_stats: Arc::new(ListenerStats::new()),
+            local_stats: Arc::new(LocalMultiMapStats::new()),
             thread_id: std::process::id() as i64,
             _phantom: PhantomData,
         }
@@ -76,7 +208,9 @@ where
         message.add_frame(Self::data_frame(&value_data));
 
         let response = self.invoke(message).await?;
-        Self::decode_bool_response(&response)
+        let result = Self::decode_bool_response(&response)?;
+        self.local_stats.record_put();
+        Ok(result)
     }
 
     /// Retrieves all values associated with the given key.
@@ -91,7 +225,9 @@ where
         message.add_frame(Self::data_frame(&key_data));
 
         let response = self.invoke(message).await?;
-        Self::decode_collection_response(&response)
+        let result = Self::decode_collection_response(&response)?;
+        self.local_stats.record_get(!result.is_empty());
+        Ok(result)
     }
 
     /// Removes a specific key-value pair from the multi-map.
@@ -108,7 +244,11 @@ where
         message.add_frame(Self::data_frame(&value_data));
 
         let response = self.invoke(message).await?;
-        Self::decode_bool_response(&response)
+        let result = Self::decode_bool_response(&response)?;
+        if result {
+            self.local_stats.record_remove();
+        }
+        Ok(result)
     }
 
     /// Removes all values associated with the given key.
@@ -123,7 +263,11 @@ where
         message.add_frame(Self::data_frame(&key_data));
 
         let response = self.invoke(message).await?;
-        Self::decode_collection_response(&response)
+        let result = Self::decode_collection_response(&response)?;
+        if !result.is_empty() {
+            self.local_stats.record_remove();
+        }
+        Ok(result)
     }
 
     /// Returns `true` if this multi-map contains the specified key.
@@ -266,6 +410,38 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::long_frame(self.thread_id));
         message.add_frame(Self::long_frame(-1)); // TTL: indefinite once acquired
+        message.add_frame(Self::long_frame(timeout_ms));
+        message.add_frame(Self::invocation_uid_frame());
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Tries to acquire the lock for the specified key with a lease time.
+    ///
+    /// Returns immediately if the lock is available. Otherwise waits up to
+    /// the specified timeout for the lock to become available.
+    ///
+    /// If the lock is acquired, it will be automatically released after the
+    /// lease time expires, even if `unlock` is not called.
+    ///
+    /// Returns `true` if the lock was acquired, `false` if the timeout expired.
+    pub async fn try_lock_with_lease(
+        &self,
+        key: &K,
+        timeout: Duration,
+        lease_time: Duration,
+    ) -> Result<bool> {
+        let key_data = Self::serialize_value(key)?;
+        let partition_id = compute_partition_hash(&key_data);
+        let timeout_ms = timeout.as_millis() as i64;
+        let lease_ms = lease_time.as_millis() as i64;
+
+        let mut message = ClientMessage::create_for_encode(MULTI_MAP_TRY_LOCK, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(Self::long_frame(lease_ms));
         message.add_frame(Self::long_frame(timeout_ms));
         message.add_frame(Self::invocation_uid_frame());
 
@@ -873,6 +1049,176 @@ where
         Ok(registration)
     }
 
+    /// Adds a local entry listener to this multi-map.
+    ///
+    /// The handler will be called only for entry events that occur on the local member.
+    /// This is more efficient than a regular entry listener when you only need local events.
+    /// Returns a registration that can be used to remove the listener.
+    pub async fn add_local_entry_listener<F>(
+        &self,
+        config: EntryListenerConfig,
+        handler: F,
+    ) -> Result<ListenerRegistration>
+    where
+        F: Fn(EntryEvent<K, V>) + Send + Sync + 'static,
+        K: 'static,
+        V: 'static,
+    {
+        let mut message =
+            ClientMessage::create_for_encode(MULTI_MAP_ADD_ENTRY_LISTENER, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::bool_frame(config.include_value));
+        message.add_frame(Self::int_frame(config.event_flags()));
+        message.add_frame(Self::bool_frame(true));
+
+        let response = self.invoke(message).await?;
+        let listener_uuid = Self::decode_uuid_response(&response)?;
+
+        let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
+        let active_flag = registration.active_flag();
+        let shutdown_rx = registration.shutdown_receiver();
+
+        let connection_manager = Arc::clone(&self.connection_manager);
+        let listener_stats = Arc::clone(&self.listener_stats);
+        let handler = Arc::new(handler);
+        let map_name = self.name.clone();
+        let include_value = config.include_value;
+
+        spawn(async move {
+            let mut shutdown_rx = match shutdown_rx {
+                Some(rx) => rx,
+                None => return,
+            };
+
+            loop {
+                if !active_flag.load(Ordering::Acquire) {
+                    break;
+                }
+
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        let addresses = connection_manager.connected_addresses().await;
+                        for address in addresses {
+                            if !active_flag.load(Ordering::Acquire) {
+                                break;
+                            }
+
+                            match connection_manager.receive_from(address).await {
+                                Ok(Some(msg)) => {
+                                    if Self::is_entry_event(&msg, &map_name) {
+                                        listener_stats.record_message();
+                                        if let Ok(event) =
+                                            Self::decode_entry_event(&msg, include_value)
+                                        {
+                                            handler(event);
+                                        } else {
+                                            listener_stats.record_error();
+                                        }
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(_) => {
+                                    listener_stats.record_error();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(registration)
+    }
+
+    /// Adds a local entry listener using the [`EntryListener`] trait.
+    ///
+    /// Events are dispatched to the appropriate trait method based on event type.
+    /// Only events from the local member will be delivered.
+    pub async fn add_local_entry_listener_obj(
+        &self,
+        config: EntryListenerConfig,
+        listener: BoxedEntryListener<K, V>,
+    ) -> Result<ListenerRegistration>
+    where
+        K: 'static,
+        V: 'static,
+    {
+        let mut message =
+            ClientMessage::create_for_encode(MULTI_MAP_ADD_ENTRY_LISTENER, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::bool_frame(config.include_value));
+        message.add_frame(Self::int_frame(config.event_flags()));
+        message.add_frame(Self::bool_frame(true));
+
+        let response = self.invoke(message).await?;
+        let listener_uuid = Self::decode_uuid_response(&response)?;
+
+        let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
+        let active_flag = registration.active_flag();
+        let shutdown_rx = registration.shutdown_receiver();
+
+        let connection_manager = Arc::clone(&self.connection_manager);
+        let listener_stats = Arc::clone(&self.listener_stats);
+        let map_name = self.name.clone();
+        let include_value = config.include_value;
+
+        spawn(async move {
+            let mut shutdown_rx = match shutdown_rx {
+                Some(rx) => rx,
+                None => return,
+            };
+
+            loop {
+                if !active_flag.load(Ordering::Acquire) {
+                    break;
+                }
+
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        let addresses = connection_manager.connected_addresses().await;
+                        for address in addresses {
+                            if !active_flag.load(Ordering::Acquire) {
+                                break;
+                            }
+
+                            match connection_manager.receive_from(address).await {
+                                Ok(Some(msg)) => {
+                                    if Self::is_entry_event(&msg, &map_name) {
+                                        listener_stats.record_message();
+                                        match Self::decode_entry_event(&msg, include_value) {
+                                            Ok(event) => {
+                                                dispatch_entry_event(listener.as_ref(), event);
+                                            }
+                                            Err(_) => {
+                                                listener_stats.record_error();
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(_) => {
+                                    listener_stats.record_error();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(registration)
+    }
+
     /// Removes an entry listener from this multi-map.
     ///
     /// Returns `true` if the listener was successfully removed.
@@ -892,6 +1238,14 @@ where
     pub fn listener_stats(&self) -> &ListenerStats {
         &self.listener_stats
     }
+
+    /// Returns a snapshot of the local statistics for this multi-map.
+    ///
+    /// The returned stats reflect operation counts and timing information
+    /// for operations performed through this client instance.
+    pub fn get_local_multi_map_stats(&self) -> LocalMultiMapStats {
+        (*self.local_stats).clone()
+    }
 }
 
 impl<K, V> Clone for MultiMap<K, V> {
@@ -900,6 +1254,7 @@ impl<K, V> Clone for MultiMap<K, V> {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
             listener_stats: Arc::clone(&self.listener_stats),
+            local_stats: Arc::clone(&self.local_stats),
             thread_id: self.thread_id,
             _phantom: PhantomData,
         }
@@ -968,5 +1323,67 @@ mod tests {
         let map2 = map1.clone();
 
         assert_eq!(map1.thread_id, map2.thread_id);
+    }
+
+    #[test]
+    fn test_local_multi_map_stats_default() {
+        let stats = LocalMultiMapStats::default();
+        assert_eq!(stats.put_count(), 0);
+        assert_eq!(stats.get_count(), 0);
+        assert_eq!(stats.remove_count(), 0);
+        assert_eq!(stats.hit_count(), 0);
+        assert_eq!(stats.miss_count(), 0);
+        assert!(stats.creation_time() > 0);
+    }
+
+    #[test]
+    fn test_local_multi_map_stats_record_put() {
+        let stats = LocalMultiMapStats::new();
+        stats.record_put();
+        stats.record_put();
+        assert_eq!(stats.put_count(), 2);
+        assert!(stats.last_update_time() > 0);
+    }
+
+    #[test]
+    fn test_local_multi_map_stats_record_get_hit() {
+        let stats = LocalMultiMapStats::new();
+        stats.record_get(true);
+        assert_eq!(stats.get_count(), 1);
+        assert_eq!(stats.hit_count(), 1);
+        assert_eq!(stats.miss_count(), 0);
+        assert!(stats.last_access_time() > 0);
+    }
+
+    #[test]
+    fn test_local_multi_map_stats_record_get_miss() {
+        let stats = LocalMultiMapStats::new();
+        stats.record_get(false);
+        assert_eq!(stats.get_count(), 1);
+        assert_eq!(stats.hit_count(), 0);
+        assert_eq!(stats.miss_count(), 1);
+    }
+
+    #[test]
+    fn test_local_multi_map_stats_record_remove() {
+        let stats = LocalMultiMapStats::new();
+        stats.record_remove();
+        assert_eq!(stats.remove_count(), 1);
+        assert!(stats.last_update_time() > 0);
+    }
+
+    #[test]
+    fn test_local_multi_map_stats_clone() {
+        let stats = LocalMultiMapStats::new();
+        stats.record_put();
+        stats.record_get(true);
+        stats.record_remove();
+
+        let cloned = stats.clone();
+        assert_eq!(cloned.put_count(), 1);
+        assert_eq!(cloned.get_count(), 1);
+        assert_eq!(cloned.remove_count(), 1);
+        assert_eq!(cloned.hit_count(), 1);
+        assert_eq!(cloned.creation_time(), stats.creation_time());
     }
 }
