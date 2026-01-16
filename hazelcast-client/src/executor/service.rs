@@ -17,7 +17,7 @@ use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Se
 
 use crate::connection::ConnectionManager;
 use crate::listener::Member;
-use super::{Callable, CallableTask, ExecutionCallback, ExecutionTarget};
+use super::{Callable, CallableTask, ExecutionCallback, ExecutionTarget, MemberSelector, Runnable, RunnableTask};
 
 /// A handle to a pending executor task result.
 ///
@@ -128,6 +128,136 @@ impl super::ExecutorService {
             futures.push(future);
         }
         Ok(futures)
+    }
+
+    /// Submits a callable task to cluster members matching the selector.
+    ///
+    /// Returns a vector of futures, one for each selected member's result.
+    pub async fn submit_to_members<T, R, S>(
+        &self,
+        task: &T,
+        selector: &S,
+    ) -> Result<Vec<ExecutorFuture<R>>>
+    where
+        T: Callable<R>,
+        R: Deserializable + Send + 'static,
+        S: MemberSelector,
+    {
+        let members = self.connection_manager.members().await;
+        let selected: Vec<_> = members.iter().filter(|m| selector.select(m)).collect();
+
+        if selected.is_empty() {
+            return Err(HazelcastError::Connection(
+                "No cluster members match the selector".to_string(),
+            ));
+        }
+
+        let mut futures = Vec::with_capacity(selected.len());
+        for member in selected {
+            let future = self.submit_to_member(task, member).await?;
+            futures.push(future);
+        }
+        Ok(futures)
+    }
+
+    /// Executes a runnable task on any available cluster member.
+    ///
+    /// The task is submitted for execution without waiting for completion.
+    pub async fn execute<R>(&self, task: &R) -> Result<()>
+    where
+        R: Runnable,
+    {
+        self.execute_on_target(task, ExecutionTarget::Any).await
+    }
+
+    /// Executes a runnable task on a specific cluster member.
+    pub async fn execute_on_member<R>(&self, task: &R, member: &Member) -> Result<()>
+    where
+        R: Runnable,
+    {
+        self.execute_on_target(task, ExecutionTarget::Member(member.uuid()))
+            .await
+    }
+
+    /// Executes a runnable task on all cluster members.
+    ///
+    /// The task is submitted to each member for execution.
+    pub async fn execute_on_all_members<R>(&self, task: &R) -> Result<()>
+    where
+        R: Runnable,
+    {
+        let members = self.connection_manager.members().await;
+        if members.is_empty() {
+            return Err(HazelcastError::Connection(
+                "No cluster members available".to_string(),
+            ));
+        }
+
+        for member in &members {
+            self.execute_on_member(task, member).await?;
+        }
+        Ok(())
+    }
+
+    /// Executes a runnable task on cluster members matching the selector.
+    pub async fn execute_on_members<R, S>(&self, task: &R, selector: &S) -> Result<()>
+    where
+        R: Runnable,
+        S: MemberSelector,
+    {
+        let members = self.connection_manager.members().await;
+        let selected: Vec<_> = members.iter().filter(|m| selector.select(m)).collect();
+
+        if selected.is_empty() {
+            return Err(HazelcastError::Connection(
+                "No cluster members match the selector".to_string(),
+            ));
+        }
+
+        for member in selected {
+            self.execute_on_member(task, member).await?;
+        }
+        Ok(())
+    }
+
+    async fn execute_on_target<R>(&self, task: &R, target: ExecutionTarget) -> Result<()>
+    where
+        R: Runnable,
+    {
+        let runnable_task = RunnableTask::new(task)?;
+        let task_uuid = Uuid::new_v4();
+
+        let message = match &target {
+            ExecutionTarget::Any => {
+                let mut msg =
+                    ClientMessage::create_for_encode(EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY);
+                msg.add_frame(Self::string_frame(&self.name));
+                msg.add_frame(Self::uuid_frame(task_uuid));
+                msg.add_frame(Self::data_frame(runnable_task.data()));
+                msg
+            }
+            ExecutionTarget::Member(member_uuid) => {
+                let mut msg =
+                    ClientMessage::create_for_encode(EXECUTOR_SUBMIT_TO_MEMBER, PARTITION_ID_ANY);
+                msg.add_frame(Self::string_frame(&self.name));
+                msg.add_frame(Self::uuid_frame(task_uuid));
+                msg.add_frame(Self::data_frame(runnable_task.data()));
+                msg.add_frame(Self::uuid_frame(*member_uuid));
+                msg
+            }
+            ExecutionTarget::KeyOwner(key_data) => {
+                let partition_id = Self::compute_partition_id(key_data);
+                let mut msg =
+                    ClientMessage::create_for_encode(EXECUTOR_SUBMIT_TO_PARTITION, partition_id);
+                msg.add_frame(Self::string_frame(&self.name));
+                msg.add_frame(Self::uuid_frame(task_uuid));
+                msg.add_frame(Self::data_frame(runnable_task.data()));
+                msg
+            }
+        };
+
+        self.invoke(message).await?;
+        Ok(())
     }
 
     /// Submits a callable task with a callback for result handling.

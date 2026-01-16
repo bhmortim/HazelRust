@@ -14,8 +14,10 @@ pub use service::ExecutorFuture;
 
 pub use self::{
     Callable, ExecutionCallback, ExecutionTarget, ExecutorService,
-    FnExecutionCallback, Runnable, RunnableTask, CallableTask,
+    FnExecutionCallback, MemberSelector, Runnable, RunnableTask, CallableTask,
 };
+
+use crate::listener::Member;
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -169,6 +171,24 @@ where
 
     fn on_failure(&self, error: HazelcastError) {
         (self.on_error)(error);
+    }
+}
+
+/// Trait for selecting which cluster members should execute a task.
+///
+/// Implementations filter the set of cluster members that will receive
+/// a submitted or executed task.
+pub trait MemberSelector: Send + Sync {
+    /// Returns `true` if the given member should be selected for task execution.
+    fn select(&self, member: &Member) -> bool;
+}
+
+impl<F> MemberSelector for F
+where
+    F: Fn(&Member) -> bool + Send + Sync,
+{
+    fn select(&self, member: &Member) -> bool {
+        self(member)
     }
 }
 
