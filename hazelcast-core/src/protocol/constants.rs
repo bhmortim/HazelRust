@@ -149,6 +149,27 @@ pub const LIST_REMOVE_AT: i32 = 0x050900;
 /// List clear request.
 pub const LIST_CLEAR: i32 = 0x050A00;
 
+/// List contains all request.
+pub const LIST_CONTAINS_ALL: i32 = 0x050300;
+
+/// List add all request.
+pub const LIST_ADD_ALL: i32 = 0x050400;
+
+/// List add all at index request.
+pub const LIST_ADD_ALL_AT: i32 = 0x050B00;
+
+/// List remove all request.
+pub const LIST_REMOVE_ALL: i32 = 0x050C00;
+
+/// List retain all request.
+pub const LIST_RETAIN_ALL: i32 = 0x050D00;
+
+/// List index of request.
+pub const LIST_INDEX_OF: i32 = 0x050E00;
+
+/// List last index of request.
+pub const LIST_LAST_INDEX_OF: i32 = 0x050F00;
+
 /// MultiMap put request.
 pub const MULTI_MAP_PUT: i32 = 0x020100;
 

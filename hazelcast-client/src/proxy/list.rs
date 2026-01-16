@@ -163,6 +163,105 @@ where
         Ok(self.size().await? == 0)
     }
 
+    /// Appends all elements in the specified collection to the end of this list.
+    ///
+    /// Returns `true` if this list changed as a result of the call.
+    pub async fn add_all(&self, items: Vec<T>) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(LIST_ADD_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, &items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Inserts all elements in the specified collection at the specified position.
+    ///
+    /// Returns `true` if this list changed as a result of the call.
+    pub async fn add_all_at(&self, index: usize, items: Vec<T>) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(LIST_ADD_ALL_AT);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::int_frame(index as i32));
+        self.add_data_list_frames(&mut message, &items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Removes from this list all of its elements that are contained in the specified collection.
+    ///
+    /// Returns `true` if this list changed as a result of the call.
+    pub async fn remove_all(&self, items: &[T]) -> Result<bool> {
+        self.check_permission(PermissionAction::Remove)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(LIST_REMOVE_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Retains only the elements in this list that are contained in the specified collection.
+    ///
+    /// Returns `true` if this list changed as a result of the call.
+    pub async fn retain_all(&self, items: &[T]) -> Result<bool> {
+        self.check_permission(PermissionAction::Remove)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(LIST_RETAIN_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Returns `true` if this list contains all of the elements in the specified collection.
+    pub async fn contains_all(&self, items: &[T]) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(LIST_CONTAINS_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Returns the index of the first occurrence of the specified element in this list.
+    ///
+    /// Returns `None` if this list does not contain the element.
+    pub async fn index_of(&self, item: &T) -> Result<Option<usize>> {
+        self.check_permission(PermissionAction::Read)?;
+        let item_data = Self::serialize_value(item)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(LIST_INDEX_OF);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&item_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_index_response(&response)
+    }
+
+    /// Returns the index of the last occurrence of the specified element in this list.
+    ///
+    /// Returns `None` if this list does not contain the element.
+    pub async fn last_index_of(&self, item: &T) -> Result<Option<usize>> {
+        self.check_permission(PermissionAction::Read)?;
+        let item_data = Self::serialize_value(item)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(LIST_LAST_INDEX_OF);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&item_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_index_response(&response)
+    }
+
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
         value.serialize(&mut output)?;
@@ -181,6 +280,20 @@ where
         let mut buf = BytesMut::with_capacity(4);
         buf.extend_from_slice(&value.to_le_bytes());
         Frame::with_content(buf)
+    }
+
+    fn add_data_list_frames(&self, message: &mut ClientMessage, items: &[T]) -> Result<()> {
+        let mut list_buf = BytesMut::new();
+        list_buf.extend_from_slice(&(items.len() as i32).to_le_bytes());
+
+        for item in items {
+            let item_data = Self::serialize_value(item)?;
+            list_buf.extend_from_slice(&(item_data.len() as i32).to_le_bytes());
+            list_buf.extend_from_slice(&item_data);
+        }
+
+        message.add_frame(Frame::with_content(list_buf));
+        Ok(())
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
@@ -255,6 +368,15 @@ where
             ]))
         } else {
             Ok(0)
+        }
+    }
+
+    fn decode_index_response(response: &ClientMessage) -> Result<Option<usize>> {
+        let index = Self::decode_int_response(response)?;
+        if index < 0 {
+            Ok(None)
+        } else {
+            Ok(Some(index as usize))
         }
     }
 }
