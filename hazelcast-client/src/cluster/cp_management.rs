@@ -5,6 +5,13 @@
 
 use std::sync::Arc;
 
+use bytes::BytesMut;
+use hazelcast_core::protocol::constants::{
+    CP_SUBSYSTEM_FORCE_DESTROY_GROUP, CP_SUBSYSTEM_GET_CP_MEMBERS, CP_SUBSYSTEM_GET_GROUP,
+    CP_SUBSYSTEM_GET_GROUP_IDS, CP_SUBSYSTEM_PROMOTE_TO_CP_MEMBER, CP_SUBSYSTEM_REMOVE_CP_MEMBER,
+    PARTITION_ID_ANY,
+};
+use hazelcast_core::protocol::{ClientMessage, Frame};
 use hazelcast_core::Result;
 use uuid::Uuid;
 
@@ -164,12 +171,7 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn get_cp_group_ids(&self) -> Result<Vec<CPGroupId>> {
-        use hazelcast_core::protocol::constants::PARTITION_ID_ANY;
-        use hazelcast_core::protocol::ClientMessage;
-
-        const CP_GROUP_GET_IDS: i32 = 0x1E0100;
-
-        let mut request = ClientMessage::new(CP_GROUP_GET_IDS);
+        let mut request = ClientMessage::new(CP_SUBSYSTEM_GET_GROUP_IDS);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
@@ -183,10 +185,19 @@ impl CPSubsystemManagementService {
         let mut result = Vec::new();
         let frames = response.frames();
 
+        if frames.len() < 2 {
+            tracing::debug!(count = 0, "retrieved CP group IDs (empty response)");
+            return Ok(result);
+        }
+
         let mut idx = 1;
-        while idx + 2 < frames.len() {
+        while idx < frames.len() {
             let name_frame = &frames[idx];
-            if name_frame.is_end_frame() {
+            if name_frame.is_end_frame() || name_frame.content().is_empty() {
+                break;
+            }
+
+            if idx + 2 >= frames.len() {
                 break;
             }
 
@@ -195,17 +206,8 @@ impl CPSubsystemManagementService {
             let seed_frame = &frames[idx + 1];
             let id_frame = &frames[idx + 2];
 
-            let seed = if seed_frame.content().len() >= 8 {
-                i64::from_le_bytes(seed_frame.content()[..8].try_into().unwrap_or([0; 8]))
-            } else {
-                0
-            };
-
-            let id = if id_frame.content().len() >= 8 {
-                i64::from_le_bytes(id_frame.content()[..8].try_into().unwrap_or([0; 8]))
-            } else {
-                0
-            };
+            let seed = Self::parse_i64_from_frame(seed_frame);
+            let id = Self::parse_i64_from_frame(id_frame);
 
             result.push(CPGroupId::new(name, seed, id));
             idx += 3;
@@ -232,13 +234,7 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn get_cp_group(&self, name: &str) -> Result<Option<CPGroup>> {
-        use bytes::BytesMut;
-        use hazelcast_core::protocol::constants::PARTITION_ID_ANY;
-        use hazelcast_core::protocol::{ClientMessage, Frame};
-
-        const CP_GROUP_GET: i32 = 0x1E0200;
-
-        let mut request = ClientMessage::new(CP_GROUP_GET);
+        let mut request = ClientMessage::new(CP_SUBSYSTEM_GET_GROUP);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let name_bytes = BytesMut::from(name.as_bytes());
@@ -253,14 +249,81 @@ impl CPSubsystemManagementService {
         let response = self.connection_manager.receive_from(*address).await?;
 
         let frames = response.frames();
+
+        // Check for null/empty response indicating group doesn't exist
         if frames.len() < 2 {
             return Ok(None);
         }
 
-        let group_id = CPGroupId::new(name, 0, 0);
-        let group = CPGroup::new(group_id, CPGroupStatus::Active, Vec::new());
+        // Check if first data frame is a null frame
+        if frames.get(1).map_or(true, |f| f.is_null_frame()) {
+            return Ok(None);
+        }
 
-        tracing::debug!(name = %name, "retrieved CP group");
+        // Parse group id components
+        let mut idx = 1;
+
+        // Parse group name
+        let group_name = if idx < frames.len() && !frames[idx].is_end_frame() {
+            let n = String::from_utf8_lossy(frames[idx].content()).to_string();
+            idx += 1;
+            n
+        } else {
+            name.to_string()
+        };
+
+        // Parse seed
+        let seed = if idx < frames.len() && !frames[idx].is_end_frame() {
+            let s = Self::parse_i64_from_frame(&frames[idx]);
+            idx += 1;
+            s
+        } else {
+            0
+        };
+
+        // Parse id
+        let group_id_value = if idx < frames.len() && !frames[idx].is_end_frame() {
+            let i = Self::parse_i64_from_frame(&frames[idx]);
+            idx += 1;
+            i
+        } else {
+            0
+        };
+
+        let group_id = CPGroupId::new(group_name, seed, group_id_value);
+
+        // Parse status (integer: 0=Active, 1=Destroying, 2=Destroyed)
+        let status = if idx < frames.len() && !frames[idx].is_end_frame() {
+            let status_value = Self::parse_i32_from_frame(&frames[idx]);
+            idx += 1;
+            Self::status_from_int(status_value)
+        } else {
+            CPGroupStatus::Active
+        };
+
+        // Parse members list
+        let mut members = Vec::new();
+        while idx + 1 < frames.len() {
+            let uuid_frame = &frames[idx];
+            if uuid_frame.is_end_frame() {
+                break;
+            }
+
+            let address_frame = &frames[idx + 1];
+            if address_frame.is_end_frame() {
+                break;
+            }
+
+            let uuid = Self::parse_uuid_from_frame(uuid_frame);
+            let socket_addr = Self::parse_address_from_frame(address_frame);
+
+            members.push(CPMember::new(uuid, socket_addr));
+            idx += 2;
+        }
+
+        let group = CPGroup::new(group_id, status, members);
+
+        tracing::debug!(name = %name, status = ?status, members = members.len(), "retrieved CP group");
         Ok(Some(group))
     }
 
@@ -282,13 +345,7 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn force_destroy_cp_group(&self, name: &str) -> Result<()> {
-        use bytes::BytesMut;
-        use hazelcast_core::protocol::constants::PARTITION_ID_ANY;
-        use hazelcast_core::protocol::{ClientMessage, Frame};
-
-        const CP_GROUP_DESTROY: i32 = 0x1E0300;
-
-        let mut request = ClientMessage::new(CP_GROUP_DESTROY);
+        let mut request = ClientMessage::new(CP_SUBSYSTEM_FORCE_DESTROY_GROUP);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let name_bytes = BytesMut::from(name.as_bytes());
@@ -315,12 +372,7 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn get_cp_members(&self) -> Result<Vec<CPMember>> {
-        use hazelcast_core::protocol::constants::PARTITION_ID_ANY;
-        use hazelcast_core::protocol::ClientMessage;
-
-        const CP_MEMBER_GET_ALL: i32 = 0x1E0400;
-
-        let mut request = ClientMessage::new(CP_MEMBER_GET_ALL);
+        let mut request = ClientMessage::new(CP_SUBSYSTEM_GET_CP_MEMBERS);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
@@ -334,26 +386,29 @@ impl CPSubsystemManagementService {
         let mut result = Vec::new();
         let frames = response.frames();
 
+        if frames.len() < 2 {
+            tracing::debug!(count = 0, "retrieved CP members (empty response)");
+            return Ok(result);
+        }
+
         let mut idx = 1;
-        while idx + 1 < frames.len() {
+        while idx < frames.len() {
             let uuid_frame = &frames[idx];
-            if uuid_frame.is_end_frame() {
+            if uuid_frame.is_end_frame() || uuid_frame.content().is_empty() {
+                break;
+            }
+
+            if idx + 1 >= frames.len() {
                 break;
             }
 
             let address_frame = &frames[idx + 1];
+            if address_frame.is_end_frame() {
+                break;
+            }
 
-            let uuid = if uuid_frame.content().len() >= 16 {
-                let bytes: [u8; 16] = uuid_frame.content()[..16].try_into().unwrap_or([0; 16]);
-                Uuid::from_bytes(bytes)
-            } else {
-                Uuid::nil()
-            };
-
-            let addr_str = String::from_utf8_lossy(address_frame.content());
-            let socket_addr = addr_str
-                .parse()
-                .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 5701)));
+            let uuid = Self::parse_uuid_from_frame(uuid_frame);
+            let socket_addr = Self::parse_address_from_frame(address_frame);
 
             result.push(CPMember::new(uuid, socket_addr));
             idx += 2;
@@ -376,12 +431,7 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn promote_to_cp_member(&self) -> Result<()> {
-        use hazelcast_core::protocol::constants::PARTITION_ID_ANY;
-        use hazelcast_core::protocol::ClientMessage;
-
-        const CP_MEMBER_PROMOTE: i32 = 0x1E0500;
-
-        let mut request = ClientMessage::new(CP_MEMBER_PROMOTE);
+        let mut request = ClientMessage::new(CP_SUBSYSTEM_PROMOTE_TO_CP_MEMBER);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
@@ -413,13 +463,7 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn remove_cp_member(&self, uuid: Uuid) -> Result<()> {
-        use bytes::BytesMut;
-        use hazelcast_core::protocol::constants::PARTITION_ID_ANY;
-        use hazelcast_core::protocol::{ClientMessage, Frame};
-
-        const CP_MEMBER_REMOVE: i32 = 0x1E0600;
-
-        let mut request = ClientMessage::new(CP_MEMBER_REMOVE);
+        let mut request = ClientMessage::new(CP_SUBSYSTEM_REMOVE_CP_MEMBER);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let uuid_bytes = BytesMut::from(uuid.as_bytes().as_slice());
@@ -435,6 +479,46 @@ impl CPSubsystemManagementService {
 
         tracing::warn!(uuid = %uuid, "removed CP member");
         Ok(())
+    }
+
+    fn parse_i64_from_frame(frame: &Frame) -> i64 {
+        if frame.content().len() >= 8 {
+            i64::from_le_bytes(frame.content()[..8].try_into().unwrap_or([0; 8]))
+        } else {
+            0
+        }
+    }
+
+    fn parse_i32_from_frame(frame: &Frame) -> i32 {
+        if frame.content().len() >= 4 {
+            i32::from_le_bytes(frame.content()[..4].try_into().unwrap_or([0; 4]))
+        } else {
+            0
+        }
+    }
+
+    fn parse_uuid_from_frame(frame: &Frame) -> Uuid {
+        if frame.content().len() >= 16 {
+            let bytes: [u8; 16] = frame.content()[..16].try_into().unwrap_or([0; 16]);
+            Uuid::from_bytes(bytes)
+        } else {
+            Uuid::nil()
+        }
+    }
+
+    fn parse_address_from_frame(frame: &Frame) -> std::net::SocketAddr {
+        let addr_str = String::from_utf8_lossy(frame.content());
+        addr_str
+            .parse()
+            .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 5701)))
+    }
+
+    fn status_from_int(value: i32) -> CPGroupStatus {
+        match value {
+            1 => CPGroupStatus::Destroying,
+            2 => CPGroupStatus::Destroyed,
+            _ => CPGroupStatus::Active,
+        }
     }
 }
 
@@ -494,5 +578,122 @@ mod tests {
         assert_send_sync::<CPGroupId>();
         assert_send_sync::<CPMember>();
         assert_send_sync::<CPGroup>();
+    }
+
+    #[test]
+    fn test_cp_group_status_values() {
+        let active = CPGroupStatus::Active;
+        let destroying = CPGroupStatus::Destroying;
+        let destroyed = CPGroupStatus::Destroyed;
+
+        assert_eq!(active, CPGroupStatus::Active);
+        assert_eq!(destroying, CPGroupStatus::Destroying);
+        assert_eq!(destroyed, CPGroupStatus::Destroyed);
+    }
+
+    #[test]
+    fn test_cp_group_id_clone() {
+        let id1 = CPGroupId::new("test", 100, 200);
+        let id2 = id1.clone();
+
+        assert_eq!(id1.name(), id2.name());
+        assert_eq!(id1.seed(), id2.seed());
+        assert_eq!(id1.id(), id2.id());
+    }
+
+    #[test]
+    fn test_cp_group_id_hash() {
+        use std::collections::HashSet;
+
+        let id1 = CPGroupId::new("group1", 1, 1);
+        let id2 = CPGroupId::new("group1", 1, 1);
+        let id3 = CPGroupId::new("group2", 1, 1);
+
+        let mut set = HashSet::new();
+        set.insert(id1.clone());
+
+        set.insert(id2);
+        assert_eq!(set.len(), 1);
+
+        set.insert(id3);
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn test_cp_member_equality() {
+        let uuid = Uuid::new_v4();
+        let addr: std::net::SocketAddr = "192.168.1.1:5701".parse().unwrap();
+
+        let m1 = CPMember::new(uuid, addr);
+        let m2 = CPMember::new(uuid, addr);
+        let m3 = CPMember::new(Uuid::new_v4(), addr);
+
+        assert_eq!(m1, m2);
+        assert_ne!(m1, m3);
+    }
+
+    #[test]
+    fn test_cp_group_with_multiple_members() {
+        let id = CPGroupId::new("raft-group", 42, 1);
+        let members = vec![
+            CPMember::new(Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
+            CPMember::new(Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap()),
+            CPMember::new(Uuid::new_v4(), "127.0.0.1:5703".parse().unwrap()),
+        ];
+
+        let group = CPGroup::new(id, CPGroupStatus::Active, members);
+
+        assert_eq!(group.members().len(), 3);
+        assert_eq!(group.status(), CPGroupStatus::Active);
+        assert_eq!(group.id().name(), "raft-group");
+    }
+
+    #[test]
+    fn test_cp_group_destroying_status() {
+        let id = CPGroupId::new("dying-group", 1, 1);
+        let group = CPGroup::new(id, CPGroupStatus::Destroying, Vec::new());
+
+        assert_eq!(group.status(), CPGroupStatus::Destroying);
+        assert!(group.members().is_empty());
+    }
+
+    #[test]
+    fn test_cp_group_destroyed_status() {
+        let id = CPGroupId::new("dead-group", 1, 1);
+        let group = CPGroup::new(id, CPGroupStatus::Destroyed, Vec::new());
+
+        assert_eq!(group.status(), CPGroupStatus::Destroyed);
+    }
+
+    #[test]
+    fn test_cp_group_id_default_metadata_group() {
+        let metadata_id = CPGroupId::new("METADATA", 0, 0);
+        assert_eq!(metadata_id.name(), "METADATA");
+    }
+
+    #[test]
+    fn test_cp_member_ipv6_address() {
+        let uuid = Uuid::new_v4();
+        let addr: std::net::SocketAddr = "[::1]:5701".parse().unwrap();
+        let member = CPMember::new(uuid, addr);
+
+        assert_eq!(member.address().to_string(), "[::1]:5701");
+    }
+
+    #[test]
+    fn test_cp_group_id_debug_format() {
+        let id = CPGroupId::new("test-group", 123, 456);
+        let debug_str = format!("{:?}", id);
+
+        assert!(debug_str.contains("test-group"));
+        assert!(debug_str.contains("123"));
+        assert!(debug_str.contains("456"));
+    }
+
+    #[test]
+    fn test_cp_group_status_is_copy() {
+        let status1 = CPGroupStatus::Active;
+        let status2 = status1;
+        assert_eq!(status1, status2);
     }
 }

@@ -918,3 +918,23 @@ pub const MAP_FETCH_VALUES: i32 = 0x014500;
 
 /// Client statistics request.
 pub const CLIENT_STATISTICS: i32 = 0x000C00;
+
+// CP Subsystem Management operations
+
+/// CP Subsystem get group IDs request.
+pub const CP_SUBSYSTEM_GET_GROUP_IDS: i32 = 0x1E0100;
+
+/// CP Subsystem get group request.
+pub const CP_SUBSYSTEM_GET_GROUP: i32 = 0x1E0200;
+
+/// CP Subsystem force destroy group request.
+pub const CP_SUBSYSTEM_FORCE_DESTROY_GROUP: i32 = 0x1E0300;
+
+/// CP Subsystem get CP members request.
+pub const CP_SUBSYSTEM_GET_CP_MEMBERS: i32 = 0x1E0400;
+
+/// CP Subsystem promote to CP member request.
+pub const CP_SUBSYSTEM_PROMOTE_TO_CP_MEMBER: i32 = 0x1E0500;
+
+/// CP Subsystem remove CP member request.
+pub const CP_SUBSYSTEM_REMOVE_CP_MEMBER: i32 = 0x1E0600;
