@@ -2,6 +2,7 @@
 
 mod data_input;
 mod data_output;
+mod identified;
 pub mod compact;
 pub mod portable;
 mod traits;
@@ -16,6 +17,10 @@ pub use compact::{
 };
 pub use data_input::{DataInput, ObjectDataInput};
 pub use data_output::{DataOutput, ObjectDataOutput};
+pub use identified::{
+    DataSerializableFactory, FactoryRegistry, IdentifiedDataSerializable,
+    IDENTIFIED_DATA_SERIALIZABLE_TYPE_ID,
+};
 pub use portable::{
     ClassDefinition, DefaultPortableReader, DefaultPortableWriter, FieldDefinition, FieldType,
     Portable, PortableFactory, PortableReader, PortableSerializer, PortableWriter,
