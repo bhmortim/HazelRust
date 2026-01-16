@@ -3,6 +3,7 @@
 mod data_input;
 mod data_output;
 mod identified;
+mod json;
 pub mod compact;
 pub mod portable;
 mod traits;
@@ -26,6 +27,7 @@ pub use portable::{
     Portable, PortableFactory, PortableReader, PortableSerializer, PortableWriter,
     PORTABLE_TYPE_ID,
 };
+pub use json::{HazelcastJsonValue, JSON_TYPE_ID};
 pub use traits::{Deserializable, Serializable};
 
 #[cfg(feature = "serde")]
