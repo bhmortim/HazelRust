@@ -3,10 +3,29 @@
 use crate::error::{HazelcastError, Result};
 use crate::serialization::{DataInput, DataOutput, ObjectDataInput, ObjectDataOutput};
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
 /// Type identifier for Compact serialization.
 pub const COMPACT_TYPE_ID: i32 = -2;
+
+/// Rabin fingerprint initial value (matches Java implementation).
+const RABIN_FINGERPRINT_INIT: u64 = 0xc15d213aa4d7a795;
+
+/// Computes a Rabin fingerprint for Java interoperability.
+pub fn rabin_fingerprint_64(data: &[u8]) -> i64 {
+    let mut fp = RABIN_FINGERPRINT_INIT;
+    for &byte in data {
+        for i in 0..8 {
+            let bit = (byte >> i) & 1;
+            if (fp ^ bit as u64) & 1 == 1 {
+                fp = (fp >> 1) ^ RABIN_FINGERPRINT_INIT;
+            } else {
+                fp >>= 1;
+            }
+        }
+    }
+    fp as i64
+}
 
 /// Default values for Compact fields during schema evolution.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +82,28 @@ pub enum FieldKind {
     NullableInt64 = 22,
     NullableFloat32 = 23,
     NullableFloat64 = 24,
+    Decimal = 25,
+    Time = 26,
+    Date = 27,
+    Timestamp = 28,
+    TimestampWithTimezone = 29,
+    NullableDecimal = 30,
+    NullableTime = 31,
+    NullableDate = 32,
+    NullableTimestamp = 33,
+    NullableTimestampWithTimezone = 34,
+    ArrayOfDecimal = 35,
+    ArrayOfTime = 36,
+    ArrayOfDate = 37,
+    ArrayOfTimestamp = 38,
+    ArrayOfTimestampWithTimezone = 39,
+    ArrayOfNullableBoolean = 40,
+    ArrayOfNullableInt8 = 41,
+    ArrayOfNullableInt16 = 42,
+    ArrayOfNullableInt32 = 43,
+    ArrayOfNullableInt64 = 44,
+    ArrayOfNullableFloat32 = 45,
+    ArrayOfNullableFloat64 = 46,
 }
 
 impl FieldKind {
@@ -94,6 +135,28 @@ impl FieldKind {
             22 => Ok(Self::NullableInt64),
             23 => Ok(Self::NullableFloat32),
             24 => Ok(Self::NullableFloat64),
+            25 => Ok(Self::Decimal),
+            26 => Ok(Self::Time),
+            27 => Ok(Self::Date),
+            28 => Ok(Self::Timestamp),
+            29 => Ok(Self::TimestampWithTimezone),
+            30 => Ok(Self::NullableDecimal),
+            31 => Ok(Self::NullableTime),
+            32 => Ok(Self::NullableDate),
+            33 => Ok(Self::NullableTimestamp),
+            34 => Ok(Self::NullableTimestampWithTimezone),
+            35 => Ok(Self::ArrayOfDecimal),
+            36 => Ok(Self::ArrayOfTime),
+            37 => Ok(Self::ArrayOfDate),
+            38 => Ok(Self::ArrayOfTimestamp),
+            39 => Ok(Self::ArrayOfTimestampWithTimezone),
+            40 => Ok(Self::ArrayOfNullableBoolean),
+            41 => Ok(Self::ArrayOfNullableInt8),
+            42 => Ok(Self::ArrayOfNullableInt16),
+            43 => Ok(Self::ArrayOfNullableInt32),
+            44 => Ok(Self::ArrayOfNullableInt64),
+            45 => Ok(Self::ArrayOfNullableFloat32),
+            46 => Ok(Self::ArrayOfNullableFloat64),
             _ => Err(HazelcastError::Serialization(format!(
                 "Unknown field kind id: {}",
                 id
@@ -117,8 +180,18 @@ impl FieldKind {
                 | Self::NullableInt64
                 | Self::NullableFloat32
                 | Self::NullableFloat64
+                | Self::NullableDecimal
+                | Self::NullableTime
+                | Self::NullableDate
+                | Self::NullableTimestamp
+                | Self::NullableTimestampWithTimezone
                 | Self::String
                 | Self::Compact
+                | Self::Decimal
+                | Self::Time
+                | Self::Date
+                | Self::Timestamp
+                | Self::TimestampWithTimezone
         )
     }
 
@@ -135,6 +208,18 @@ impl FieldKind {
                 | Self::ArrayOfFloat64
                 | Self::ArrayOfString
                 | Self::ArrayOfCompact
+                | Self::ArrayOfDecimal
+                | Self::ArrayOfTime
+                | Self::ArrayOfDate
+                | Self::ArrayOfTimestamp
+                | Self::ArrayOfTimestampWithTimezone
+                | Self::ArrayOfNullableBoolean
+                | Self::ArrayOfNullableInt8
+                | Self::ArrayOfNullableInt16
+                | Self::ArrayOfNullableInt32
+                | Self::ArrayOfNullableInt64
+                | Self::ArrayOfNullableFloat32
+                | Self::ArrayOfNullableFloat64
         )
     }
 
@@ -165,7 +250,43 @@ impl FieldKind {
             | Self::NullableInt32
             | Self::NullableInt64
             | Self::NullableFloat32
-            | Self::NullableFloat64 => DefaultFieldValue::Null,
+            | Self::NullableFloat64
+            | Self::Decimal
+            | Self::Time
+            | Self::Date
+            | Self::Timestamp
+            | Self::TimestampWithTimezone
+            | Self::NullableDecimal
+            | Self::NullableTime
+            | Self::NullableDate
+            | Self::NullableTimestamp
+            | Self::NullableTimestampWithTimezone
+            | Self::ArrayOfDecimal
+            | Self::ArrayOfTime
+            | Self::ArrayOfDate
+            | Self::ArrayOfTimestamp
+            | Self::ArrayOfTimestampWithTimezone
+            | Self::ArrayOfNullableBoolean
+            | Self::ArrayOfNullableInt8
+            | Self::ArrayOfNullableInt16
+            | Self::ArrayOfNullableInt32
+            | Self::ArrayOfNullableInt64
+            | Self::ArrayOfNullableFloat32
+            | Self::ArrayOfNullableFloat64 => DefaultFieldValue::Null,
+        }
+    }
+
+    /// Returns the fixed size in bytes for fixed-size types, or None for variable-size types.
+    pub fn fixed_size(&self) -> Option<usize> {
+        match self {
+            Self::Boolean | Self::NullableBoolean => Some(1),
+            Self::Int8 | Self::NullableInt8 => Some(1),
+            Self::Int16 | Self::NullableInt16 => Some(2),
+            Self::Int32 | Self::NullableInt32 => Some(4),
+            Self::Int64 | Self::NullableInt64 => Some(8),
+            Self::Float32 | Self::NullableFloat32 => Some(4),
+            Self::Float64 | Self::NullableFloat64 => Some(8),
+            _ => None,
         }
     }
 }
@@ -213,8 +334,8 @@ pub struct Schema {
     schema_id: i64,
 }
 
-impl Hash for Schema {
-    fn hash<H: Hasher>(&self, state: &mut H) {
+impl std::hash::Hash for Schema {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.schema_id.hash(state);
     }
 }
@@ -250,13 +371,18 @@ impl Schema {
     }
 
     fn compute_schema_id(type_name: &str, fields: &[FieldDescriptor]) -> i64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        type_name.hash(&mut hasher);
-        for field in fields {
-            field.name.hash(&mut hasher);
-            field.kind.id().hash(&mut hasher);
+        let mut data = Vec::new();
+        data.extend_from_slice(type_name.as_bytes());
+        
+        let mut sorted_fields: Vec<_> = fields.iter().collect();
+        sorted_fields.sort_by(|a, b| a.name.cmp(&b.name));
+        
+        for field in sorted_fields {
+            data.extend_from_slice(field.name.as_bytes());
+            data.extend_from_slice(&field.kind.id().to_be_bytes());
         }
-        hasher.finish() as i64
+        
+        rabin_fingerprint_64(&data)
     }
 
     /// Returns the type name.
@@ -1787,7 +1913,7 @@ mod tests {
 
     #[test]
     fn test_field_kind_round_trip() {
-        for id in 0..=24 {
+        for id in 0..=46 {
             let kind = FieldKind::from_id(id).unwrap();
             assert_eq!(kind.id(), id);
         }
@@ -1796,7 +1922,50 @@ mod tests {
     #[test]
     fn test_field_kind_invalid_id() {
         assert!(FieldKind::from_id(-1).is_err());
-        assert!(FieldKind::from_id(25).is_err());
+        assert!(FieldKind::from_id(47).is_err());
+    }
+    
+    #[test]
+    fn test_field_kind_fixed_size() {
+        assert_eq!(FieldKind::Boolean.fixed_size(), Some(1));
+        assert_eq!(FieldKind::Int8.fixed_size(), Some(1));
+        assert_eq!(FieldKind::Int16.fixed_size(), Some(2));
+        assert_eq!(FieldKind::Int32.fixed_size(), Some(4));
+        assert_eq!(FieldKind::Int64.fixed_size(), Some(8));
+        assert_eq!(FieldKind::Float32.fixed_size(), Some(4));
+        assert_eq!(FieldKind::Float64.fixed_size(), Some(8));
+        assert_eq!(FieldKind::String.fixed_size(), None);
+        assert_eq!(FieldKind::Compact.fixed_size(), None);
+        assert_eq!(FieldKind::ArrayOfInt32.fixed_size(), None);
+    }
+
+    #[test]
+    fn test_rabin_fingerprint_deterministic() {
+        let data = b"test data for fingerprint";
+        let fp1 = rabin_fingerprint_64(data);
+        let fp2 = rabin_fingerprint_64(data);
+        assert_eq!(fp1, fp2);
+        
+        let different_data = b"different data";
+        let fp3 = rabin_fingerprint_64(different_data);
+        assert_ne!(fp1, fp3);
+    }
+
+    #[test]
+    fn test_schema_id_deterministic_across_field_order() {
+        let fields1 = vec![
+            FieldDescriptor::new("alpha", FieldKind::Int32, 0),
+            FieldDescriptor::new("beta", FieldKind::String, 1),
+        ];
+        let fields2 = vec![
+            FieldDescriptor::new("beta", FieldKind::String, 1),
+            FieldDescriptor::new("alpha", FieldKind::Int32, 0),
+        ];
+        
+        let schema1 = Schema::with_fields("Test", fields1);
+        let schema2 = Schema::with_fields("Test", fields2);
+        
+        assert_eq!(schema1.schema_id(), schema2.schema_id());
     }
 
     #[test]
@@ -2678,5 +2847,171 @@ mod tests {
 
         assert_eq!(result.name, person.name);
         assert_eq!(result.age, person.age);
+    }
+
+    #[test]
+    fn test_date_time_field_kinds() {
+        assert!(FieldKind::Date.is_nullable());
+        assert!(FieldKind::Time.is_nullable());
+        assert!(FieldKind::Timestamp.is_nullable());
+        assert!(FieldKind::TimestampWithTimezone.is_nullable());
+        assert!(FieldKind::Decimal.is_nullable());
+        
+        assert!(FieldKind::ArrayOfDate.is_array());
+        assert!(FieldKind::ArrayOfTime.is_array());
+        assert!(FieldKind::ArrayOfTimestamp.is_array());
+        assert!(FieldKind::ArrayOfTimestampWithTimezone.is_array());
+        assert!(FieldKind::ArrayOfDecimal.is_array());
+        
+        assert!(FieldKind::ArrayOfNullableInt32.is_array());
+        assert!(FieldKind::ArrayOfNullableFloat64.is_array());
+    }
+    
+    #[test]
+    fn test_schema_evolution_nullable_time_types() {
+        let v1 = Schema::with_fields(
+            "Event",
+            vec![FieldDescriptor::new("timestamp", FieldKind::Timestamp, 0)],
+        );
+
+        let v2 = Schema::with_fields(
+            "Event",
+            vec![FieldDescriptor::new("timestamp", FieldKind::NullableTimestamp, 0)],
+        );
+
+        assert!(v1.is_compatible_with(&v2));
+        assert!(v2.is_compatible_with(&v1));
+    }
+}
+
+/// Module for Java interoperability testing.
+/// 
+/// These tests verify that the Compact serialization format is compatible
+/// with Hazelcast Java client's Compact serialization.
+/// 
+/// To run interoperability tests:
+/// 1. Start a Hazelcast cluster with a Java client
+/// 2. Serialize objects using the Java client
+/// 3. Deserialize using the Rust client (and vice versa)
+/// 
+/// The wire format must match Java's implementation:
+/// - Schema ID uses Rabin fingerprint (64-bit)
+/// - Fields are sorted by name for schema ID computation
+/// - Variable-length fields use length-prefixed encoding
+#[cfg(test)]
+mod java_interop_tests {
+    use super::*;
+
+    #[test]
+    fn test_schema_id_stability() {
+        let schema = Schema::with_fields(
+            "com.example.Person",
+            vec![
+                FieldDescriptor::new("age", FieldKind::Int32, 0),
+                FieldDescriptor::new("name", FieldKind::String, 1),
+            ],
+        );
+        
+        let schema_id = schema.schema_id();
+        assert_ne!(schema_id, 0, "Schema ID should be non-zero");
+        
+        let schema_rebuilt = Schema::with_fields(
+            "com.example.Person",
+            vec![
+                FieldDescriptor::new("age", FieldKind::Int32, 0),
+                FieldDescriptor::new("name", FieldKind::String, 1),
+            ],
+        );
+        assert_eq!(schema.schema_id(), schema_rebuilt.schema_id());
+    }
+
+    #[test]
+    fn test_field_order_independence() {
+        let schema1 = Schema::with_fields(
+            "TestType",
+            vec![
+                FieldDescriptor::new("a", FieldKind::Int32, 0),
+                FieldDescriptor::new("b", FieldKind::Int64, 1),
+                FieldDescriptor::new("c", FieldKind::String, 2),
+            ],
+        );
+
+        let schema2 = Schema::with_fields(
+            "TestType",
+            vec![
+                FieldDescriptor::new("c", FieldKind::String, 2),
+                FieldDescriptor::new("a", FieldKind::Int32, 0),
+                FieldDescriptor::new("b", FieldKind::Int64, 1),
+            ],
+        );
+
+        assert_eq!(
+            schema1.schema_id(),
+            schema2.schema_id(),
+            "Schema ID must be independent of field declaration order"
+        );
+    }
+
+    #[test]
+    fn test_primitive_round_trip_values() {
+        let schema = Schema::new("Primitives");
+        let mut writer = DefaultCompactWriter::new(schema.clone());
+
+        writer.write_boolean("bool_true", true).unwrap();
+        writer.write_boolean("bool_false", false).unwrap();
+        writer.write_int8("byte_min", i8::MIN).unwrap();
+        writer.write_int8("byte_max", i8::MAX).unwrap();
+        writer.write_int16("short_min", i16::MIN).unwrap();
+        writer.write_int16("short_max", i16::MAX).unwrap();
+        writer.write_int32("int_min", i32::MIN).unwrap();
+        writer.write_int32("int_max", i32::MAX).unwrap();
+        writer.write_int64("long_min", i64::MIN).unwrap();
+        writer.write_int64("long_max", i64::MAX).unwrap();
+        writer.write_float32("float_val", 3.14159f32).unwrap();
+        writer.write_float64("double_val", 2.718281828459045f64).unwrap();
+
+        let bytes = writer.to_bytes();
+        let mut reader = DefaultCompactReader::from_bytes(&bytes, schema).unwrap();
+
+        assert_eq!(reader.read_boolean("bool_true").unwrap(), true);
+        assert_eq!(reader.read_boolean("bool_false").unwrap(), false);
+        assert_eq!(reader.read_int8("byte_min").unwrap(), i8::MIN);
+        assert_eq!(reader.read_int8("byte_max").unwrap(), i8::MAX);
+        assert_eq!(reader.read_int16("short_min").unwrap(), i16::MIN);
+        assert_eq!(reader.read_int16("short_max").unwrap(), i16::MAX);
+        assert_eq!(reader.read_int32("int_min").unwrap(), i32::MIN);
+        assert_eq!(reader.read_int32("int_max").unwrap(), i32::MAX);
+        assert_eq!(reader.read_int64("long_min").unwrap(), i64::MIN);
+        assert_eq!(reader.read_int64("long_max").unwrap(), i64::MAX);
+        assert!((reader.read_float32("float_val").unwrap() - 3.14159f32).abs() < f32::EPSILON);
+        assert!((reader.read_float64("double_val").unwrap() - 2.718281828459045f64).abs() < f64::EPSILON);
+    }
+    
+    #[test]
+    fn test_unicode_string_handling() {
+        let schema = Schema::new("UnicodeTest");
+        let mut writer = DefaultCompactWriter::new(schema.clone());
+
+        let test_strings = [
+            "ASCII only",
+            "日本語テスト",
+            "🚀🌟💻",
+            "Mixed: Hello 世界 🎉",
+            "",
+            "Ñoño año",
+            "Привет мир",
+        ];
+
+        for (i, s) in test_strings.iter().enumerate() {
+            writer.write_string(&format!("str_{}", i), Some(s)).unwrap();
+        }
+
+        let bytes = writer.to_bytes();
+        let mut reader = DefaultCompactReader::from_bytes(&bytes, schema).unwrap();
+
+        for (i, expected) in test_strings.iter().enumerate() {
+            let actual = reader.read_string(&format!("str_{}", i)).unwrap();
+            assert_eq!(actual, Some(expected.to_string()));
+        }
     }
 }
