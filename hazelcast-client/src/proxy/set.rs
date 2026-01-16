@@ -12,6 +12,7 @@ use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Seri
 
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
+use crate::listener::ListenerId;
 
 /// A distributed set proxy for performing set operations on a Hazelcast cluster.
 ///
@@ -189,6 +190,35 @@ where
         Self::decode_bool_response(&response)
     }
 
+    /// Registers an item listener to receive notifications when items are added or removed.
+    ///
+    /// Returns a `ListenerId` that can be used to remove the listener later.
+    pub async fn add_item_listener(&self, include_value: bool) -> Result<ListenerId> {
+        self.check_permission(PermissionAction::Read)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(SET_ADD_LISTENER);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::bool_frame(include_value));
+        message.add_frame(Self::bool_frame(false));
+
+        let response = self.invoke(message).await?;
+        Self::decode_uuid_response(&response).map(ListenerId::from_uuid)
+    }
+
+    /// Removes a previously registered item listener.
+    ///
+    /// Returns `true` if the listener was successfully removed.
+    pub async fn remove_item_listener(&self, listener_id: ListenerId) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(SET_REMOVE_LISTENER);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::uuid_frame(listener_id.as_uuid()));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
         value.serialize(&mut output)?;
@@ -201,6 +231,18 @@ where
 
     fn data_frame(data: &[u8]) -> Frame {
         Frame::with_content(BytesMut::from(data))
+    }
+
+    fn bool_frame(value: bool) -> Frame {
+        let mut buf = BytesMut::with_capacity(1);
+        buf.extend_from_slice(&[if value { 1u8 } else { 0u8 }]);
+        Frame::with_content(buf)
+    }
+
+    fn uuid_frame(uuid: uuid::Uuid) -> Frame {
+        let mut buf = BytesMut::with_capacity(16);
+        buf.extend_from_slice(uuid.as_bytes());
+        Frame::with_content(buf)
     }
 
     fn add_data_list_frames(&self, message: &mut ClientMessage, items: &[T]) -> Result<()> {
@@ -270,6 +312,27 @@ where
         } else {
             Ok(0)
         }
+    }
+
+    fn decode_uuid_response(response: &ClientMessage) -> Result<uuid::Uuid> {
+        let frames = response.frames();
+        if frames.len() < 2 {
+            return Err(HazelcastError::Serialization(
+                "missing uuid frame in response".to_string(),
+            ));
+        }
+
+        let uuid_frame = &frames[1];
+        if uuid_frame.content.len() < 16 {
+            return Err(HazelcastError::Serialization(
+                "invalid uuid frame length".to_string(),
+            ));
+        }
+
+        let bytes: [u8; 16] = uuid_frame.content[..16].try_into().map_err(|_| {
+            HazelcastError::Serialization("failed to convert uuid bytes".to_string())
+        })?;
+        Ok(uuid::Uuid::from_bytes(bytes))
     }
 }
 

@@ -134,6 +134,12 @@ pub const QUEUE_DRAIN_TO_MAX_SIZE: i32 = 0x030C00;
 /// Queue contains all request.
 pub const QUEUE_CONTAINS_ALL: i32 = 0x030D00;
 
+/// Queue add item listener request.
+pub const QUEUE_ADD_LISTENER: i32 = 0x030E00;
+
+/// Queue remove item listener request.
+pub const QUEUE_REMOVE_LISTENER: i32 = 0x030F00;
+
 /// Set add request.
 pub const SET_ADD: i32 = 0x060100;
 
@@ -160,6 +166,12 @@ pub const SET_REMOVE_ALL: i32 = 0x060700;
 
 /// Set retain all request.
 pub const SET_RETAIN_ALL: i32 = 0x060900;
+
+/// Set add item listener request.
+pub const SET_ADD_LISTENER: i32 = 0x060A00;
+
+/// Set remove item listener request.
+pub const SET_REMOVE_LISTENER: i32 = 0x060B00;
 
 /// List size request.
 pub const LIST_SIZE: i32 = 0x050100;
@@ -205,6 +217,12 @@ pub const LIST_INDEX_OF: i32 = 0x050E00;
 
 /// List last index of request.
 pub const LIST_LAST_INDEX_OF: i32 = 0x050F00;
+
+/// List add item listener request.
+pub const LIST_ADD_LISTENER: i32 = 0x051000;
+
+/// List remove item listener request.
+pub const LIST_REMOVE_LISTENER: i32 = 0x051100;
 
 /// MultiMap put request.
 pub const MULTI_MAP_PUT: i32 = 0x020100;
