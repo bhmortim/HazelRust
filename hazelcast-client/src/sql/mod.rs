@@ -5,7 +5,12 @@ mod service;
 use std::collections::HashMap;
 use std::time::Duration;
 
+pub use chrono;
+pub use rust_decimal;
 pub use service::{SqlResult, SqlService};
+
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime};
+use rust_decimal::Decimal;
 
 /// SQL column data types supported by Hazelcast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -171,10 +176,20 @@ pub enum SqlValue {
     Integer(i32),
     /// BIGINT value.
     BigInt(i64),
+    /// DECIMAL value for arbitrary precision numbers.
+    Decimal(Decimal),
     /// REAL value.
     Real(f32),
     /// DOUBLE value.
     Double(f64),
+    /// DATE value.
+    Date(NaiveDate),
+    /// TIME value.
+    Time(NaiveTime),
+    /// TIMESTAMP value.
+    Timestamp(NaiveDateTime),
+    /// TIMESTAMP WITH TIME ZONE value.
+    TimestampWithTimeZone(DateTime<FixedOffset>),
     /// Raw bytes for types not directly mapped.
     Bytes(Vec<u8>),
 }
@@ -301,6 +316,7 @@ impl SqlStatement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
     fn test_sql_column_type_roundtrip() {
@@ -356,5 +372,71 @@ mod tests {
         assert_eq!(stmt.cursor_buffer_size(), Some(100));
         assert_eq!(stmt.timeout(), Some(Duration::from_secs(30)));
         assert_eq!(stmt.schema(), Some("public"));
+    }
+
+    #[test]
+    fn test_sql_value_decimal() {
+        let dec = Decimal::new(12345, 2); // 123.45
+        let value = SqlValue::Decimal(dec);
+        if let SqlValue::Decimal(d) = value {
+            assert_eq!(d.to_string(), "123.45");
+        } else {
+            panic!("Expected Decimal variant");
+        }
+    }
+
+    #[test]
+    fn test_sql_value_date() {
+        let date = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
+        let value = SqlValue::Date(date);
+        if let SqlValue::Date(d) = value {
+            assert_eq!(d.to_string(), "2024-06-15");
+        } else {
+            panic!("Expected Date variant");
+        }
+    }
+
+    #[test]
+    fn test_sql_value_time() {
+        let time = NaiveTime::from_hms_nano_opt(14, 30, 45, 123_456_789).unwrap();
+        let value = SqlValue::Time(time);
+        if let SqlValue::Time(t) = value {
+            assert_eq!(t.hour(), 14);
+            assert_eq!(t.minute(), 30);
+            assert_eq!(t.second(), 45);
+            assert_eq!(t.nanosecond(), 123_456_789);
+        } else {
+            panic!("Expected Time variant");
+        }
+    }
+
+    #[test]
+    fn test_sql_value_timestamp() {
+        let dt = NaiveDate::from_ymd_opt(2024, 6, 15)
+            .unwrap()
+            .and_hms_nano_opt(14, 30, 45, 123_456_789)
+            .unwrap();
+        let value = SqlValue::Timestamp(dt);
+        if let SqlValue::Timestamp(ts) = value {
+            assert_eq!(ts.date(), NaiveDate::from_ymd_opt(2024, 6, 15).unwrap());
+            assert_eq!(ts.time().hour(), 14);
+        } else {
+            panic!("Expected Timestamp variant");
+        }
+    }
+
+    #[test]
+    fn test_sql_value_timestamp_with_timezone() {
+        let offset = FixedOffset::east_opt(3600).unwrap(); // UTC+1
+        let dt = offset
+            .with_ymd_and_hms(2024, 6, 15, 14, 30, 45)
+            .unwrap();
+        let value = SqlValue::TimestampWithTimeZone(dt);
+        if let SqlValue::TimestampWithTimeZone(ts) = value {
+            assert_eq!(ts.offset().local_minus_utc(), 3600);
+            assert_eq!(ts.naive_local().date(), NaiveDate::from_ymd_opt(2024, 6, 15).unwrap());
+        } else {
+            panic!("Expected TimestampWithTimeZone variant");
+        }
     }
 }

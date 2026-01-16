@@ -12,7 +12,12 @@ use hazelcast_core::{HazelcastError, Result};
 
 use crate::connection::ConnectionManager;
 
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike};
+use rust_decimal::Decimal;
+
 use super::{SqlColumnMetadata, SqlColumnType, SqlRow, SqlRowMetadata, SqlStatement, SqlValue};
+
+const EPOCH_DATE: i32 = 719_163; // Days from year 0 to 1970-01-01
 
 static QUERY_ID_COUNTER: AtomicI64 = AtomicI64::new(1);
 
@@ -220,6 +225,40 @@ impl SqlService {
             SqlValue::Double(v) => {
                 buf.push(1);
                 buf.extend_from_slice(&v.to_le_bytes());
+            }
+            SqlValue::Decimal(d) => {
+                buf.push(1);
+                let scale = d.scale() as i32;
+                buf.extend_from_slice(&scale.to_le_bytes());
+                let mantissa = d.mantissa();
+                buf.extend_from_slice(&mantissa.to_be_bytes());
+            }
+            SqlValue::Date(d) => {
+                buf.push(1);
+                let epoch_days = d.num_days_from_ce() - EPOCH_DATE;
+                buf.extend_from_slice(&epoch_days.to_le_bytes());
+            }
+            SqlValue::Time(t) => {
+                buf.push(1);
+                let nanos = t.num_seconds_from_midnight() as i64 * 1_000_000_000
+                    + t.nanosecond() as i64 % 1_000_000_000;
+                buf.extend_from_slice(&nanos.to_le_bytes());
+            }
+            SqlValue::Timestamp(ts) => {
+                buf.push(1);
+                let epoch_secs = ts.and_utc().timestamp();
+                let nanos = ts.and_utc().timestamp_subsec_nanos() as i32;
+                buf.extend_from_slice(&epoch_secs.to_le_bytes());
+                buf.extend_from_slice(&nanos.to_le_bytes());
+            }
+            SqlValue::TimestampWithTimeZone(ts) => {
+                buf.push(1);
+                let epoch_secs = ts.timestamp();
+                let nanos = ts.timestamp_subsec_nanos() as i32;
+                let offset_secs = ts.offset().local_minus_utc();
+                buf.extend_from_slice(&epoch_secs.to_le_bytes());
+                buf.extend_from_slice(&nanos.to_le_bytes());
+                buf.extend_from_slice(&offset_secs.to_le_bytes());
             }
             SqlValue::Bytes(b) => {
                 buf.push(1);
@@ -491,6 +530,80 @@ impl SqlService {
                 let v = f64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
                 *offset += 8;
                 Ok(SqlValue::Double(v))
+            }
+            SqlColumnType::Decimal => {
+                if data.len() < *offset + 4 {
+                    return Err(HazelcastError::Protocol("missing decimal scale".into()));
+                }
+                let scale = i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
+                *offset += 4;
+
+                if data.len() < *offset + 16 {
+                    return Err(HazelcastError::Protocol("missing decimal mantissa".into()));
+                }
+                let mantissa = i128::from_be_bytes(data[*offset..*offset + 16].try_into().unwrap());
+                *offset += 16;
+
+                let decimal = Decimal::from_i128_with_scale(mantissa, scale as u32);
+                Ok(SqlValue::Decimal(decimal))
+            }
+            SqlColumnType::Date => {
+                if data.len() < *offset + 4 {
+                    return Err(HazelcastError::Protocol("missing date data".into()));
+                }
+                let epoch_days = i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
+                *offset += 4;
+
+                let date = NaiveDate::from_num_days_from_ce_opt(epoch_days + EPOCH_DATE)
+                    .ok_or_else(|| HazelcastError::Protocol("invalid date value".into()))?;
+                Ok(SqlValue::Date(date))
+            }
+            SqlColumnType::Time => {
+                if data.len() < *offset + 8 {
+                    return Err(HazelcastError::Protocol("missing time data".into()));
+                }
+                let nanos = i64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
+                *offset += 8;
+
+                let secs = (nanos / 1_000_000_000) as u32;
+                let nano = (nanos % 1_000_000_000) as u32;
+                let time = NaiveTime::from_num_seconds_from_midnight_opt(secs, nano)
+                    .ok_or_else(|| HazelcastError::Protocol("invalid time value".into()))?;
+                Ok(SqlValue::Time(time))
+            }
+            SqlColumnType::Timestamp => {
+                if data.len() < *offset + 12 {
+                    return Err(HazelcastError::Protocol("missing timestamp data".into()));
+                }
+                let epoch_secs = i64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
+                *offset += 8;
+                let nanos = i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
+                *offset += 4;
+
+                let dt = DateTime::from_timestamp(epoch_secs, nanos as u32)
+                    .ok_or_else(|| HazelcastError::Protocol("invalid timestamp value".into()))?
+                    .naive_utc();
+                Ok(SqlValue::Timestamp(dt))
+            }
+            SqlColumnType::TimestampWithTimeZone => {
+                if data.len() < *offset + 16 {
+                    return Err(HazelcastError::Protocol(
+                        "missing timestamp with timezone data".into(),
+                    ));
+                }
+                let epoch_secs = i64::from_le_bytes(data[*offset..*offset + 8].try_into().unwrap());
+                *offset += 8;
+                let nanos = i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
+                *offset += 4;
+                let offset_secs = i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
+                *offset += 4;
+
+                let fixed_offset = FixedOffset::east_opt(offset_secs)
+                    .ok_or_else(|| HazelcastError::Protocol("invalid timezone offset".into()))?;
+                let utc_dt = DateTime::from_timestamp(epoch_secs, nanos as u32)
+                    .ok_or_else(|| HazelcastError::Protocol("invalid timestamp value".into()))?;
+                let dt = utc_dt.with_timezone(&fixed_offset);
+                Ok(SqlValue::TimestampWithTimeZone(dt))
             }
             _ => {
                 // For other types, read as raw bytes
