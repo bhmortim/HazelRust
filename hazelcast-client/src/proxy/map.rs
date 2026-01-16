@@ -27,7 +27,7 @@ use hazelcast_core::protocol::constants::{
     MAP_LOAD_GIVEN_KEYS, MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL,
     MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
     MAP_REMOVE_ALL, MAP_REMOVE_INTERCEPTOR, MAP_REMOVE_PARTITION_LOST_LISTENER, MAP_REPLACE,
-    MAP_REPLACE_IF_SAME, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK,
+    MAP_REPLACE_IF_SAME, MAP_SET_ALL, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK,
     MAP_VALUES_WITH_PAGING_PREDICATE,
     MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
@@ -1051,6 +1051,112 @@ where
 
         self.invoke_on_random(message).await?;
         Ok(())
+    }
+
+    /// Asynchronously puts all entries from the given map into this map.
+    ///
+    /// This method spawns the operation on a separate task and returns a handle
+    /// that can be awaited or polled. Useful for fire-and-forget patterns or
+    /// starting multiple operations concurrently.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut entries = HashMap::new();
+    /// entries.insert("key1".to_string(), "value1".to_string());
+    /// entries.insert("key2".to_string(), "value2".to_string());
+    ///
+    /// let handle = map.put_all_async(entries);
+    /// // Do other work...
+    /// handle.await??;
+    /// ```
+    pub fn put_all_async(&self, entries: HashMap<K, V>) -> tokio::task::JoinHandle<Result<()>>
+    where
+        K: Clone + 'static,
+        V: 'static,
+    {
+        let this = self.clone();
+        spawn(async move { this.put_all(entries).await })
+    }
+
+    /// Sets all entries from the given map into this map.
+    ///
+    /// Unlike `put_all`, this operation does not trigger entry listeners on the
+    /// cluster. This makes it more efficient for bulk data loading scenarios
+    /// where event notifications are not needed.
+    ///
+    /// If near-cache is enabled, invalidates all affected keys before the operation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut entries = HashMap::new();
+    /// entries.insert("key1".to_string(), "value1".to_string());
+    /// entries.insert("key2".to_string(), "value2".to_string());
+    /// map.set_all(entries).await?;
+    /// ```
+    pub async fn set_all(&self, entries: HashMap<K, V>) -> Result<()>
+    where
+        K: Clone,
+    {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let mut serialized_entries = Vec::with_capacity(entries.len());
+        for (key, value) in &entries {
+            let key_data = Self::serialize_value(key)?;
+            let value_data = Self::serialize_value(value)?;
+            serialized_entries.push((key_data, value_data));
+        }
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            for (key_data, _) in &serialized_entries {
+                cache_guard.invalidate(key_data);
+            }
+        }
+
+        let mut message = ClientMessage::create_for_encode(MAP_SET_ALL, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::int_frame(serialized_entries.len() as i32));
+
+        for (key_data, value_data) in serialized_entries {
+            message.add_frame(Self::data_frame(&key_data));
+            message.add_frame(Self::data_frame(&value_data));
+        }
+
+        self.invoke_on_random(message).await?;
+        Ok(())
+    }
+
+    /// Asynchronously sets all entries from the given map into this map.
+    ///
+    /// This method spawns the operation on a separate task and returns a handle
+    /// that can be awaited or polled. Unlike `put_all_async`, this operation does
+    /// not trigger entry listeners on the cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut entries = HashMap::new();
+    /// entries.insert("key1".to_string(), "value1".to_string());
+    /// entries.insert("key2".to_string(), "value2".to_string());
+    ///
+    /// let handle = map.set_all_async(entries);
+    /// // Do other work...
+    /// handle.await??;
+    /// ```
+    pub fn set_all_async(&self, entries: HashMap<K, V>) -> tokio::task::JoinHandle<Result<()>>
+    where
+        K: Clone + 'static,
+        V: 'static,
+    {
+        let this = self.clone();
+        spawn(async move { this.set_all(entries).await })
     }
 
     /// Retrieves all values for the given keys.
@@ -5447,6 +5553,18 @@ mod tests {
     }
 
     #[test]
+    fn test_set_all_empty_map() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let _cm = Arc::new(ConnectionManager::new(vec![addr]));
+
+        let entries: HashMap<String, String> = HashMap::new();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
     fn test_remove_all_empty_keys() {
         use crate::connection::ConnectionManager;
         use std::net::SocketAddr;
@@ -5479,6 +5597,55 @@ mod tests {
 
         let result = map.put_all(entries).await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_set_all_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let mut entries = HashMap::new();
+        entries.insert("key".to_string(), "value".to_string());
+
+        let result = map.set_all(entries).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_set_all_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let mut entries = HashMap::new();
+        entries.insert("key".to_string(), "value".to_string());
+
+        let result = map.set_all(entries).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
     }
 
     #[tokio::test]
@@ -5535,6 +5702,20 @@ mod tests {
 
         let entries: HashMap<String, String> = HashMap::new();
         let result = map.put_all(entries).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_set_all_empty_returns_ok() {
+        use crate::config::ClientConfigBuilder;
+        use crate::connection::ConnectionManager;
+
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let entries: HashMap<String, String> = HashMap::new();
+        let result = map.set_all(entries).await;
         assert!(result.is_ok());
     }
 
@@ -6738,6 +6919,20 @@ mod tests {
     }
 
     #[test]
+    fn test_set_all_invalidates_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(map.has_near_cache());
+    }
+
+    #[test]
     fn test_iterator_config_default_values() {
         let config = IteratorConfig::default();
         assert_eq!(config.batch_size, 100);
@@ -7385,6 +7580,50 @@ mod tests {
             map.remove_async("key".to_string());
         let _contains_handle: tokio::task::JoinHandle<Result<bool>> =
             map.contains_key_async("key".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_bulk_async_methods_spawn_tasks() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let mut entries = HashMap::new();
+        entries.insert("key1".to_string(), "value1".to_string());
+
+        let _put_all_handle: tokio::task::JoinHandle<Result<()>> =
+            map.put_all_async(entries.clone());
+        let _set_all_handle: tokio::task::JoinHandle<Result<()>> =
+            map.set_all_async(entries);
+    }
+
+    #[test]
+    fn test_put_all_async_returns_join_handle() {
+        fn check_return_type<K, V>(_map: &IMap<K, V>)
+        where
+            K: Serializable + Deserializable + Send + Sync + Clone + 'static,
+            V: Serializable + Deserializable + Send + Sync + 'static,
+        {
+            let _ = |m: &IMap<K, V>, e: HashMap<K, V>| -> tokio::task::JoinHandle<Result<()>> {
+                m.put_all_async(e)
+            };
+        }
+    }
+
+    #[test]
+    fn test_set_all_async_returns_join_handle() {
+        fn check_return_type<K, V>(_map: &IMap<K, V>)
+        where
+            K: Serializable + Deserializable + Send + Sync + Clone + 'static,
+            V: Serializable + Deserializable + Send + Sync + 'static,
+        {
+            let _ = |m: &IMap<K, V>, e: HashMap<K, V>| -> tokio::task::JoinHandle<Result<()>> {
+                m.set_all_async(e)
+            };
+        }
     }
 
     #[tokio::test]

@@ -74,6 +74,9 @@ pub const MAP_REMOVE: i32 = 0x010300;
 /// Map put all request.
 pub const MAP_PUT_ALL: i32 = 0x010400;
 
+/// Map set all request.
+pub const MAP_SET_ALL: i32 = 0x012C00;
+
 /// Map get all request.
 pub const MAP_GET_ALL: i32 = 0x010B00;
 
