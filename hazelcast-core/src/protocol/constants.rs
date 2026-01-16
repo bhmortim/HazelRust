@@ -869,6 +869,12 @@ pub const CACHE_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x131500;
 /// Cache event journal read request.
 pub const CACHE_EVENT_JOURNAL_READ: i32 = 0x131600;
 
+/// Cache add entry listener request.
+pub const CACHE_ADD_ENTRY_LISTENER: i32 = 0x131700;
+
+/// Cache remove entry listener request.
+pub const CACHE_REMOVE_ENTRY_LISTENER: i32 = 0x131800;
+
 // Jet operations
 
 /// Jet submit job request.
