@@ -861,3 +861,12 @@ pub const MAP_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x014100;
 
 /// Map event journal read request.
 pub const MAP_EVENT_JOURNAL_READ: i32 = 0x014200;
+
+/// Map fetch keys request (for iteration).
+pub const MAP_FETCH_KEYS: i32 = 0x014300;
+
+/// Map fetch entries request (for iteration).
+pub const MAP_FETCH_ENTRIES: i32 = 0x014400;
+
+/// Map fetch values request (for iteration).
+pub const MAP_FETCH_VALUES: i32 = 0x014500;

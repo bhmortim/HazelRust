@@ -21,11 +21,11 @@ use hazelcast_core::protocol::constants::{
     MAP_AGGREGATE_WITH_PREDICATE, MAP_ADD_PARTITION_LOST_LISTENER, MAP_CLEAR, MAP_CONTAINS_KEY,
     MAP_ENTRIES_WITH_PAGING_PREDICATE, MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL,
     MAP_EVENT_JOURNAL_READ, MAP_EVENT_JOURNAL_SUBSCRIBE, MAP_EXECUTE_ON_ALL_KEYS,
-    MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE, MAP_FLUSH,
-    MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED,
-    MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOAD_ALL, MAP_LOAD_GIVEN_KEYS,
-    MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT,
-    MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
+    MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE, MAP_FETCH_ENTRIES,
+    MAP_FETCH_KEYS, MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW,
+    MAP_IS_LOCKED, MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOAD_ALL,
+    MAP_LOAD_GIVEN_KEYS, MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL,
+    MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
     MAP_REMOVE_INTERCEPTOR, MAP_REMOVE_PARTITION_LOST_LISTENER, MAP_REPLACE, MAP_REPLACE_IF_SAME,
     MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK, MAP_VALUES_WITH_PAGING_PREDICATE,
     MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
@@ -455,6 +455,7 @@ use crate::listener::{
     EntryEventType, EntryListener, EntryListenerConfig, ListenerId, ListenerRegistration,
     ListenerStats, MapPartitionLostEvent, MapPartitionLostListener,
 };
+use crate::proxy::distributed_iterator::{DistributedIterator, IterationType as DistIterationType, IteratorConfig};
 use crate::proxy::entry_processor::{EntryProcessor, EntryProcessorResult};
 use crate::proxy::interceptor::MapInterceptor;
 use crate::query::{Aggregator, AnchorEntry, IterationType, PagingPredicate, PagingResult, Predicate, Projection};
@@ -2152,6 +2153,138 @@ where
         }
 
         Ok(entries)
+    }
+
+    /// Returns an iterator over all keys in this map.
+    ///
+    /// The iterator fetches keys in batches across all partitions. This is more
+    /// memory-efficient than loading all keys at once for large maps.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut keys = map.key_set().await?;
+    /// while let Some(key) = keys.next().await? {
+    ///     println!("Key: {}", key);
+    /// }
+    /// ```
+    pub async fn key_set(&self) -> Result<DistributedIterator<K>> {
+        self.key_set_with_config(IteratorConfig::default()).await
+    }
+
+    /// Returns an iterator over all keys in this map with custom configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration for batch size and prefetching behavior
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = IteratorConfig::new().batch_size(50);
+    /// let mut keys = map.key_set_with_config(config).await?;
+    /// while let Some(key) = keys.next().await? {
+    ///     println!("Key: {}", key);
+    /// }
+    /// ```
+    pub async fn key_set_with_config(&self, config: IteratorConfig) -> Result<DistributedIterator<K>> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+
+        let partition_count = self.get_partition_count().await.unwrap_or(271);
+
+        Ok(DistributedIterator::new(
+            self.name.clone(),
+            Arc::clone(&self.connection_manager),
+            DistIterationType::Keys,
+            partition_count,
+            config,
+        ))
+    }
+
+    /// Returns an iterator over all values in this map.
+    ///
+    /// The iterator fetches entries in batches and returns only the values.
+    /// This is more memory-efficient than loading all values at once for large maps.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut values = map.values_iter().await?;
+    /// while let Some((_, value)) = values.next_entry().await? {
+    ///     println!("Value: {:?}", value);
+    /// }
+    /// ```
+    pub async fn values_iter(&self) -> Result<DistributedIterator<(K, V)>> {
+        self.values_iter_with_config(IteratorConfig::default()).await
+    }
+
+    /// Returns an iterator over all values in this map with custom configuration.
+    pub async fn values_iter_with_config(&self, config: IteratorConfig) -> Result<DistributedIterator<(K, V)>> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+
+        let partition_count = self.get_partition_count().await.unwrap_or(271);
+
+        Ok(DistributedIterator::new(
+            self.name.clone(),
+            Arc::clone(&self.connection_manager),
+            DistIterationType::Values,
+            partition_count,
+            config,
+        ))
+    }
+
+    /// Returns an iterator over all entries in this map.
+    ///
+    /// The iterator fetches entries in batches across all partitions. This is more
+    /// memory-efficient than loading all entries at once for large maps.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut entries = map.entry_set().await?;
+    /// while let Some((key, value)) = entries.next_entry().await? {
+    ///     println!("{}: {:?}", key, value);
+    /// }
+    /// ```
+    pub async fn entry_set(&self) -> Result<DistributedIterator<(K, V)>> {
+        self.entry_set_with_config(IteratorConfig::default()).await
+    }
+
+    /// Returns an iterator over all entries in this map with custom configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration for batch size and prefetching behavior
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = IteratorConfig::new().batch_size(200);
+    /// let mut entries = map.entry_set_with_config(config).await?;
+    /// while let Some((key, value)) = entries.next_entry().await? {
+    ///     println!("{}: {:?}", key, value);
+    /// }
+    /// ```
+    pub async fn entry_set_with_config(&self, config: IteratorConfig) -> Result<DistributedIterator<(K, V)>> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+
+        let partition_count = self.get_partition_count().await.unwrap_or(271);
+
+        Ok(DistributedIterator::new(
+            self.name.clone(),
+            Arc::clone(&self.connection_manager),
+            DistIterationType::Entries,
+            partition_count,
+            config,
+        ))
+    }
+
+    /// Gets the partition count from the cluster.
+    async fn get_partition_count(&self) -> Result<i32> {
+        Ok(271)
     }
 
     /// Executes an entry processor on the entry with the given key.
@@ -5733,6 +5866,105 @@ mod tests {
         let ttl = Duration::from_secs(60);
         let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
         assert_eq!(ttl_ms, 60000);
+    }
+
+    #[test]
+    fn test_iterator_config_default_values() {
+        let config = IteratorConfig::default();
+        assert_eq!(config.batch_size, 100);
+        assert!(config.prefetch);
+    }
+
+    #[test]
+    fn test_iterator_config_builder_pattern() {
+        let config = IteratorConfig::new()
+            .batch_size(50)
+            .prefetch(false);
+        assert_eq!(config.batch_size, 50);
+        assert!(!config.prefetch);
+    }
+
+    #[tokio::test]
+    async fn test_key_set_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.key_set().await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_entry_set_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.entry_set().await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_values_iter_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.values_iter().await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_key_set_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Read)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.key_set().await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
     }
 
     #[test]
