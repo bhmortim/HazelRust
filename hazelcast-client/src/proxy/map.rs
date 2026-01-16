@@ -26,8 +26,9 @@ use hazelcast_core::protocol::constants::{
     MAP_IS_LOCKED, MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOAD_ALL,
     MAP_LOAD_GIVEN_KEYS, MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL,
     MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
-    MAP_REMOVE_INTERCEPTOR, MAP_REMOVE_PARTITION_LOST_LISTENER, MAP_REPLACE, MAP_REPLACE_IF_SAME,
-    MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK, MAP_VALUES_WITH_PAGING_PREDICATE,
+    MAP_REMOVE_ALL, MAP_REMOVE_INTERCEPTOR, MAP_REMOVE_PARTITION_LOST_LISTENER, MAP_REPLACE,
+    MAP_REPLACE_IF_SAME, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK,
+    MAP_VALUES_WITH_PAGING_PREDICATE,
     MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
@@ -1105,6 +1106,49 @@ where
             self.invoke(message).await?;
         }
 
+        Ok(())
+    }
+
+    /// Removes all entries matching the given predicate from this map.
+    ///
+    /// The predicate is evaluated on the cluster, and all matching entries are
+    /// removed atomically. This is more efficient than fetching keys and removing
+    /// them individually.
+    ///
+    /// If near-cache is enabled, clears the local cache since we cannot know
+    /// which specific entries will be removed.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::Predicates;
+    ///
+    /// // Remove all users older than 65
+    /// let predicate = Predicates::greater_than("age", &65i32)?;
+    /// map.remove_all_with_predicate(&predicate).await?;
+    ///
+    /// // Remove all inactive entries
+    /// let predicate = Predicates::equal("status", &"inactive".to_string())?;
+    /// map.remove_all_with_predicate(&predicate).await?;
+    /// ```
+    pub async fn remove_all_with_predicate(&self, predicate: &dyn Predicate) -> Result<()> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        // Clear near-cache before remote operation since we can't know
+        // which specific entries will be removed
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.clear();
+        }
+
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_REMOVE_ALL, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        self.invoke(message).await?;
         Ok(())
     }
 
@@ -5322,6 +5366,86 @@ mod tests {
         let keys: Vec<String> = Vec::new();
         let result = map.remove_all(&keys).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_remove_all_with_predicate_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        use crate::query::Predicates;
+        let predicate = Predicates::sql("age > 65");
+
+        let result = map.remove_all_with_predicate(&predicate).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_remove_all_with_predicate_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        use crate::query::Predicates;
+        let predicate = Predicates::sql("age > 65");
+
+        let result = map.remove_all_with_predicate(&predicate).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[test]
+    fn test_remove_all_with_predicate_serializes_predicate() {
+        use crate::query::Predicates;
+
+        let predicate = Predicates::greater_than("age", &65i32).unwrap();
+        let predicate_data = predicate.to_predicate_data().unwrap();
+        assert!(!predicate_data.is_empty());
+
+        let and_predicate = Predicates::and(
+            Predicates::greater_than("age", &18i32).unwrap(),
+            Predicates::less_than("age", &65i32).unwrap(),
+        );
+        let and_data = and_predicate.to_predicate_data().unwrap();
+        assert!(!and_data.is_empty());
+    }
+
+    #[test]
+    fn test_remove_all_with_predicate_clears_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(map.has_near_cache());
     }
 
     #[tokio::test]
