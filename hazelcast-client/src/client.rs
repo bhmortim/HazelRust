@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use hazelcast_core::{Deserializable, Result, Serializable};
+use uuid::Uuid;
 
-use crate::cluster::PartitionService;
+use crate::cluster::{ClusterService, PartitionService};
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};
@@ -49,6 +50,7 @@ pub struct HazelcastClient {
     config: Arc<ClientConfig>,
     connection_manager: Arc<ConnectionManager>,
     statistics_collector: Arc<StatisticsCollector>,
+    client_uuid: Uuid,
 }
 
 impl HazelcastClient {
@@ -64,11 +66,13 @@ impl HazelcastClient {
     /// - All connection attempts fail
     /// - Network errors occur during connection
     pub async fn new(config: ClientConfig) -> Result<Self> {
+        let client_uuid = Uuid::new_v4();
         let connection_manager = ConnectionManager::from_config(config.clone());
         connection_manager.start().await?;
 
         tracing::info!(
             cluster = %config.cluster_name(),
+            client_uuid = %client_uuid,
             "connected to Hazelcast cluster"
         );
 
@@ -76,6 +80,7 @@ impl HazelcastClient {
             config: Arc::new(config),
             connection_manager: Arc::new(connection_manager),
             statistics_collector: Arc::new(StatisticsCollector::new()),
+            client_uuid,
         })
     }
 
@@ -484,6 +489,46 @@ impl HazelcastClient {
     /// Returns the number of known cluster members.
     pub async fn member_count(&self) -> usize {
         self.connection_manager.member_count().await
+    }
+
+    /// Returns the cluster service for querying and monitoring cluster membership.
+    ///
+    /// The cluster service provides access to:
+    /// - Current cluster members and their attributes
+    /// - Local client information
+    /// - Cluster time
+    /// - Membership event notifications
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let cluster = client.cluster();
+    ///
+    /// // Get all cluster members
+    /// let members = cluster.get_members().await;
+    /// for member in members {
+    ///     println!("Member: {} at {}", member.uuid(), member.address());
+    /// }
+    ///
+    /// // Get local client info
+    /// let client_info = cluster.get_local_client();
+    /// println!("Client UUID: {}", client_info.uuid());
+    ///
+    /// // Subscribe to membership changes
+    /// let mut listener = cluster.add_membership_listener();
+    /// tokio::spawn(async move {
+    ///     while let Ok(event) = listener.recv().await {
+    ///         println!("Membership event: {}", event);
+    ///     }
+    /// });
+    /// ```
+    pub fn cluster(&self) -> ClusterService {
+        ClusterService::new(
+            Arc::clone(&self.connection_manager),
+            self.client_uuid,
+            self.config.cluster_name().to_string(),
+            Vec::new(),
+        )
     }
 
     /// Returns the partition service for querying partition information.

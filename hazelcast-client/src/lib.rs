@@ -72,7 +72,10 @@ pub use transaction::{
     XA_RBOTHER, XA_RBPROTO, XA_RBTIMEOUT, XA_RBTRANSIENT, XA_RBEND,
 };
 pub use jet::{JetService, Job, JobConfig, JobConfigBuilder, JobStatus, Pipeline, PipelineBuilder};
-pub use cluster::{MigrationEvent, MigrationListener, MigrationState, Partition, PartitionService};
+pub use cluster::{
+    ClientInfo, ClusterService, MigrationEvent, MigrationListener, MigrationState, Partition,
+    PartitionService,
+};
 pub use deployment::{
     ClassDefinition, ClassDefinitionBuilder, ClassProviderMode, ResourceEntry,
     UserCodeDeploymentConfig, UserCodeDeploymentConfigBuilder,
