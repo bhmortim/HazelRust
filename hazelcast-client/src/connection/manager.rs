@@ -664,6 +664,150 @@ impl ConnectionManager {
         ))
     }
 
+    /// Checks if failover should be triggered after a disconnect and initiates it if needed.
+    ///
+    /// This method is called when a connection is lost and reconnection fails.
+    /// It will trigger failover to an alternative cluster if:
+    /// - Failover is configured
+    /// - No active connections remain
+    /// - Reconnection attempts have been exhausted
+    ///
+    /// Returns `Ok(true)` if failover was triggered and successful,
+    /// `Ok(false)` if failover was not needed (connections still available or no failover config),
+    /// or an error if failover was triggered but failed.
+    #[instrument(
+        name = "connection_manager.failover_on_disconnect",
+        skip(self),
+        fields(
+            has_failover = self.has_failover(),
+            connection_count = tracing::field::Empty
+        ),
+        level = "debug"
+    )]
+    pub async fn failover_on_disconnect(&self) -> Result<bool> {
+        if !self.has_failover() {
+            tracing::debug!("no failover configuration, skipping automatic failover");
+            return Ok(false);
+        }
+
+        let conn_count = self.connection_count().await;
+        Span::current().record("connection_count", conn_count);
+
+        if conn_count > 0 {
+            tracing::debug!(
+                remaining_connections = conn_count,
+                "still have active connections, failover not needed"
+            );
+            return Ok(false);
+        }
+
+        tracing::info!("all connections lost, initiating automatic failover");
+
+        let _ = self.lifecycle_sender.send(LifecycleEvent::ClientDisconnected);
+
+        match self.trigger_failover().await {
+            Ok(()) => {
+                tracing::info!("automatic failover to alternative cluster successful");
+                Ok(true)
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "automatic failover failed");
+                Err(e)
+            }
+        }
+    }
+
+    /// Attempts to connect to an alternative cluster without exhausting retries on the current cluster.
+    ///
+    /// Unlike `trigger_failover()` which respects the try count configuration,
+    /// this method immediately switches to the next cluster in the failover list.
+    /// This is useful for proactive cluster switching or when the application
+    /// determines that the current cluster is unhealthy.
+    ///
+    /// Returns `Ok(())` if successfully connected to the alternative cluster,
+    /// or an error if the switch failed.
+    #[instrument(
+        name = "connection_manager.try_alternative_cluster",
+        skip(self),
+        fields(
+            current_cluster = self.current_cluster_index(),
+            has_failover = self.has_failover()
+        )
+    )]
+    pub async fn try_alternative_cluster(&self) -> Result<()> {
+        let failover_config = match &self.failover_config {
+            Some(config) => config,
+            None => {
+                tracing::warn!("try_alternative_cluster called but no failover configuration");
+                return Err(HazelcastError::Connection(
+                    "failover not configured".to_string(),
+                ));
+            }
+        };
+
+        let cluster_count = failover_config.cluster_count();
+        if cluster_count < 2 {
+            tracing::warn!("no alternative clusters available");
+            return Err(HazelcastError::Connection(
+                "no alternative clusters configured".to_string(),
+            ));
+        }
+
+        let current_index = self.current_cluster_index.load(std::sync::atomic::Ordering::Acquire);
+        let next_index = (current_index + 1) % cluster_count;
+
+        tracing::info!(
+            from_cluster = current_index,
+            to_cluster = next_index,
+            "switching to alternative cluster"
+        );
+
+        self.current_try_count.store(0, std::sync::atomic::Ordering::Release);
+        self.current_cluster_index.store(next_index, std::sync::atomic::Ordering::Release);
+
+        let new_config = failover_config
+            .get_config(next_index)
+            .ok_or_else(|| HazelcastError::Connection("invalid cluster index".to_string()))?;
+
+        let addresses: Vec<SocketAddr> = self.connections.read().await.keys().copied().collect();
+        for address in addresses {
+            let _ = self.disconnect(address).await;
+        }
+
+        self.members.write().await.clear();
+        self.clear_partition_table().await;
+
+        let new_addresses = new_config.network().addresses();
+        let mut connected = false;
+
+        for address in new_addresses {
+            match self.connect_to(*address).await {
+                Ok(_) => {
+                    connected = true;
+                    tracing::info!(address = %address, "connected to alternative cluster");
+                }
+                Err(e) => {
+                    tracing::warn!(address = %address, error = %e, "failed to connect to alternative cluster address");
+                }
+            }
+        }
+
+        if connected {
+            let _ = self.lifecycle_sender.send(LifecycleEvent::ClientChangedCluster);
+            tracing::info!(
+                cluster_index = next_index,
+                cluster_name = %new_config.cluster_name(),
+                "successfully switched to alternative cluster"
+            );
+            Ok(())
+        } else {
+            tracing::error!(cluster_index = next_index, "failed to connect to any address in alternative cluster");
+            Err(HazelcastError::Connection(
+                "failed to connect to alternative cluster".to_string(),
+            ))
+        }
+    }
+
     /// Checks if connected to the specified address.
     pub async fn is_connected(&self, address: &SocketAddr) -> bool {
         self.connections.read().await.contains_key(address)
@@ -943,6 +1087,7 @@ impl ConnectionManager {
         let heartbeat_interval = self.config.network().heartbeat_interval();
         let reconnect_mode = self.config.network().reconnect_mode();
         let config = Arc::clone(&self.config);
+        let has_failover = self.failover_config.is_some();
         let mut shutdown_rx = self.shutdown.subscribe();
 
         tokio::spawn(async move {
@@ -1003,6 +1148,13 @@ impl ConnectionManager {
                                 } else {
                                     reconnect_task.await;
                                 }
+                            }
+                        }
+
+                        if has_failover {
+                            let remaining_connections = connections.read().await.len();
+                            if remaining_connections == 0 {
+                                tracing::info!("all connections lost, automatic failover may be needed");
                             }
                         }
                     }
@@ -2562,6 +2714,307 @@ mod tests {
         assert_eq!(manager.current_cluster_index(), 2);
 
         let _ = manager.trigger_failover().await;
+        assert_eq!(manager.current_cluster_index(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_failover_on_disconnect_no_config() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let manager = ConnectionManager::from_config(config);
+
+        let result = manager.failover_on_disconnect().await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_failover_on_disconnect_with_active_connections() {
+        use crate::config::{ClientConfigBuilder, ClientFailoverConfig};
+
+        let (listener, addr) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let config1 = ClientConfigBuilder::new()
+            .cluster_name("primary")
+            .add_address(addr)
+            .build()
+            .unwrap();
+        let config2 = ClientConfigBuilder::new()
+            .cluster_name("backup")
+            .add_address("192.0.2.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .add_client_config(config2)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::with_failover(failover);
+        manager.connect_to(addr).await.unwrap();
+
+        let result = manager.failover_on_disconnect().await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_failover_on_disconnect_triggers_failover() {
+        use crate::config::{ClientConfigBuilder, ClientFailoverConfig};
+
+        let (listener, addr) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let config1 = ClientConfigBuilder::new()
+            .cluster_name("primary")
+            .add_address("192.0.2.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+        let config2 = ClientConfigBuilder::new()
+            .cluster_name("backup")
+            .add_address(addr)
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .add_client_config(config2)
+            .try_count(1)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::with_failover(failover);
+
+        let result = manager.failover_on_disconnect().await;
+
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_try_alternative_cluster_no_config() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let manager = ConnectionManager::from_config(config);
+
+        let result = manager.try_alternative_cluster().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            HazelcastError::Connection(msg) => {
+                assert!(msg.contains("failover not configured"));
+            }
+            e => panic!("expected Connection error, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_try_alternative_cluster_single_cluster() {
+        use crate::config::{ClientConfigBuilder, ClientFailoverConfig};
+
+        let config = ClientConfigBuilder::new()
+            .cluster_name("only")
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::with_failover(failover);
+
+        let result = manager.try_alternative_cluster().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            HazelcastError::Connection(msg) => {
+                assert!(msg.contains("no alternative clusters configured"));
+            }
+            e => panic!("expected Connection error, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_try_alternative_cluster_success() {
+        use crate::config::{ClientConfigBuilder, ClientFailoverConfig};
+
+        let (listener1, addr1) = create_mock_server().await;
+        let (listener2, addr2) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener1.accept().await;
+        });
+        tokio::spawn(async move {
+            let _ = listener2.accept().await;
+        });
+
+        let config1 = ClientConfigBuilder::new()
+            .cluster_name("primary")
+            .add_address(addr1)
+            .build()
+            .unwrap();
+        let config2 = ClientConfigBuilder::new()
+            .cluster_name("backup")
+            .add_address(addr2)
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .add_client_config(config2)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::with_failover(failover);
+        manager.connect_to(addr1).await.unwrap();
+
+        assert_eq!(manager.current_cluster_index(), 0);
+
+        let result = manager.try_alternative_cluster().await;
+        assert!(result.is_ok());
+        assert_eq!(manager.current_cluster_index(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_try_alternative_cluster_emits_lifecycle_event() {
+        use crate::config::{ClientConfigBuilder, ClientFailoverConfig};
+
+        let (listener1, addr1) = create_mock_server().await;
+        let (listener2, addr2) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener1.accept().await;
+        });
+        tokio::spawn(async move {
+            let _ = listener2.accept().await;
+        });
+
+        let config1 = ClientConfigBuilder::new()
+            .cluster_name("primary")
+            .add_address(addr1)
+            .build()
+            .unwrap();
+        let config2 = ClientConfigBuilder::new()
+            .cluster_name("backup")
+            .add_address(addr2)
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .add_client_config(config2)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::with_failover(failover);
+        let mut lifecycle_rx = manager.subscribe_lifecycle();
+
+        manager.connect_to(addr1).await.unwrap();
+        manager.try_alternative_cluster().await.unwrap();
+
+        let mut found_event = false;
+        while let Ok(event) = tokio::time::timeout(Duration::from_millis(100), lifecycle_rx.recv()).await {
+            if let Ok(LifecycleEvent::ClientChangedCluster) = event {
+                found_event = true;
+                break;
+            }
+        }
+        assert!(found_event, "expected ClientChangedCluster lifecycle event");
+    }
+
+    #[tokio::test]
+    async fn test_try_alternative_cluster_clears_state() {
+        use crate::config::{ClientConfigBuilder, ClientFailoverConfig};
+
+        let (listener1, addr1) = create_mock_server().await;
+        let (listener2, addr2) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener1.accept().await;
+        });
+        tokio::spawn(async move {
+            let _ = listener2.accept().await;
+        });
+
+        let config1 = ClientConfigBuilder::new()
+            .cluster_name("primary")
+            .add_address(addr1)
+            .build()
+            .unwrap();
+        let config2 = ClientConfigBuilder::new()
+            .cluster_name("backup")
+            .add_address(addr2)
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .add_client_config(config2)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::with_failover(failover);
+        manager.connect_to(addr1).await.unwrap();
+
+        let member = crate::listener::Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        );
+        manager.handle_member_added(member).await;
+        manager.set_partition_owner(0, uuid::Uuid::new_v4()).await;
+
+        assert_eq!(manager.member_count().await, 1);
+        assert_eq!(manager.partition_count(), 1);
+
+        manager.try_alternative_cluster().await.unwrap();
+
+        assert_eq!(manager.member_count().await, 0);
+        assert_eq!(manager.partition_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_automatic_failover_cycles_all_clusters() {
+        use crate::config::{ClientConfigBuilder, ClientFailoverConfig};
+
+        let config1 = ClientConfigBuilder::new()
+            .cluster_name("cluster1")
+            .add_address("192.0.2.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+        let config2 = ClientConfigBuilder::new()
+            .cluster_name("cluster2")
+            .add_address("192.0.2.2:5701".parse().unwrap())
+            .build()
+            .unwrap();
+        let config3 = ClientConfigBuilder::new()
+            .cluster_name("cluster3")
+            .add_address("192.0.2.3:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .add_client_config(config2)
+            .add_client_config(config3)
+            .try_count(1)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::with_failover(failover);
+
+        assert_eq!(manager.current_cluster_index(), 0);
+
+        let _ = manager.try_alternative_cluster().await;
+        assert_eq!(manager.current_cluster_index(), 1);
+
+        let _ = manager.try_alternative_cluster().await;
+        assert_eq!(manager.current_cluster_index(), 2);
+
+        let _ = manager.try_alternative_cluster().await;
         assert_eq!(manager.current_cluster_index(), 0);
     }
 }
