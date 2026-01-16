@@ -7,6 +7,7 @@ license.workspace = true
 [features]
 default = []
 tls = ["tokio-rustls", "rustls-pemfile", "webpki-roots", "rustls-pki-types"]
+kafka = ["rdkafka"]
 metrics = ["dep:metrics", "metrics-exporter-prometheus"]
 aws = ["aws-config", "aws-sdk-ec2"]
 kubernetes = ["kube", "k8s-openapi"]
@@ -55,6 +56,9 @@ serde_json = { version = "1.0", optional = true }
 # WebSocket (optional, for WebSocket transport)
 tokio-tungstenite = { version = "0.24", optional = true }
 url = { version = "2.5", optional = true }
+
+# Kafka (optional, for Kafka connectors)
+rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

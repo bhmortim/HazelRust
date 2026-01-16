@@ -1,6 +1,8 @@
 //! Jet streaming APIs for Hazelcast.
 
 mod config;
+#[cfg(feature = "kafka")]
+pub mod connectors;
 mod job;
 mod pipeline;
 mod service;
@@ -16,3 +18,10 @@ pub use pipeline::{
 };
 pub use service::JetService;
 pub use status::{JobMetrics, JobStatus};
+
+#[cfg(feature = "kafka")]
+pub use connectors::kafka::{
+    kafka_sink, kafka_source, Acks, AutoOffsetReset, CompressionType, IsolationLevel, KafkaSink,
+    KafkaSinkConfig, KafkaSinkConfigBuilder, KafkaSource, KafkaSourceConfig,
+    KafkaSourceConfigBuilder,
+};

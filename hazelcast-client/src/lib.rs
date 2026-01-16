@@ -72,6 +72,12 @@ pub use transaction::{
     XA_RBOTHER, XA_RBPROTO, XA_RBTIMEOUT, XA_RBTRANSIENT, XA_RBEND,
 };
 pub use jet::{JetService, Job, JobConfig, JobConfigBuilder, JobStatus, Pipeline, PipelineBuilder};
+#[cfg(feature = "kafka")]
+pub use jet::{
+    kafka_sink, kafka_source, Acks, AutoOffsetReset, CompressionType, IsolationLevel, KafkaSink,
+    KafkaSinkConfig, KafkaSinkConfigBuilder, KafkaSource, KafkaSourceConfig,
+    KafkaSourceConfigBuilder,
+};
 pub use cluster::{
     ClientInfo, ClusterService, MigrationEvent, MigrationListener, MigrationState, Partition,
     PartitionService,
