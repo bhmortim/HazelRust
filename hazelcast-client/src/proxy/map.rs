@@ -14,9 +14,9 @@ use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
     IS_EVENT_FLAG, IS_NULL_FLAG, END_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_ADD_INDEX, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PREDICATE,
-    MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_GET,
-    MAP_KEYS_WITH_PREDICATE, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_REMOVE,
-    MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
+    MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_GET, MAP_GET_ALL,
+    MAP_KEYS_WITH_PREDICATE, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL,
+    MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
     RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
@@ -392,6 +392,176 @@ where
 
         let response = self.invoke(msg).await?;
         Self::decode_int_response(&response).map(|v| v as usize)
+    }
+
+    /// Puts all entries from the given map into this map.
+    ///
+    /// This is more efficient than calling `put` for each entry individually.
+    /// If near-cache is enabled, invalidates all affected keys before the operation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut entries = HashMap::new();
+    /// entries.insert("key1".to_string(), "value1".to_string());
+    /// entries.insert("key2".to_string(), "value2".to_string());
+    /// map.put_all(entries).await?;
+    /// ```
+    pub async fn put_all(&self, entries: HashMap<K, V>) -> Result<()>
+    where
+        K: Clone,
+    {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let mut serialized_entries = Vec::with_capacity(entries.len());
+        for (key, value) in &entries {
+            let key_data = Self::serialize_value(key)?;
+            let value_data = Self::serialize_value(value)?;
+            serialized_entries.push((key_data, value_data));
+        }
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            for (key_data, _) in &serialized_entries {
+                cache_guard.invalidate(key_data);
+            }
+        }
+
+        let mut message = ClientMessage::create_for_encode(MAP_PUT_ALL, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::int_frame(serialized_entries.len() as i32));
+
+        for (key_data, value_data) in serialized_entries {
+            message.add_frame(Self::data_frame(&key_data));
+            message.add_frame(Self::data_frame(&value_data));
+        }
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
+    /// Retrieves all values for the given keys.
+    ///
+    /// Returns a map containing only the keys that exist in this map.
+    /// If near-cache is enabled, checks the local cache first and only fetches
+    /// cache misses from the cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let keys = vec!["key1".to_string(), "key2".to_string(), "key3".to_string()];
+    /// let results = map.get_all(&keys).await?;
+    /// for (key, value) in results {
+    ///     println!("{}: {}", key, value);
+    /// }
+    /// ```
+    pub async fn get_all(&self, keys: &[K]) -> Result<HashMap<K, V>>
+    where
+        K: Clone + Eq + Hash,
+    {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut results = HashMap::new();
+        let mut keys_to_fetch = Vec::new();
+        let mut key_data_map: HashMap<Vec<u8>, K> = HashMap::new();
+
+        for key in keys {
+            let key_data = Self::serialize_value(key)?;
+
+            if let Some(ref cache) = self.near_cache {
+                let mut cache_guard = cache.lock().unwrap();
+                if let Some(value_data) = cache_guard.get(&key_data) {
+                    let mut input = ObjectDataInput::new(&value_data);
+                    if let Ok(value) = V::deserialize(&mut input) {
+                        results.insert(key.clone(), value);
+                        continue;
+                    }
+                }
+            }
+
+            key_data_map.insert(key_data.clone(), key.clone());
+            keys_to_fetch.push(key_data);
+        }
+
+        if keys_to_fetch.is_empty() {
+            return Ok(results);
+        }
+
+        let mut message = ClientMessage::create_for_encode(MAP_GET_ALL, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::int_frame(keys_to_fetch.len() as i32));
+
+        for key_data in &keys_to_fetch {
+            message.add_frame(Self::data_frame(key_data));
+        }
+
+        let response = self.invoke(message).await?;
+        let fetched_entries: Vec<(K, V)> = Self::decode_entries_response(&response)?;
+
+        for (key, value) in fetched_entries {
+            if let Some(ref cache) = self.near_cache {
+                let key_data = Self::serialize_value(&key)?;
+                let value_data = Self::serialize_value(&value)?;
+                let mut cache_guard = cache.lock().unwrap();
+                cache_guard.put(key_data, value_data);
+            }
+            results.insert(key, value);
+        }
+
+        Ok(results)
+    }
+
+    /// Removes all entries with the given keys from this map.
+    ///
+    /// This is a convenience method that removes each key. Unlike `remove`,
+    /// this method does not return the previous values.
+    /// If near-cache is enabled, invalidates all affected keys.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let keys = vec!["key1".to_string(), "key2".to_string(), "key3".to_string()];
+    /// map.remove_all(&keys).await?;
+    /// ```
+    pub async fn remove_all(&self, keys: &[K]) -> Result<()> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        if keys.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            for key in keys {
+                if let Ok(key_data) = Self::serialize_value(key) {
+                    cache_guard.invalidate(&key_data);
+                }
+            }
+        }
+
+        for key in keys {
+            let key_data = Self::serialize_value(key)?;
+            let partition_id = compute_partition_hash(&key_data);
+
+            let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
+            message.add_frame(Self::string_frame(&self.name));
+            message.add_frame(Self::data_frame(&key_data));
+
+            self.invoke(message).await?;
+        }
+
+        Ok(())
     }
 
     /// Removes all entries from this map.
@@ -2153,6 +2323,151 @@ mod tests {
 
         let result = map.stop_near_cache_invalidation().await;
         assert!(matches!(result, Ok(false)));
+    }
+
+    #[test]
+    fn test_put_all_empty_map() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let _cm = Arc::new(ConnectionManager::new(vec![addr]));
+
+        let entries: HashMap<String, String> = HashMap::new();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_get_all_empty_keys() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let _cm = Arc::new(ConnectionManager::new(vec![addr]));
+
+        let keys: Vec<String> = Vec::new();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_remove_all_empty_keys() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let _cm = Arc::new(ConnectionManager::new(vec![addr]));
+
+        let keys: Vec<String> = Vec::new();
+        assert!(keys.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_put_all_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let mut entries = HashMap::new();
+        entries.insert("key".to_string(), "value".to_string());
+
+        let result = map.put_all(entries).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_all_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let keys = vec!["key".to_string()];
+        let result = map.get_all(&keys).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_remove_all_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let keys = vec!["key".to_string()];
+        let result = map.remove_all(&keys).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_put_all_empty_returns_ok() {
+        use crate::config::ClientConfigBuilder;
+        use crate::connection::ConnectionManager;
+
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let entries: HashMap<String, String> = HashMap::new();
+        let result = map.put_all(entries).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_all_empty_returns_empty_map() {
+        use crate::config::ClientConfigBuilder;
+        use crate::connection::ConnectionManager;
+
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let keys: Vec<String> = Vec::new();
+        let result = map.get_all(&keys).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_remove_all_empty_returns_ok() {
+        use crate::config::ClientConfigBuilder;
+        use crate::connection::ConnectionManager;
+
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let keys: Vec<String> = Vec::new();
+        let result = map.remove_all(&keys).await;
+        assert!(result.is_ok());
     }
 
     #[test]

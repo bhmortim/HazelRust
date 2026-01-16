@@ -71,6 +71,12 @@ pub const MAP_PUT: i32 = 0x010100;
 /// Map remove request.
 pub const MAP_REMOVE: i32 = 0x010300;
 
+/// Map put all request.
+pub const MAP_PUT_ALL: i32 = 0x010400;
+
+/// Map get all request.
+pub const MAP_GET_ALL: i32 = 0x010B00;
+
 /// Map contains key request.
 pub const MAP_CONTAINS_KEY: i32 = 0x010900;
 
