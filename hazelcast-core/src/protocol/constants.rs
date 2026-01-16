@@ -870,3 +870,6 @@ pub const MAP_FETCH_ENTRIES: i32 = 0x014400;
 
 /// Map fetch values request (for iteration).
 pub const MAP_FETCH_VALUES: i32 = 0x014500;
+
+/// Client statistics request.
+pub const CLIENT_STATISTICS: i32 = 0x000C00;
