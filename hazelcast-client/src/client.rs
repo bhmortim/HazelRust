@@ -6,7 +6,7 @@ use bytes::BytesMut;
 use hazelcast_core::{Deserializable, Result, Serializable};
 use uuid::Uuid;
 
-use crate::cluster::{ClusterService, LifecycleService, PartitionService};
+use crate::cluster::{CPSubsystemManagementService, ClusterService, LifecycleService, PartitionService};
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};
@@ -760,6 +760,39 @@ impl HazelcastClient {
     /// ```
     pub fn partition_service(&self) -> PartitionService {
         PartitionService::new(Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns the CP Subsystem management service.
+    ///
+    /// The CP Subsystem management service provides operations to:
+    /// - Query CP groups and their identifiers
+    /// - Get detailed information about specific CP groups
+    /// - Force destroy CP groups (use with caution)
+    /// - Query and manage CP members
+    ///
+    /// Note: These operations require the CP Subsystem to be enabled on the
+    /// Hazelcast cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let cp = client.cp_subsystem();
+    ///
+    /// // List all CP groups
+    /// let group_ids = cp.get_cp_group_ids().await?;
+    /// for id in &group_ids {
+    ///     println!("CP Group: {}", id.name());
+    /// }
+    ///
+    /// // Get CP members
+    /// let members = cp.get_cp_members().await?;
+    /// println!("CP members: {}", members.len());
+    ///
+    /// // Force destroy a group (dangerous!)
+    /// cp.force_destroy_cp_group("stuck-group").await?;
+    /// ```
+    pub fn cp_subsystem(&self) -> CPSubsystemManagementService {
+        CPSubsystemManagementService::new(Arc::clone(&self.connection_manager))
     }
 
     /// Subscribes to cluster membership events.
