@@ -5,6 +5,148 @@ use std::sync::Arc;
 /// Default local parallelism value (-1 means use default).
 const DEFAULT_LOCAL_PARALLELISM: i32 = -1;
 
+/// Window definition for streaming aggregations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowDefinition {
+    /// Fixed-size non-overlapping window.
+    Tumbling {
+        /// Window size in milliseconds.
+        size_ms: u64,
+    },
+    /// Fixed-size overlapping window with slide interval.
+    Sliding {
+        /// Window size in milliseconds.
+        size_ms: u64,
+        /// Slide interval in milliseconds.
+        slide_ms: u64,
+    },
+    /// Gap-based session window that groups events within a gap.
+    Session {
+        /// Maximum gap between events in milliseconds.
+        gap_ms: u64,
+    },
+}
+
+impl WindowDefinition {
+    /// Creates a tumbling window with the given size in milliseconds.
+    pub fn tumbling(size_ms: u64) -> Self {
+        Self::Tumbling { size_ms }
+    }
+
+    /// Creates a sliding window with the given size and slide interval.
+    pub fn sliding(size_ms: u64, slide_ms: u64) -> Self {
+        Self::Sliding { size_ms, slide_ms }
+    }
+
+    /// Creates a session window with the given gap.
+    pub fn session(gap_ms: u64) -> Self {
+        Self::Session { gap_ms }
+    }
+
+    /// Returns a string representation for vertex naming.
+    pub fn vertex_suffix(&self) -> String {
+        match self {
+            Self::Tumbling { size_ms } => format!("tumbling:{}ms", size_ms),
+            Self::Sliding { size_ms, slide_ms } => {
+                format!("sliding:{}ms:{}ms", size_ms, slide_ms)
+            }
+            Self::Session { gap_ms } => format!("session:{}ms", gap_ms),
+        }
+    }
+}
+
+/// Aggregate operation types for stream processing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AggregateOperation {
+    /// Counts the number of items.
+    Count,
+    /// Sums numeric values.
+    Sum,
+    /// Calculates the average of numeric values.
+    Average,
+    /// Finds the minimum value.
+    Min,
+    /// Finds the maximum value.
+    Max,
+    /// Collects items into a list.
+    ToList,
+    /// Collects items into a set (distinct values).
+    ToSet,
+    /// Custom aggregation with a named aggregator.
+    Custom(String),
+}
+
+impl AggregateOperation {
+    /// Returns a string representation for vertex naming.
+    pub fn vertex_suffix(&self) -> &str {
+        match self {
+            Self::Count => "count",
+            Self::Sum => "sum",
+            Self::Average => "avg",
+            Self::Min => "min",
+            Self::Max => "max",
+            Self::ToList => "toList",
+            Self::ToSet => "toSet",
+            Self::Custom(name) => name,
+        }
+    }
+}
+
+/// Join condition for hash joins between streams.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JoinCondition {
+    left_key: String,
+    right_key: String,
+}
+
+impl JoinCondition {
+    /// Creates a join condition on matching keys.
+    pub fn on(left_key: impl Into<String>, right_key: impl Into<String>) -> Self {
+        Self {
+            left_key: left_key.into(),
+            right_key: right_key.into(),
+        }
+    }
+
+    /// Creates a join condition where both sides use the same key name.
+    pub fn on_key(key: impl Into<String>) -> Self {
+        let k = key.into();
+        Self {
+            left_key: k.clone(),
+            right_key: k,
+        }
+    }
+
+    /// Returns the left stream's join key.
+    pub fn left_key(&self) -> &str {
+        &self.left_key
+    }
+
+    /// Returns the right stream's join key.
+    pub fn right_key(&self) -> &str {
+        &self.right_key
+    }
+}
+
+/// Information about a joined stream in the pipeline.
+#[derive(Debug, Clone)]
+pub struct JoinedStream {
+    source: Arc<dyn Source>,
+    condition: JoinCondition,
+}
+
+impl JoinedStream {
+    /// Returns the source of the joined stream.
+    pub fn source(&self) -> &Arc<dyn Source> {
+        &self.source
+    }
+
+    /// Returns the join condition.
+    pub fn condition(&self) -> &JoinCondition {
+        &self.condition
+    }
+}
+
 /// A processing vertex in a Jet pipeline.
 #[derive(Debug, Clone)]
 pub struct ProcessorVertex {
@@ -431,6 +573,7 @@ pub struct Pipeline {
     edges: Vec<(usize, usize)>,
     sources: Vec<Arc<dyn Source>>,
     sinks: Vec<Arc<dyn Sink>>,
+    joined_streams: Vec<JoinedStream>,
 }
 
 impl Pipeline {
@@ -480,6 +623,11 @@ impl Pipeline {
     pub fn sinks(&self) -> &[Arc<dyn Sink>] {
         &self.sinks
     }
+
+    /// Returns the joined streams in this pipeline.
+    pub fn joined_streams(&self) -> &[JoinedStream] {
+        &self.joined_streams
+    }
 }
 
 /// Builder for constructing Jet pipelines.
@@ -489,6 +637,7 @@ pub struct PipelineBuilder {
     edges: Vec<(usize, usize)>,
     sources: Vec<Arc<dyn Source>>,
     sinks: Vec<Arc<dyn Sink>>,
+    joined_streams: Vec<JoinedStream>,
 }
 
 impl Clone for PipelineBuilder {
@@ -498,6 +647,7 @@ impl Clone for PipelineBuilder {
             edges: self.edges.clone(),
             sources: self.sources.clone(),
             sinks: self.sinks.clone(),
+            joined_streams: self.joined_streams.clone(),
         }
     }
 }
@@ -565,6 +715,74 @@ impl PipelineBuilder {
         self
     }
 
+    /// Adds an aggregate vertex with a specific aggregate operation.
+    pub fn aggregate_op(mut self, operation: AggregateOperation) -> Self {
+        let vertex = ProcessorVertex::new(format!("aggregate:{}", operation.vertex_suffix()));
+        self.vertices.push(vertex);
+        self.connect_to_previous();
+        self
+    }
+
+    /// Adds a windowed aggregation stage.
+    ///
+    /// This combines windowing with aggregation for time-based computations.
+    pub fn windowed_aggregate(
+        mut self,
+        window: WindowDefinition,
+        operation: AggregateOperation,
+    ) -> Self {
+        let vertex = ProcessorVertex::new(format!(
+            "window_aggregate:{}:{}",
+            window.vertex_suffix(),
+            operation.vertex_suffix()
+        ));
+        self.vertices.push(vertex);
+        self.connect_to_previous();
+        self
+    }
+
+    /// Adds a window stage for time-based grouping.
+    pub fn window(mut self, definition: WindowDefinition) -> Self {
+        let vertex = ProcessorVertex::new(format!("window:{}", definition.vertex_suffix()));
+        self.vertices.push(vertex);
+        self.connect_to_previous();
+        self
+    }
+
+    /// Adds a hash join stage that joins this stream with another source.
+    ///
+    /// The join is performed using the specified join condition to match
+    /// keys from both streams.
+    pub fn hash_join<S: Source + 'static>(
+        mut self,
+        other: S,
+        condition: JoinCondition,
+    ) -> Self {
+        let vertex = ProcessorVertex::new(format!(
+            "hash_join:{}:{}={}",
+            other.name(),
+            condition.left_key(),
+            condition.right_key()
+        ));
+        self.vertices.push(vertex);
+        self.joined_streams.push(JoinedStream {
+            source: Arc::new(other),
+            condition,
+        });
+        self.connect_to_previous();
+        self
+    }
+
+    /// Adds a rebalance stage for load distribution across parallel processors.
+    ///
+    /// This is useful after operations that may have uneven data distribution.
+    pub fn rebalance(mut self) -> Self {
+        let vertex = ProcessorVertex::new("rebalance");
+        self.vertices.push(vertex);
+        self.connect_to_previous();
+        self
+    }
+
     /// Adds a sink vertex that writes to the given sink.
     pub fn write_to<S: Sink + 'static>(mut self, sink: S) -> Self {
         let vertex = ProcessorVertex::new(sink.vertex_name());
@@ -613,6 +831,7 @@ impl PipelineBuilder {
             edges: self.edges,
             sources: self.sources,
             sinks: self.sinks,
+            joined_streams: self.joined_streams,
         }
     }
 }
@@ -961,5 +1180,252 @@ mod tests {
         assert_send_sync::<JdbcSource>();
         assert_send_sync::<FileSink>();
         assert_send_sync::<ObservableSink>();
+    }
+
+    #[test]
+    fn test_window_definition_tumbling() {
+        let window = WindowDefinition::tumbling(5000);
+        assert_eq!(window, WindowDefinition::Tumbling { size_ms: 5000 });
+        assert_eq!(window.vertex_suffix(), "tumbling:5000ms");
+    }
+
+    #[test]
+    fn test_window_definition_sliding() {
+        let window = WindowDefinition::sliding(10000, 1000);
+        assert_eq!(
+            window,
+            WindowDefinition::Sliding {
+                size_ms: 10000,
+                slide_ms: 1000
+            }
+        );
+        assert_eq!(window.vertex_suffix(), "sliding:10000ms:1000ms");
+    }
+
+    #[test]
+    fn test_window_definition_session() {
+        let window = WindowDefinition::session(30000);
+        assert_eq!(window, WindowDefinition::Session { gap_ms: 30000 });
+        assert_eq!(window.vertex_suffix(), "session:30000ms");
+    }
+
+    #[test]
+    fn test_aggregate_operation_types() {
+        assert_eq!(AggregateOperation::Count.vertex_suffix(), "count");
+        assert_eq!(AggregateOperation::Sum.vertex_suffix(), "sum");
+        assert_eq!(AggregateOperation::Average.vertex_suffix(), "avg");
+        assert_eq!(AggregateOperation::Min.vertex_suffix(), "min");
+        assert_eq!(AggregateOperation::Max.vertex_suffix(), "max");
+        assert_eq!(AggregateOperation::ToList.vertex_suffix(), "toList");
+        assert_eq!(AggregateOperation::ToSet.vertex_suffix(), "toSet");
+        assert_eq!(
+            AggregateOperation::Custom("myAgg".to_string()).vertex_suffix(),
+            "myAgg"
+        );
+    }
+
+    #[test]
+    fn test_join_condition_on() {
+        let condition = JoinCondition::on("left_id", "right_id");
+        assert_eq!(condition.left_key(), "left_id");
+        assert_eq!(condition.right_key(), "right_id");
+    }
+
+    #[test]
+    fn test_join_condition_on_key() {
+        let condition = JoinCondition::on_key("id");
+        assert_eq!(condition.left_key(), "id");
+        assert_eq!(condition.right_key(), "id");
+    }
+
+    #[test]
+    fn test_pipeline_window_stage() {
+        let pipeline = Pipeline::builder()
+            .read_from(map_source("events"))
+            .window(WindowDefinition::tumbling(60000))
+            .aggregate_op(AggregateOperation::Count)
+            .write_to(map_sink("counts"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 4);
+        assert_eq!(pipeline.vertices()[1].name(), "window:tumbling:60000ms");
+        assert_eq!(pipeline.vertices()[2].name(), "aggregate:count");
+    }
+
+    #[test]
+    fn test_pipeline_sliding_window() {
+        let pipeline = Pipeline::builder()
+            .read_from(map_source("metrics"))
+            .window(WindowDefinition::sliding(300000, 60000))
+            .aggregate_op(AggregateOperation::Average)
+            .write_to(map_sink("averages"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 4);
+        assert_eq!(
+            pipeline.vertices()[1].name(),
+            "window:sliding:300000ms:60000ms"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_session_window() {
+        let pipeline = Pipeline::builder()
+            .read_from(map_source("user-actions"))
+            .window(WindowDefinition::session(1800000))
+            .aggregate_op(AggregateOperation::ToList)
+            .write_to(map_sink("sessions"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 4);
+        assert_eq!(
+            pipeline.vertices()[1].name(),
+            "window:session:1800000ms"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_windowed_aggregate() {
+        let pipeline = Pipeline::builder()
+            .read_from(map_source("transactions"))
+            .windowed_aggregate(
+                WindowDefinition::tumbling(3600000),
+                AggregateOperation::Sum,
+            )
+            .write_to(map_sink("hourly-totals"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 3);
+        assert_eq!(
+            pipeline.vertices()[1].name(),
+            "window_aggregate:tumbling:3600000ms:sum"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_hash_join() {
+        let pipeline = Pipeline::builder()
+            .read_from(map_source("orders"))
+            .hash_join(
+                map_source("customers"),
+                JoinCondition::on("customer_id", "id"),
+            )
+            .write_to(map_sink("enriched-orders"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 3);
+        assert_eq!(
+            pipeline.vertices()[1].name(),
+            "hash_join:customers:customer_id=id"
+        );
+        assert_eq!(pipeline.joined_streams().len(), 1);
+        assert_eq!(pipeline.joined_streams()[0].source().name(), "customers");
+        assert_eq!(
+            pipeline.joined_streams()[0].condition().left_key(),
+            "customer_id"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_hash_join_same_key() {
+        let pipeline = Pipeline::builder()
+            .read_from(map_source("left-stream"))
+            .hash_join(map_source("right-stream"), JoinCondition::on_key("key"))
+            .write_to(map_sink("joined"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 3);
+        assert_eq!(
+            pipeline.vertices()[1].name(),
+            "hash_join:right-stream:key=key"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_rebalance() {
+        let pipeline = Pipeline::builder()
+            .read_from(map_source("skewed-data"))
+            .rebalance()
+            .map("process")
+            .write_to(map_sink("output"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 4);
+        assert_eq!(pipeline.vertices()[1].name(), "rebalance");
+    }
+
+    #[test]
+    fn test_pipeline_complex_streaming() {
+        let pipeline = Pipeline::builder()
+            .read_from(map_source("raw-events"))
+            .filter("valid-events")
+            .hash_join(
+                map_source("user-profiles"),
+                JoinCondition::on("user_id", "id"),
+            )
+            .rebalance()
+            .window(WindowDefinition::tumbling(60000))
+            .aggregate_op(AggregateOperation::Count)
+            .write_to(map_sink("minute-counts"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 7);
+        assert_eq!(pipeline.sources().len(), 1);
+        assert_eq!(pipeline.joined_streams().len(), 1);
+        assert_eq!(pipeline.sinks().len(), 1);
+    }
+
+    #[test]
+    fn test_pipeline_multiple_joins() {
+        let pipeline = Pipeline::builder()
+            .read_from(map_source("orders"))
+            .hash_join(
+                map_source("customers"),
+                JoinCondition::on("customer_id", "id"),
+            )
+            .hash_join(
+                map_source("products"),
+                JoinCondition::on("product_id", "id"),
+            )
+            .write_to(map_sink("enriched"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 4);
+        assert_eq!(pipeline.joined_streams().len(), 2);
+        assert_eq!(pipeline.joined_streams()[0].source().name(), "customers");
+        assert_eq!(pipeline.joined_streams()[1].source().name(), "products");
+    }
+
+    #[test]
+    fn test_aggregate_op_all_types() {
+        let ops = vec![
+            AggregateOperation::Count,
+            AggregateOperation::Sum,
+            AggregateOperation::Average,
+            AggregateOperation::Min,
+            AggregateOperation::Max,
+            AggregateOperation::ToList,
+            AggregateOperation::ToSet,
+        ];
+
+        for op in ops {
+            let pipeline = Pipeline::builder()
+                .read_from(map_source("input"))
+                .aggregate_op(op.clone())
+                .write_to(map_sink("output"))
+                .build();
+
+            assert_eq!(pipeline.vertex_count(), 3);
+            assert!(pipeline.vertices()[1].name().starts_with("aggregate:"));
+        }
+    }
+
+    #[test]
+    fn test_window_types_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<WindowDefinition>();
+        assert_send_sync::<AggregateOperation>();
+        assert_send_sync::<JoinCondition>();
+        assert_send_sync::<JoinedStream>();
     }
 }
