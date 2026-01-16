@@ -151,11 +151,49 @@ where
         Ok(self.size().await? == 0)
     }
 
+    /// Returns the number of additional elements that this queue can ideally
+    /// accept without blocking.
+    pub async fn remaining_capacity(&self) -> Result<i32> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_REMAINING_CAPACITY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke(message).await?;
+        Self::decode_int_response(&response)
+    }
+
     /// Inserts the specified element into this queue, waiting if necessary
     /// for space to become available.
     pub async fn put(&self, item: T) -> Result<()> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
+        let item_data = Self::serialize_value(&item)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_PUT);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&item_data));
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
+    /// Inserts the specified element into this queue, waiting up to the specified
+    /// timeout for space to become available.
+    ///
+    /// Returns `true` if the element was added, `false` if the timeout expired.
+    pub async fn put_timeout(&self, item: T, timeout: Duration) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+
+        match tokio::time::timeout(timeout, self.put_internal(item)).await {
+            Ok(result) => result.map(|_| true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    async fn put_internal(&self, item: T) -> Result<()> {
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_PUT);
@@ -178,6 +216,47 @@ where
         let response = self.invoke(message).await?;
         Self::decode_nullable_response(&response)?
             .ok_or_else(|| HazelcastError::Serialization("expected non-null response".to_string()))
+    }
+
+    /// Retrieves and removes the head of this queue, waiting up to the specified
+    /// timeout for an element to become available.
+    ///
+    /// Returns `None` if the timeout expires before an element is available.
+    pub async fn take_timeout(&self, timeout: Duration) -> Result<Option<T>> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        match tokio::time::timeout(timeout, self.take_internal()).await {
+            Ok(result) => result.map(Some),
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn take_internal(&self) -> Result<T> {
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_TAKE);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke(message).await?;
+        Self::decode_nullable_response(&response)?
+            .ok_or_else(|| HazelcastError::Serialization("expected non-null response".to_string()))
+    }
+
+    /// Retrieves, but does not remove, the head of this queue.
+    ///
+    /// Unlike `peek()`, this method returns an error if the queue is empty.
+    pub async fn element(&self) -> Result<T> {
+        self.peek().await?.ok_or_else(|| {
+            HazelcastError::Serialization("queue is empty".to_string())
+        })
+    }
+
+    /// Retrieves and removes the head of this queue.
+    ///
+    /// Unlike `poll()`, this method returns an error if the queue is empty.
+    pub async fn remove_head(&self) -> Result<T> {
+        self.poll().await?.ok_or_else(|| {
+            HazelcastError::Serialization("queue is empty".to_string())
+        })
     }
 
     /// Removes a single instance of the specified element from this queue, if present.
@@ -253,6 +332,20 @@ where
         Self::decode_bool_response(&response)
     }
 
+    /// Removes all elements from this queue and returns them.
+    ///
+    /// This operation may be more efficient than repeatedly polling this queue.
+    pub async fn drain(&self) -> Result<Vec<T>> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_DRAIN_TO);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke(message).await?;
+        Self::decode_list_response(&response)
+    }
+
     /// Removes at most the given number of elements from this queue and returns them.
     ///
     /// This operation may be more efficient than repeatedly polling this queue.
@@ -266,6 +359,28 @@ where
 
         let response = self.invoke(message).await?;
         Self::decode_list_response(&response)
+    }
+
+    /// Returns all elements in this queue as a vector without removing them.
+    ///
+    /// This provides a snapshot of the queue contents at the time of the call.
+    pub async fn to_vec(&self) -> Result<Vec<T>> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_ITERATOR);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke(message).await?;
+        Self::decode_list_response(&response)
+    }
+
+    /// Returns an iterator over the elements in this queue.
+    ///
+    /// This fetches all elements into memory and returns an owned iterator.
+    /// For very large queues, consider using `drain_to()` with batching.
+    pub async fn iter(&self) -> Result<impl Iterator<Item = T>> {
+        self.to_vec().await.map(|v| v.into_iter())
     }
 
     /// Registers an item listener to receive notifications when items are added or removed.

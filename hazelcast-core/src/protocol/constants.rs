@@ -140,6 +140,18 @@ pub const QUEUE_ADD_LISTENER: i32 = 0x030E00;
 /// Queue remove item listener request.
 pub const QUEUE_REMOVE_LISTENER: i32 = 0x030F00;
 
+/// Queue remaining capacity request.
+pub const QUEUE_REMAINING_CAPACITY: i32 = 0x031000;
+
+/// Queue is empty request.
+pub const QUEUE_IS_EMPTY: i32 = 0x031100;
+
+/// Queue iterator (get all) request.
+pub const QUEUE_ITERATOR: i32 = 0x031200;
+
+/// Queue drain to (without max size) request.
+pub const QUEUE_DRAIN_TO: i32 = 0x030B00;
+
 /// Set add request.
 pub const SET_ADD: i32 = 0x060100;
 
