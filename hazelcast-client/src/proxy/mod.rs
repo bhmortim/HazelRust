@@ -1,6 +1,7 @@
 //! Distributed data structure proxies.
 
 mod atomic_long;
+mod cache;
 mod cardinality_estimator;
 mod countdown_latch;
 mod entry_processor;
@@ -20,6 +21,7 @@ mod set;
 mod topic;
 
 pub use atomic_long::AtomicLong;
+pub use cache::ICache;
 pub use cardinality_estimator::CardinalityEstimator;
 pub use countdown_latch::CountDownLatch;
 pub use entry_processor::{EntryProcessor, EntryProcessorResult};

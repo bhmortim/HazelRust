@@ -16,8 +16,9 @@ use crate::listener::{
     LifecycleEvent, ListenerId, ListenerRegistration, Member, MemberEvent,
 };
 use crate::proxy::{
-    AtomicLong, CardinalityEstimator, CountDownLatch, FencedLock, FlakeIdGenerator, IList, IMap,
-    IQueue, ISet, ITopic, MultiMap, PNCounter, ReliableTopic, ReplicatedMap, Ringbuffer, Semaphore,
+    AtomicLong, CardinalityEstimator, CountDownLatch, FencedLock, FlakeIdGenerator, ICache, IList,
+    IMap, IQueue, ISet, ITopic, MultiMap, PNCounter, ReliableTopic, ReplicatedMap, Ringbuffer,
+    Semaphore,
 };
 use crate::sql::SqlService;
 use crate::transaction::{TransactionContext, TransactionOptions, XATransaction, Xid};
@@ -374,6 +375,41 @@ impl HazelcastClient {
     /// - Coordinating startup sequences in distributed systems
     pub fn get_countdown_latch(&self, name: &str) -> CountDownLatch {
         CountDownLatch::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed cache proxy for the given name.
+    ///
+    /// The cache proxy implements a subset of the JCache (JSR-107) API, providing
+    /// standard caching operations with strong consistency guarantees.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `K`: The key type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    /// - `V`: The value type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let cache = client.get_cache::<String, User>("user-cache");
+    ///
+    /// // Basic operations
+    /// cache.put("user:1".to_string(), user).await?;
+    /// let user = cache.get(&"user:1".to_string()).await?;
+    ///
+    /// // Atomic operations
+    /// let old = cache.get_and_put("user:1".to_string(), new_user).await?;
+    /// let removed = cache.get_and_remove(&"user:1".to_string()).await?;
+    ///
+    /// // Conditional operations
+    /// cache.put_if_absent("user:2".to_string(), user2).await?;
+    /// cache.replace_if_equals(&"user:1".to_string(), &old_user, new_user).await?;
+    /// ```
+    pub fn get_cache<K, V>(&self, name: &str) -> ICache<K, V>
+    where
+        K: Serializable + Deserializable + Send + Sync,
+        V: Serializable + Deserializable + Send + Sync,
+    {
+        ICache::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns a distributed CardinalityEstimator proxy for the given name.

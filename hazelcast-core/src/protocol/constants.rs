@@ -757,3 +757,48 @@ pub const MAP_LOAD_ALL: i32 = 0x012000;
 
 /// Map load given keys request.
 pub const MAP_LOAD_GIVEN_KEYS: i32 = 0x012100;
+
+/// Cache get request.
+pub const CACHE_GET: i32 = 0x130100;
+
+/// Cache get all request.
+pub const CACHE_GET_ALL: i32 = 0x130200;
+
+/// Cache put request.
+pub const CACHE_PUT: i32 = 0x130300;
+
+/// Cache put all request.
+pub const CACHE_PUT_ALL: i32 = 0x130400;
+
+/// Cache put if absent request.
+pub const CACHE_PUT_IF_ABSENT: i32 = 0x130500;
+
+/// Cache remove request.
+pub const CACHE_REMOVE: i32 = 0x130600;
+
+/// Cache remove all request.
+pub const CACHE_REMOVE_ALL: i32 = 0x130700;
+
+/// Cache clear request.
+pub const CACHE_CLEAR: i32 = 0x130800;
+
+/// Cache replace request.
+pub const CACHE_REPLACE: i32 = 0x130900;
+
+/// Cache replace if same request.
+pub const CACHE_REPLACE_IF_SAME: i32 = 0x130A00;
+
+/// Cache contains key request.
+pub const CACHE_CONTAINS_KEY: i32 = 0x130B00;
+
+/// Cache get and put request.
+pub const CACHE_GET_AND_PUT: i32 = 0x130C00;
+
+/// Cache get and remove request.
+pub const CACHE_GET_AND_REMOVE: i32 = 0x130D00;
+
+/// Cache get and replace request.
+pub const CACHE_GET_AND_REPLACE: i32 = 0x130E00;
+
+/// Cache size request.
+pub const CACHE_SIZE: i32 = 0x130F00;
