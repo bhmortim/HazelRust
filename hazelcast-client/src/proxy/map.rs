@@ -16,13 +16,13 @@ use hazelcast_core::protocol::constants::{
     MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PAGING_PREDICATE,
     MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL, MAP_EXECUTE_ON_ALL_KEYS,
-    MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL,
-    MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED, MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE,
-    MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT,
-    MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME, MAP_REPLACE,
-    MAP_REPLACE_IF_SAME, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK,
-    MAP_VALUES_WITH_PAGING_PREDICATE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
-    RESPONSE_HEADER_SIZE,
+    MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE, MAP_FLUSH,
+    MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED,
+    MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOCK, MAP_PROJECT,
+    MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT,
+    MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME, MAP_REPLACE, MAP_REPLACE_IF_SAME,
+    MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK, MAP_VALUES_WITH_PAGING_PREDICATE,
+    MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -2048,6 +2048,58 @@ where
         self.decode_entry_processor_results::<E::Output>(&response)
     }
 
+    /// Executes an entry processor on entries matching the given predicate.
+    ///
+    /// Only entries that satisfy the predicate are processed. The processor is sent
+    /// to all cluster members, where it executes on matching entries atomically.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `E`: The entry processor type implementing [`EntryProcessor`]
+    ///
+    /// # Arguments
+    ///
+    /// * `processor` - The entry processor to execute
+    /// * `predicate` - The predicate to filter which entries are processed
+    ///
+    /// # Returns
+    ///
+    /// A map of keys to their processing results for all matching entries.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::Predicates;
+    ///
+    /// // Reset counters only for active users
+    /// let predicate = Predicates::equal("status", &"active".to_string())?;
+    /// let results = map.execute_on_entries_with_predicate(&reset_processor, &predicate).await?;
+    /// println!("Reset {} active entries", results.len());
+    /// ```
+    pub async fn execute_on_entries_with_predicate<E>(
+        &self,
+        processor: &E,
+        predicate: &dyn Predicate,
+    ) -> Result<EntryProcessorResult<K, E::Output>>
+    where
+        E: EntryProcessor,
+        K: Eq + Hash + Clone,
+    {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_permission(PermissionAction::Put)?;
+        let processor_data = Self::serialize_value(processor)?;
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_EXECUTE_WITH_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&processor_data));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        self.decode_entry_processor_results::<E::Output>(&response)
+    }
+
     /// Adds an index to this map with the given configuration.
     ///
     /// Indexes improve query performance for predicates that filter on the
@@ -3855,6 +3907,122 @@ mod tests {
         let keys: Vec<String> = Vec::new();
         let result = map.remove_all(&keys).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_execute_on_entries_with_predicate_permission_denied_read() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, i32> = IMap::new("test".to_string(), cm);
+
+        use crate::proxy::EntryProcessor;
+        struct TestProcessor;
+        impl EntryProcessor for TestProcessor {
+            type Output = i32;
+        }
+        impl Serializable for TestProcessor {
+            fn serialize(&self, _output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+                Ok(())
+            }
+        }
+
+        use crate::query::Predicates;
+        let predicate = Predicates::sql("age > 18");
+
+        let result = map.execute_on_entries_with_predicate(&TestProcessor, &predicate).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_execute_on_entries_with_predicate_permission_denied_put() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, i32> = IMap::new("test".to_string(), cm);
+
+        use crate::proxy::EntryProcessor;
+        struct TestProcessor;
+        impl EntryProcessor for TestProcessor {
+            type Output = i32;
+        }
+        impl Serializable for TestProcessor {
+            fn serialize(&self, _output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+                Ok(())
+            }
+        }
+
+        use crate::query::Predicates;
+        let predicate = Predicates::sql("age > 18");
+
+        let result = map.execute_on_entries_with_predicate(&TestProcessor, &predicate).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[test]
+    fn test_execute_on_entries_with_predicate_serializes_both() {
+        use crate::proxy::EntryProcessor;
+
+        struct IncrementProcessor {
+            delta: i32,
+        }
+
+        impl EntryProcessor for IncrementProcessor {
+            type Output = i32;
+        }
+
+        impl Serializable for IncrementProcessor {
+            fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+                output.write_i32(self.delta)?;
+                Ok(())
+            }
+        }
+
+        let processor = IncrementProcessor { delta: 5 };
+        let mut output = ObjectDataOutput::new();
+        processor.serialize(&mut output).unwrap();
+        let processor_bytes = output.into_bytes();
+        assert_eq!(processor_bytes.len(), 4);
+        assert_eq!(i32::from_le_bytes(processor_bytes[..4].try_into().unwrap()), 5);
+
+        use crate::query::Predicates;
+        let predicate = Predicates::sql("status = 'active'");
+        let predicate_data = predicate.to_predicate_data().unwrap();
+        assert!(!predicate_data.is_empty());
+    }
+
+    #[test]
+    fn test_entry_processor_with_predicate_result_handling() {
+        use crate::proxy::EntryProcessorResult;
+
+        let mut results = std::collections::HashMap::new();
+        results.insert("key1".to_string(), 10i32);
+        results.insert("key2".to_string(), 20i32);
+
+        let result: EntryProcessorResult<String, i32> = EntryProcessorResult::new(results);
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get(&"key1".to_string()), Some(&10));
+        assert_eq!(result.get(&"key2".to_string()), Some(&20));
+        assert_eq!(result.get(&"key3".to_string()), None);
     }
 
     #[test]
