@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  hazelcast:
+    image: hazelcast/hazelcast:5.3
+    container_name: hazelcast-test
+    ports:
+      - "5701:5701"
+    environment:
+      - HZ_CLUSTERNAME=dev
+      - JAVA_OPTS=-Xms512m -Xmx512m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5701/hazelcast/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  hazelcast-2:
+    image: hazelcast/hazelcast:5.3
+    container_name: hazelcast-test-2
+    ports:
+      - "5702:5701"
+    environment:
+      - HZ_CLUSTERNAME=dev
+      - HZ_NETWORK_JOIN_TCP_IP_ENABLED=true
+      - HZ_NETWORK_JOIN_TCP_IP_MEMBER_LIST=hazelcast:5701
+      - JAVA_OPTS=-Xms512m -Xmx512m
+    depends_on:
+      hazelcast:
+        condition: service_healthy
+
+  hazelcast-3:
+    image: hazelcast/hazelcast:5.3
+    container_name: hazelcast-test-3
+    ports:
+      - "5703:5701"
+    environment:
+      - HZ_CLUSTERNAME=dev
+      - HZ_NETWORK_JOIN_TCP_IP_ENABLED=true
+      - HZ_NETWORK_JOIN_TCP_IP_MEMBER_LIST=hazelcast:5701
+      - JAVA_OPTS=-Xms512m -Xmx512m
+    depends_on:
+      hazelcast:
+        condition: service_healthy

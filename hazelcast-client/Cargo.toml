@@ -58,6 +58,9 @@ url = { version = "2.5", optional = true }
 tokio-test = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
 uuid = "1.0"
+testcontainers = "0.15"
+testcontainers-modules = { version = "0.3", features = ["blocking"] }
+rand = "0.8"
 
 [[bench]]
 name = "map_benchmarks"
