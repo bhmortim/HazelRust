@@ -14,13 +14,15 @@ use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
     END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER,
     MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_AGGREGATE,
-    MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PREDICATE,
-    MAP_EVICT, MAP_EVICT_ALL, MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS,
-    MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED,
-    MAP_KEYS_WITH_PREDICATE, MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT,
-    MAP_PUT_ALL, MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER,
-    MAP_REMOVE_IF_SAME, MAP_REPLACE, MAP_REPLACE_IF_SAME, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK,
-    MAP_TRY_PUT, MAP_UNLOCK, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PAGING_PREDICATE,
+    MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL, MAP_EXECUTE_ON_ALL_KEYS,
+    MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL,
+    MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED, MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE,
+    MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT,
+    MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME, MAP_REPLACE,
+    MAP_REPLACE_IF_SAME, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK,
+    MAP_VALUES_WITH_PAGING_PREDICATE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
+    RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -296,7 +298,7 @@ use crate::listener::{
     EntryListenerConfig, ListenerId, ListenerRegistration, ListenerStats,
 };
 use crate::proxy::entry_processor::{EntryProcessor, EntryProcessorResult};
-use crate::query::{Aggregator, Predicate, Projection};
+use crate::query::{Aggregator, AnchorEntry, IterationType, PagingPredicate, PagingResult, Predicate, Projection};
 
 /// A distributed map proxy for performing key-value operations on a Hazelcast cluster.
 ///
@@ -2299,6 +2301,305 @@ where
         Self::decode_projection_response::<P::Output>(&response)
     }
 
+    /// Returns all values matching the given paging predicate.
+    ///
+    /// This method retrieves a single page of results and updates the predicate's
+    /// anchor list for subsequent page navigation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::PagingPredicate;
+    ///
+    /// let mut paging: PagingPredicate<String, User> = PagingPredicate::new(25);
+    ///
+    /// // Fetch first page
+    /// let result = map.values_with_paging_predicate(&mut paging).await?;
+    /// println!("Page {}: {} items", result.page, result.len());
+    ///
+    /// // Fetch next page
+    /// paging.next_page();
+    /// let result = map.values_with_paging_predicate(&mut paging).await?;
+    /// ```
+    pub async fn values_with_paging_predicate(
+        &self,
+        predicate: &mut PagingPredicate<K, V>,
+    ) -> Result<PagingResult<V>> {
+        self.check_permission(PermissionAction::Read)?;
+        predicate.set_iteration_type(IterationType::Value);
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_VALUES_WITH_PAGING_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        let (values, anchors) = Self::decode_paging_values_response::<V>(&response)?;
+
+        let page = predicate.get_page();
+        predicate.update_anchors(anchors.clone());
+
+        Ok(PagingResult::new(values, page, anchors))
+    }
+
+    /// Returns all keys matching the given paging predicate.
+    ///
+    /// This method retrieves a single page of results and updates the predicate's
+    /// anchor list for subsequent page navigation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::PagingPredicate;
+    ///
+    /// let mut paging: PagingPredicate<String, User> = PagingPredicate::new(25);
+    ///
+    /// // Fetch first page of keys
+    /// let result = map.keys_with_paging_predicate(&mut paging).await?;
+    /// for key in &result.data {
+    ///     println!("Key: {}", key);
+    /// }
+    /// ```
+    pub async fn keys_with_paging_predicate(
+        &self,
+        predicate: &mut PagingPredicate<K, V>,
+    ) -> Result<PagingResult<K>> {
+        self.check_permission(PermissionAction::Read)?;
+        predicate.set_iteration_type(IterationType::Key);
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_KEYS_WITH_PAGING_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        let (keys, anchors) = Self::decode_paging_values_response::<K>(&response)?;
+
+        let page = predicate.get_page();
+        predicate.update_anchors(anchors.clone());
+
+        Ok(PagingResult::new(keys, page, anchors))
+    }
+
+    /// Returns all entries matching the given paging predicate.
+    ///
+    /// This method retrieves a single page of results and updates the predicate's
+    /// anchor list for subsequent page navigation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::PagingPredicate;
+    ///
+    /// let mut paging: PagingPredicate<String, User> = PagingPredicate::new(25);
+    ///
+    /// // Fetch pages until empty
+    /// loop {
+    ///     let result = map.entries_with_paging_predicate(&mut paging).await?;
+    ///     if result.is_empty() {
+    ///         break;
+    ///     }
+    ///     for (key, value) in &result.data {
+    ///         println!("{}: {:?}", key, value);
+    ///     }
+    ///     paging.next_page();
+    /// }
+    /// ```
+    pub async fn entries_with_paging_predicate(
+        &self,
+        predicate: &mut PagingPredicate<K, V>,
+    ) -> Result<PagingResult<(K, V)>> {
+        self.check_permission(PermissionAction::Read)?;
+        predicate.set_iteration_type(IterationType::Entry);
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_ENTRIES_WITH_PAGING_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        let (entries, anchors) = Self::decode_paging_entries_response(&response)?;
+
+        let page = predicate.get_page();
+        predicate.update_anchors(anchors.clone());
+
+        Ok(PagingResult::new(entries, page, anchors))
+    }
+
+    fn decode_paging_values_response<T: Deserializable>(
+        response: &ClientMessage,
+    ) -> Result<(Vec<T>, Vec<AnchorEntry>)> {
+        let frames = response.frames();
+        let mut values = Vec::new();
+        let mut anchors = Vec::new();
+        let mut frame_idx = 1;
+
+        // Read anchor count from initial frame if present
+        let anchor_count = if !frames.is_empty() && frames[0].content.len() >= RESPONSE_HEADER_SIZE + 4 {
+            let offset = RESPONSE_HEADER_SIZE;
+            i32::from_le_bytes([
+                frames[0].content[offset],
+                frames[0].content[offset + 1],
+                frames[0].content[offset + 2],
+                frames[0].content[offset + 3],
+            ]) as usize
+        } else {
+            0
+        };
+
+        // Read anchors
+        for _ in 0..anchor_count {
+            if frame_idx + 2 >= frames.len() {
+                break;
+            }
+
+            let page_frame = &frames[frame_idx];
+            let page = if page_frame.content.len() >= 4 {
+                i32::from_le_bytes([
+                    page_frame.content[0],
+                    page_frame.content[1],
+                    page_frame.content[2],
+                    page_frame.content[3],
+                ]) as usize
+            } else {
+                0
+            };
+            frame_idx += 1;
+
+            let key_frame = &frames[frame_idx];
+            let key_data = if key_frame.flags & IS_NULL_FLAG == 0 && !key_frame.content.is_empty() {
+                Some(key_frame.content.to_vec())
+            } else {
+                None
+            };
+            frame_idx += 1;
+
+            let value_frame = &frames[frame_idx];
+            let value_data = if value_frame.flags & IS_NULL_FLAG == 0 && !value_frame.content.is_empty() {
+                Some(value_frame.content.to_vec())
+            } else {
+                None
+            };
+            frame_idx += 1;
+
+            anchors.push(AnchorEntry::new(page, key_data, value_data));
+        }
+
+        // Read values
+        while frame_idx < frames.len() {
+            let frame = &frames[frame_idx];
+            frame_idx += 1;
+
+            if frame.flags & IS_NULL_FLAG != 0 {
+                continue;
+            }
+            if frame.flags & END_FLAG != 0 && frame.content.is_empty() {
+                break;
+            }
+            if frame.content.is_empty() {
+                continue;
+            }
+
+            let mut input = ObjectDataInput::new(&frame.content);
+            if let Ok(value) = T::deserialize(&mut input) {
+                values.push(value);
+            }
+        }
+
+        Ok((values, anchors))
+    }
+
+    fn decode_paging_entries_response(
+        response: &ClientMessage,
+    ) -> Result<(Vec<(K, V)>, Vec<AnchorEntry>)> {
+        let frames = response.frames();
+        let mut entries = Vec::new();
+        let mut anchors = Vec::new();
+        let mut frame_idx = 1;
+
+        // Read anchor count from initial frame if present
+        let anchor_count = if !frames.is_empty() && frames[0].content.len() >= RESPONSE_HEADER_SIZE + 4 {
+            let offset = RESPONSE_HEADER_SIZE;
+            i32::from_le_bytes([
+                frames[0].content[offset],
+                frames[0].content[offset + 1],
+                frames[0].content[offset + 2],
+                frames[0].content[offset + 3],
+            ]) as usize
+        } else {
+            0
+        };
+
+        // Read anchors
+        for _ in 0..anchor_count {
+            if frame_idx + 2 >= frames.len() {
+                break;
+            }
+
+            let page_frame = &frames[frame_idx];
+            let page = if page_frame.content.len() >= 4 {
+                i32::from_le_bytes([
+                    page_frame.content[0],
+                    page_frame.content[1],
+                    page_frame.content[2],
+                    page_frame.content[3],
+                ]) as usize
+            } else {
+                0
+            };
+            frame_idx += 1;
+
+            let key_frame = &frames[frame_idx];
+            let key_data = if key_frame.flags & IS_NULL_FLAG == 0 && !key_frame.content.is_empty() {
+                Some(key_frame.content.to_vec())
+            } else {
+                None
+            };
+            frame_idx += 1;
+
+            let value_frame = &frames[frame_idx];
+            let value_data = if value_frame.flags & IS_NULL_FLAG == 0 && !value_frame.content.is_empty() {
+                Some(value_frame.content.to_vec())
+            } else {
+                None
+            };
+            frame_idx += 1;
+
+            anchors.push(AnchorEntry::new(page, key_data, value_data));
+        }
+
+        // Read entries (key-value pairs)
+        while frame_idx + 1 < frames.len() {
+            let key_frame = &frames[frame_idx];
+            let value_frame = &frames[frame_idx + 1];
+            frame_idx += 2;
+
+            if key_frame.flags & END_FLAG != 0 && key_frame.content.is_empty() {
+                break;
+            }
+
+            if key_frame.flags & IS_NULL_FLAG != 0 || key_frame.content.is_empty() {
+                continue;
+            }
+
+            if value_frame.flags & IS_NULL_FLAG != 0 || value_frame.content.is_empty() {
+                continue;
+            }
+
+            let mut key_input = ObjectDataInput::new(&key_frame.content);
+            let mut value_input = ObjectDataInput::new(&value_frame.content);
+
+            if let (Ok(key), Ok(value)) = (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
+                entries.push((key, value));
+            }
+        }
+
+        Ok((entries, anchors))
+    }
+
     fn decode_projection_response<T: Deserializable>(response: &ClientMessage) -> Result<Vec<T>> {
         let frames = response.frames();
         let mut results = Vec::new();
@@ -4019,6 +4320,99 @@ mod tests {
         let ttl = Duration::from_secs(60);
         let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
         assert_eq!(ttl_ms, 60000);
+    }
+
+    #[tokio::test]
+    async fn test_values_with_paging_predicate_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use crate::query::PagingPredicate;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let mut paging: PagingPredicate<String, String> = PagingPredicate::new(10);
+        let result = map.values_with_paging_predicate(&mut paging).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_keys_with_paging_predicate_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use crate::query::PagingPredicate;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let mut paging: PagingPredicate<String, String> = PagingPredicate::new(10);
+        let result = map.keys_with_paging_predicate(&mut paging).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_entries_with_paging_predicate_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use crate::query::PagingPredicate;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let mut paging: PagingPredicate<String, String> = PagingPredicate::new(10);
+        let result = map.entries_with_paging_predicate(&mut paging).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[test]
+    fn test_paging_predicate_sets_iteration_type() {
+        use crate::query::{PagingPredicate, IterationType};
+
+        let mut paging: PagingPredicate<String, String> = PagingPredicate::new(10);
+        assert_eq!(paging.iteration_type(), IterationType::Entry);
+
+        paging.set_iteration_type(IterationType::Key);
+        assert_eq!(paging.iteration_type(), IterationType::Key);
+
+        paging.set_iteration_type(IterationType::Value);
+        assert_eq!(paging.iteration_type(), IterationType::Value);
+    }
+
+    #[test]
+    fn test_paging_result_has_next() {
+        use crate::query::PagingResult;
+
+        let full_page: PagingResult<i32> = PagingResult::new(vec![1, 2, 3, 4, 5], 0, Vec::new());
+        assert!(full_page.has_next(5));
+        assert!(!full_page.has_next(10));
+
+        let partial_page: PagingResult<i32> = PagingResult::new(vec![1, 2, 3], 1, Vec::new());
+        assert!(!partial_page.has_next(5));
+        assert!(partial_page.has_next(3));
     }
 
     #[test]

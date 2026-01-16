@@ -20,9 +20,11 @@
 //! ```
 
 pub mod aggregations;
+pub mod paging_predicate;
 pub mod projections;
 
 pub use aggregations::*;
+pub use paging_predicate::*;
 pub use projections::*;
 
 use std::fmt::Debug;
@@ -47,6 +49,8 @@ pub mod class_ids {
     pub const GREATER_LESS_PREDICATE: i32 = 4;
     /// Like predicate class ID.
     pub const LIKE_PREDICATE: i32 = 5;
+    /// Paging predicate class ID.
+    pub const PAGING_PREDICATE: i32 = 6;
     /// In predicate class ID.
     pub const IN_PREDICATE: i32 = 7;
     /// Not equal predicate class ID.

@@ -518,6 +518,15 @@ pub const MAP_PROJECT: i32 = 0x013B00;
 /// Map project with predicate request.
 pub const MAP_PROJECT_WITH_PREDICATE: i32 = 0x013C00;
 
+/// Map values with paging predicate request.
+pub const MAP_VALUES_WITH_PAGING_PREDICATE: i32 = 0x013D00;
+
+/// Map keys with paging predicate request.
+pub const MAP_KEYS_WITH_PAGING_PREDICATE: i32 = 0x013E00;
+
+/// Map entries with paging predicate request.
+pub const MAP_ENTRIES_WITH_PAGING_PREDICATE: i32 = 0x013F00;
+
 /// Map try put request.
 pub const MAP_TRY_PUT: i32 = 0x010600;
 
