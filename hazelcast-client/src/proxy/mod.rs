@@ -1,6 +1,7 @@
 //! Distributed data structure proxies.
 
 mod atomic_long;
+mod cardinality_estimator;
 mod countdown_latch;
 mod entry_processor;
 mod fenced_lock;
@@ -18,8 +19,9 @@ mod set;
 mod topic;
 
 pub use atomic_long::AtomicLong;
-pub use entry_processor::{EntryProcessor, EntryProcessorResult};
+pub use cardinality_estimator::CardinalityEstimator;
 pub use countdown_latch::CountDownLatch;
+pub use entry_processor::{EntryProcessor, EntryProcessorResult};
 pub use fenced_lock::FencedLock;
 pub use flake_id::{FlakeIdGenerator, IdBatch};
 pub use list::IList;

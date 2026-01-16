@@ -739,3 +739,9 @@ pub const DURABLE_EXECUTOR_SHUTDOWN: i32 = 0x180500;
 
 /// Durable executor is shutdown request.
 pub const DURABLE_EXECUTOR_IS_SHUTDOWN: i32 = 0x180600;
+
+/// CardinalityEstimator add request.
+pub const CARDINALITY_ESTIMATOR_ADD: i32 = 0x160100;
+
+/// CardinalityEstimator estimate request.
+pub const CARDINALITY_ESTIMATOR_ESTIMATE: i32 = 0x160200;

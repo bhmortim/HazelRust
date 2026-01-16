@@ -16,8 +16,8 @@ use crate::listener::{
     LifecycleEvent, ListenerId, ListenerRegistration, Member, MemberEvent,
 };
 use crate::proxy::{
-    AtomicLong, CountDownLatch, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic,
-    MultiMap, PNCounter, ReliableTopic, ReplicatedMap, Ringbuffer, Semaphore,
+    AtomicLong, CardinalityEstimator, CountDownLatch, FencedLock, FlakeIdGenerator, IList, IMap,
+    IQueue, ISet, ITopic, MultiMap, PNCounter, ReliableTopic, ReplicatedMap, Ringbuffer, Semaphore,
 };
 use crate::sql::SqlService;
 use crate::transaction::{TransactionContext, TransactionOptions, XATransaction, Xid};
@@ -374,6 +374,41 @@ impl HazelcastClient {
     /// - Coordinating startup sequences in distributed systems
     pub fn get_countdown_latch(&self, name: &str) -> CountDownLatch {
         CountDownLatch::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed CardinalityEstimator proxy for the given name.
+    ///
+    /// The CardinalityEstimator uses the HyperLogLog algorithm to provide
+    /// probabilistic cardinality estimation. It can estimate the number of
+    /// distinct elements in a set without storing all elements.
+    ///
+    /// CardinalityEstimators are ideal for:
+    /// - Counting unique visitors, users, or events
+    /// - Approximating distinct counts in streaming data
+    /// - Memory-efficient cardinality estimation across clusters
+    ///
+    /// # Type Parameters
+    ///
+    /// - `T`: The element type, must implement `Serializable`, `Send`, and `Sync`
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let estimator = client.get_cardinality_estimator::<String>("unique-visitors");
+    ///
+    /// // Add values
+    /// estimator.add(&"user-123".to_string()).await?;
+    /// estimator.add(&"user-456".to_string()).await?;
+    ///
+    /// // Get estimated cardinality
+    /// let count = estimator.estimate().await?;
+    /// println!("Estimated unique visitors: {}", count);
+    /// ```
+    pub fn get_cardinality_estimator<T>(&self, name: &str) -> CardinalityEstimator<T>
+    where
+        T: Serializable + Send + Sync,
+    {
+        CardinalityEstimator::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns a distributed executor service proxy for the given name.
