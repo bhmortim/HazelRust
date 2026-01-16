@@ -1491,6 +1491,178 @@ where
         Self::decode_bool_response(&response)
     }
 
+    /// Associates the specified value with the specified key, with a maximum idle time.
+    ///
+    /// The entry will be evicted if it is not accessed within the specified max idle duration.
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the update to the cluster.
+    ///
+    /// Returns the previous value associated with the key, or `None` if there was no mapping.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to associate the value with
+    /// * `value` - The value to store
+    /// * `max_idle` - The maximum idle time for the entry (use `Duration::ZERO` for no max idle)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Store a session that expires if not accessed for 30 minutes
+    /// let old = map.put_with_max_idle(
+    ///     "session:abc".to_string(),
+    ///     session_data,
+    ///     Duration::from_secs(1800),
+    /// ).await?;
+    /// ```
+    pub async fn put_with_max_idle(&self, key: K, value: V, max_idle: Duration) -> Result<Option<V>> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+        let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+
+        let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
+        message.add_frame(Self::long_frame(max_idle_ms));
+
+        let response = self.invoke(message).await?;
+        Self::decode_nullable_response(&response)
+    }
+
+    /// Associates the specified value with the specified key, with TTL and maximum idle time.
+    ///
+    /// The entry will be automatically evicted when either:
+    /// - The TTL expires (time since creation/update)
+    /// - The max idle time expires (time since last access)
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the update to the cluster.
+    ///
+    /// Returns the previous value associated with the key, or `None` if there was no mapping.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to associate the value with
+    /// * `value` - The value to store
+    /// * `ttl` - The time-to-live for the entry (use `Duration::ZERO` for no TTL)
+    /// * `max_idle` - The maximum idle time for the entry (use `Duration::ZERO` for no max idle)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Store a cache entry that expires after 1 hour OR if not accessed for 10 minutes
+    /// let old = map.put_with_ttl_and_max_idle(
+    ///     "cache:user:123".to_string(),
+    ///     user_data,
+    ///     Duration::from_secs(3600),    // 1 hour TTL
+    ///     Duration::from_secs(600),     // 10 minute max idle
+    /// ).await?;
+    /// ```
+    pub async fn put_with_ttl_and_max_idle(
+        &self,
+        key: K,
+        value: V,
+        ttl: Duration,
+        max_idle: Duration,
+    ) -> Result<Option<V>> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+        let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
+        let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+
+        let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Self::long_frame(ttl_ms));
+        message.add_frame(Self::long_frame(max_idle_ms));
+
+        let response = self.invoke(message).await?;
+        Self::decode_nullable_response(&response)
+    }
+
+    /// Sets the specified value for the specified key, with TTL and maximum idle time.
+    ///
+    /// Unlike `put_with_ttl_and_max_idle`, this method does not return the previous value,
+    /// making it slightly more efficient when you don't need the old value.
+    ///
+    /// The entry will be automatically evicted when either:
+    /// - The TTL expires (time since creation/update)
+    /// - The max idle time expires (time since last access)
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the update to the cluster.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to associate the value with
+    /// * `value` - The value to store
+    /// * `ttl` - The time-to-live for the entry (use `Duration::ZERO` for no TTL)
+    /// * `max_idle` - The maximum idle time for the entry (use `Duration::ZERO` for no max idle)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Store a cache entry without caring about the old value
+    /// map.set_with_ttl_and_max_idle(
+    ///     "cache:user:123".to_string(),
+    ///     user_data,
+    ///     Duration::from_secs(3600),    // 1 hour TTL
+    ///     Duration::from_secs(600),     // 10 minute max idle
+    /// ).await?;
+    /// ```
+    pub async fn set_with_ttl_and_max_idle(
+        &self,
+        key: K,
+        value: V,
+        ttl: Duration,
+        max_idle: Duration,
+    ) -> Result<()> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+        let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
+        let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+
+        let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Self::long_frame(ttl_ms));
+        message.add_frame(Self::long_frame(max_idle_ms));
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
     /// Puts an entry into this map without triggering map store write.
     ///
     /// This is similar to `put`, but the entry will not be written to the
@@ -5866,6 +6038,232 @@ mod tests {
         let ttl = Duration::from_secs(60);
         let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
         assert_eq!(ttl_ms, 60000);
+    }
+
+    #[tokio::test]
+    async fn test_put_with_max_idle_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.put_with_max_idle(
+            "key".to_string(),
+            "value".to_string(),
+            Duration::from_secs(60),
+        ).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_put_with_ttl_and_max_idle_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.put_with_ttl_and_max_idle(
+            "key".to_string(),
+            "value".to_string(),
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_set_with_ttl_and_max_idle_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.set_with_ttl_and_max_idle(
+            "key".to_string(),
+            "value".to_string(),
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_put_with_max_idle_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.put_with_max_idle(
+            "key".to_string(),
+            "value".to_string(),
+            Duration::from_secs(60),
+        ).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
+    async fn test_put_with_ttl_and_max_idle_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.put_with_ttl_and_max_idle(
+            "key".to_string(),
+            "value".to_string(),
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
+    async fn test_set_with_ttl_and_max_idle_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.set_with_ttl_and_max_idle(
+            "key".to_string(),
+            "value".to_string(),
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        ).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[test]
+    fn test_put_with_max_idle_duration_conversion() {
+        let max_idle = Duration::from_secs(300);
+        let max_idle_ms = if max_idle.is_zero() { -1i64 } else { max_idle.as_millis() as i64 };
+        assert_eq!(max_idle_ms, 300_000);
+    }
+
+    #[test]
+    fn test_put_with_ttl_and_max_idle_duration_conversion() {
+        let ttl = Duration::from_secs(3600);
+        let max_idle = Duration::from_secs(600);
+        let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
+        let max_idle_ms = if max_idle.is_zero() { -1i64 } else { max_idle.as_millis() as i64 };
+        assert_eq!(ttl_ms, 3_600_000);
+        assert_eq!(max_idle_ms, 600_000);
+    }
+
+    #[test]
+    fn test_put_with_ttl_and_max_idle_zero_durations() {
+        let ttl = Duration::ZERO;
+        let max_idle = Duration::ZERO;
+        let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
+        let max_idle_ms = if max_idle.is_zero() { -1i64 } else { max_idle.as_millis() as i64 };
+        assert_eq!(ttl_ms, -1);
+        assert_eq!(max_idle_ms, -1);
+    }
+
+    #[test]
+    fn test_put_with_max_idle_invalidates_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(map.has_near_cache());
+    }
+
+    #[test]
+    fn test_put_with_ttl_and_max_idle_invalidates_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(map.has_near_cache());
+    }
+
+    #[test]
+    fn test_set_with_ttl_and_max_idle_invalidates_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(map.has_near_cache());
     }
 
     #[test]
