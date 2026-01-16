@@ -3,6 +3,7 @@
 pub mod authenticator;
 pub mod authorization;
 pub mod credentials;
+pub mod tls_config;
 
 pub use authenticator::{
     AuthError, AuthResponse, Authenticator, Credentials, CustomCredentials, DefaultAuthenticator,
@@ -14,6 +15,11 @@ pub use authorization::{
 };
 
 pub use credentials::{CredentialError, CredentialProvider, EnvironmentCredentialProvider};
+
+pub use tls_config::{
+    cipher_suites, HostnameVerification, TlsConfig, TlsConfigBuilder, TlsConfigError,
+    TlsProtocolVersion,
+};
 
 #[cfg(feature = "aws")]
 pub use credentials::AwsCredentialProvider;

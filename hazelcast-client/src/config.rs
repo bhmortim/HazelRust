@@ -832,7 +832,7 @@ impl NetworkConfigBuilder {
             self.addresses
         };
 
-        let tls = self.tls.build()?;
+        let tls = self.tls.build().map_err(ConfigError::from)?;
 
         Ok(NetworkConfig {
             addresses,
@@ -1007,133 +1007,15 @@ impl RetryConfigBuilder {
     }
 }
 
-/// TLS configuration for secure connections.
-#[derive(Debug, Clone)]
-pub struct TlsConfig {
-    enabled: bool,
-    ca_cert_path: Option<PathBuf>,
-    client_cert_path: Option<PathBuf>,
-    client_key_path: Option<PathBuf>,
-    verify_hostname: bool,
-}
+pub use crate::security::tls_config::{
+    cipher_suites, HostnameVerification, TlsConfig, TlsConfigBuilder, TlsConfigError,
+    TlsProtocolVersion,
+};
 
-impl TlsConfig {
-    /// Returns whether TLS is enabled.
-    pub fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    /// Returns the path to the CA certificate file.
-    pub fn ca_cert_path(&self) -> Option<&PathBuf> {
-        self.ca_cert_path.as_ref()
-    }
-
-    /// Returns the path to the client certificate file.
-    pub fn client_cert_path(&self) -> Option<&PathBuf> {
-        self.client_cert_path.as_ref()
-    }
-
-    /// Returns the path to the client private key file.
-    pub fn client_key_path(&self) -> Option<&PathBuf> {
-        self.client_key_path.as_ref()
-    }
-
-    /// Returns whether hostname verification is enabled.
-    pub fn verify_hostname(&self) -> bool {
-        self.verify_hostname
-    }
-
-    /// Returns true if client authentication is configured.
-    pub fn has_client_auth(&self) -> bool {
-        self.client_cert_path.is_some() && self.client_key_path.is_some()
-    }
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            ca_cert_path: None,
-            client_cert_path: None,
-            client_key_path: None,
-            verify_hostname: true,
-        }
-    }
-}
-
-/// Builder for `TlsConfig`.
-#[derive(Debug, Clone, Default)]
-pub struct TlsConfigBuilder {
-    enabled: Option<bool>,
-    ca_cert_path: Option<PathBuf>,
-    client_cert_path: Option<PathBuf>,
-    client_key_path: Option<PathBuf>,
-    verify_hostname: Option<bool>,
-}
-
-impl TlsConfigBuilder {
-    /// Creates a new TLS configuration builder.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Enables or disables TLS.
-    pub fn enabled(mut self, enabled: bool) -> Self {
-        self.enabled = Some(enabled);
-        self
-    }
-
-    /// Sets the path to the CA certificate file for server verification.
-    pub fn ca_cert_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.ca_cert_path = Some(path.into());
-        self
-    }
-
-    /// Sets the path to the client certificate file for mutual TLS.
-    pub fn client_cert_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.client_cert_path = Some(path.into());
-        self
-    }
-
-    /// Sets the path to the client private key file for mutual TLS.
-    pub fn client_key_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.client_key_path = Some(path.into());
-        self
-    }
-
-    /// Sets client certificate and key paths for mutual TLS.
-    pub fn client_auth(self, cert_path: impl Into<PathBuf>, key_path: impl Into<PathBuf>) -> Self {
-        self.client_cert_path(cert_path).client_key_path(key_path)
-    }
-
-    /// Enables or disables hostname verification.
-    pub fn verify_hostname(mut self, verify: bool) -> Self {
-        self.verify_hostname = Some(verify);
-        self
-    }
-
-    /// Builds the TLS configuration, returning an error if validation fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ConfigError` if:
-    /// - Only one of `client_cert_path` or `client_key_path` is set
-    pub fn build(self) -> Result<TlsConfig, ConfigError> {
-        let enabled = self.enabled.unwrap_or(false);
-
-        if self.client_cert_path.is_some() != self.client_key_path.is_some() {
-            return Err(ConfigError::new(
-                "both client_cert_path and client_key_path must be provided together",
-            ));
-        }
-
-        Ok(TlsConfig {
-            enabled,
-            ca_cert_path: self.ca_cert_path,
-            client_cert_path: self.client_cert_path,
-            client_key_path: self.client_key_path,
-            verify_hostname: self.verify_hostname.unwrap_or(true),
-        })
+/// Internal adapter to convert `TlsConfigError` to `ConfigError`.
+impl From<TlsConfigError> for ConfigError {
+    fn from(err: TlsConfigError) -> Self {
+        ConfigError::new(err.to_string())
     }
 }
 

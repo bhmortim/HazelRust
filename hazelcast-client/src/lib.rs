@@ -82,7 +82,8 @@ pub use deployment::{
 };
 pub use security::{
     AuthError, AuthResponse, Authenticator, CredentialError, CredentialProvider, Credentials,
-    CustomCredentials, DefaultAuthenticator, EnvironmentCredentialProvider,
+    CustomCredentials, DefaultAuthenticator, EnvironmentCredentialProvider, HostnameVerification,
+    TlsConfig, TlsConfigBuilder, TlsConfigError, TlsProtocolVersion, cipher_suites,
 };
 
 #[cfg(feature = "aws")]
