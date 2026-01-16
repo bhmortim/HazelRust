@@ -2,6 +2,7 @@
 
 pub mod authenticator;
 pub mod authorization;
+pub mod credentials;
 
 pub use authenticator::{
     AuthError, AuthResponse, Authenticator, Credentials, CustomCredentials, DefaultAuthenticator,
@@ -11,3 +12,17 @@ pub use authenticator::{
 pub use authorization::{
     AuthorizationContext, Permission, PermissionDenied, PermissionGrant, ResourceType, Role,
 };
+
+pub use credentials::{CredentialError, CredentialProvider, EnvironmentCredentialProvider};
+
+#[cfg(feature = "aws")]
+pub use credentials::AwsCredentialProvider;
+
+#[cfg(feature = "azure")]
+pub use credentials::AzureCredentialProvider;
+
+#[cfg(feature = "gcp")]
+pub use credentials::GcpCredentialProvider;
+
+#[cfg(feature = "kubernetes")]
+pub use credentials::KubernetesCredentialProvider;

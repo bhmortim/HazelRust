@@ -81,5 +81,18 @@ pub use deployment::{
     UserCodeDeploymentConfig, UserCodeDeploymentConfigBuilder,
 };
 pub use security::{
-    AuthError, AuthResponse, Authenticator, Credentials, CustomCredentials, DefaultAuthenticator,
+    AuthError, AuthResponse, Authenticator, CredentialError, CredentialProvider, Credentials,
+    CustomCredentials, DefaultAuthenticator, EnvironmentCredentialProvider,
 };
+
+#[cfg(feature = "aws")]
+pub use security::AwsCredentialProvider;
+
+#[cfg(feature = "azure")]
+pub use security::AzureCredentialProvider;
+
+#[cfg(feature = "gcp")]
+pub use security::GcpCredentialProvider;
+
+#[cfg(feature = "kubernetes")]
+pub use security::KubernetesCredentialProvider;

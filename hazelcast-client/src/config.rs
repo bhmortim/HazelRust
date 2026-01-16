@@ -1519,6 +1519,7 @@ pub struct SecurityConfig {
     token: Option<String>,
     authenticator: Option<Arc<dyn crate::security::Authenticator>>,
     permissions: Option<Permissions>,
+    credential_provider: Option<Arc<dyn crate::security::CredentialProvider>>,
 }
 
 impl std::fmt::Debug for SecurityConfig {
@@ -1528,6 +1529,7 @@ impl std::fmt::Debug for SecurityConfig {
             .field("password", &self.password)
             .field("token", &self.token)
             .field("authenticator", &self.authenticator.is_some())
+            .field("credential_provider", &self.credential_provider)
             .finish()
     }
 }
@@ -1580,6 +1582,15 @@ impl SecurityConfig {
     pub fn effective_permissions(&self) -> Permissions {
         self.permissions.clone().unwrap_or_else(Permissions::all)
     }
+
+    /// Returns the credential provider if configured.
+    ///
+    /// When a credential provider is set, the client will call it to obtain
+    /// credentials before authentication. This is useful for cloud environments
+    /// where credentials are rotated or obtained from metadata services.
+    pub fn credential_provider(&self) -> Option<&Arc<dyn crate::security::CredentialProvider>> {
+        self.credential_provider.as_ref()
+    }
 }
 
 /// Builder for `SecurityConfig`.
@@ -1590,6 +1601,7 @@ pub struct SecurityConfigBuilder {
     token: Option<String>,
     authenticator: Option<Arc<dyn crate::security::Authenticator>>,
     permissions: Option<Permissions>,
+    credential_provider: Option<Arc<dyn crate::security::CredentialProvider>>,
 }
 
 impl std::fmt::Debug for SecurityConfigBuilder {
@@ -1599,6 +1611,7 @@ impl std::fmt::Debug for SecurityConfigBuilder {
             .field("password", &self.password)
             .field("token", &self.token)
             .field("authenticator", &self.authenticator.is_some())
+            .field("credential_provider", &self.credential_provider.is_some())
             .finish()
     }
 }
@@ -1683,6 +1696,31 @@ impl SecurityConfigBuilder {
         self
     }
 
+    /// Sets a credential provider for dynamic credential fetching.
+    ///
+    /// When set, the client will call the provider to obtain credentials
+    /// before authentication. This is useful for cloud environments
+    /// where credentials are rotated or obtained from metadata services.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::security::EnvironmentCredentialProvider;
+    /// use std::sync::Arc;
+    ///
+    /// let config = SecurityConfigBuilder::new()
+    ///     .credential_provider(Arc::new(EnvironmentCredentialProvider::new()))
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn credential_provider(
+        mut self,
+        provider: Arc<dyn crate::security::CredentialProvider>,
+    ) -> Self {
+        self.credential_provider = Some(provider);
+        self
+    }
+
     /// Builds the security configuration, returning an error if validation fails.
     ///
     /// # Errors
@@ -1709,6 +1747,7 @@ impl SecurityConfigBuilder {
             token: self.token,
             authenticator: self.authenticator,
             permissions: self.permissions,
+            credential_provider: self.credential_provider,
         })
     }
 }
