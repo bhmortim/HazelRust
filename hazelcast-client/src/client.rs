@@ -5,7 +5,7 @@ use std::sync::Arc;
 use hazelcast_core::{Deserializable, Result, Serializable};
 use uuid::Uuid;
 
-use crate::cluster::{ClusterService, PartitionService};
+use crate::cluster::{ClusterService, LifecycleService, PartitionService};
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};
@@ -529,6 +529,41 @@ impl HazelcastClient {
             self.config.cluster_name().to_string(),
             Vec::new(),
         )
+    }
+
+    /// Returns the lifecycle service for managing client lifecycle.
+    ///
+    /// The lifecycle service provides methods to:
+    /// - Check if the client is running
+    /// - Gracefully shut down or forcefully terminate the client
+    /// - Register and unregister lifecycle event listeners
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let lifecycle = client.lifecycle();
+    ///
+    /// // Check if client is running
+    /// if lifecycle.is_running().await {
+    ///     println!("Client is active");
+    /// }
+    ///
+    /// // Add a lifecycle listener
+    /// let mut registration = lifecycle.add_lifecycle_listener();
+    /// tokio::spawn(async move {
+    ///     while let Ok(event) = registration.recv().await {
+    ///         println!("Lifecycle event: {}", event);
+    ///         if event == LifecycleEvent::Shutdown {
+    ///             break;
+    ///         }
+    ///     }
+    /// });
+    ///
+    /// // Graceful shutdown
+    /// lifecycle.shutdown().await?;
+    /// ```
+    pub fn lifecycle(&self) -> LifecycleService {
+        LifecycleService::new(Arc::clone(&self.connection_manager))
     }
 
     /// Returns the partition service for querying partition information.

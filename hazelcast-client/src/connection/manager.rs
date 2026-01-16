@@ -403,6 +403,14 @@ impl ConnectionManager {
         self.connections.read().await.keys().copied().collect()
     }
 
+    /// Returns `true` if shutdown has been requested.
+    ///
+    /// This can be used to check the client's running state without
+    /// waiting for the async shutdown to complete.
+    pub fn is_shutdown_requested(&self) -> bool {
+        *self.shutdown.borrow()
+    }
+
     /// Checks if connected to the specified address.
     pub async fn is_connected(&self, address: &SocketAddr) -> bool {
         self.connections.read().await.contains_key(address)
