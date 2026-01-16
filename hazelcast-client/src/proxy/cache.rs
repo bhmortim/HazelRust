@@ -309,6 +309,461 @@ impl<K, V> std::fmt::Debug for FnCacheEntryListenerBuilder<K, V> {
     }
 }
 
+/// A loader for cache entries, enabling read-through caching.
+///
+/// When a cache miss occurs and read-through is enabled, the cache will
+/// invoke the loader to fetch the value from an external data source.
+///
+/// # Example
+///
+/// ```ignore
+/// struct DatabaseLoader {
+///     connection: DatabaseConnection,
+/// }
+///
+/// impl CacheLoader<String, User> for DatabaseLoader {
+///     fn load(&self, key: &String) -> Result<Option<User>> {
+///         Ok(self.connection.find_user(key))
+///     }
+///
+///     fn load_all(&self, keys: &[String]) -> Result<HashMap<String, User>> {
+///         Ok(self.connection.find_users(keys))
+///     }
+/// }
+/// ```
+pub trait CacheLoader<K, V>: Send + Sync {
+    /// Loads the value for the specified key from the external data source.
+    ///
+    /// Returns `Ok(Some(value))` if the key exists, `Ok(None)` if it doesn't,
+    /// or an error if the load operation fails.
+    fn load(&self, key: &K) -> Result<Option<V>>;
+
+    /// Loads all values for the specified keys from the external data source.
+    ///
+    /// Returns a map containing only the keys that were found. Keys not found
+    /// in the external data source are not included in the result.
+    fn load_all(&self, keys: &[K]) -> Result<HashMap<K, V>>
+    where
+        K: Clone + Eq + Hash;
+}
+
+/// A boxed cache loader for type-erased storage.
+pub type BoxedCacheLoader<K, V> = Arc<dyn CacheLoader<K, V>>;
+
+/// A cache loader implementation using closures.
+pub struct FnCacheLoader<K, V> {
+    load_fn: Box<dyn Fn(&K) -> Result<Option<V>> + Send + Sync>,
+    load_all_fn: Option<Box<dyn Fn(&[K]) -> Result<HashMap<K, V>> + Send + Sync>>,
+    _phantom: PhantomData<fn() -> (K, V)>,
+}
+
+impl<K, V> FnCacheLoader<K, V> {
+    /// Creates a new builder for constructing an `FnCacheLoader`.
+    pub fn builder() -> FnCacheLoaderBuilder<K, V> {
+        FnCacheLoaderBuilder::new()
+    }
+}
+
+impl<K, V> CacheLoader<K, V> for FnCacheLoader<K, V>
+where
+    K: Clone + Eq + Hash + Send + Sync,
+    V: Send + Sync,
+{
+    fn load(&self, key: &K) -> Result<Option<V>> {
+        (self.load_fn)(key)
+    }
+
+    fn load_all(&self, keys: &[K]) -> Result<HashMap<K, V>> {
+        if let Some(ref load_all_fn) = self.load_all_fn {
+            load_all_fn(keys)
+        } else {
+            let mut results = HashMap::new();
+            for key in keys {
+                if let Some(value) = self.load(key)? {
+                    results.insert(key.clone(), value);
+                }
+            }
+            Ok(results)
+        }
+    }
+}
+
+impl<K, V> std::fmt::Debug for FnCacheLoader<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FnCacheLoader")
+            .field("has_load_all", &self.load_all_fn.is_some())
+            .finish()
+    }
+}
+
+/// Builder for creating [`FnCacheLoader`] instances.
+pub struct FnCacheLoaderBuilder<K, V> {
+    load_fn: Option<Box<dyn Fn(&K) -> Result<Option<V>> + Send + Sync>>,
+    load_all_fn: Option<Box<dyn Fn(&[K]) -> Result<HashMap<K, V>> + Send + Sync>>,
+    _phantom: PhantomData<fn() -> (K, V)>,
+}
+
+impl<K, V> FnCacheLoaderBuilder<K, V> {
+    fn new() -> Self {
+        Self {
+            load_fn: None,
+            load_all_fn: None,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Sets the function for loading a single entry.
+    ///
+    /// This is required before calling `build()`.
+    pub fn load<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&K) -> Result<Option<V>> + Send + Sync + 'static,
+    {
+        self.load_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the function for loading multiple entries.
+    ///
+    /// If not provided, `load_all` will call `load` for each key individually.
+    pub fn load_all<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&[K]) -> Result<HashMap<K, V>> + Send + Sync + 'static,
+    {
+        self.load_all_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Builds the [`FnCacheLoader`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `load` was not set.
+    pub fn build(self) -> FnCacheLoader<K, V> {
+        FnCacheLoader {
+            load_fn: self.load_fn.expect("load function is required"),
+            load_all_fn: self.load_all_fn,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<K, V> Default for FnCacheLoaderBuilder<K, V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<K, V> std::fmt::Debug for FnCacheLoaderBuilder<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FnCacheLoaderBuilder")
+            .field("has_load", &self.load_fn.is_some())
+            .field("has_load_all", &self.load_all_fn.is_some())
+            .finish()
+    }
+}
+
+/// A writer for cache entries, enabling write-through caching.
+///
+/// When write-through is enabled, the cache will invoke the writer to
+/// persist changes to an external data source whenever entries are
+/// created, updated, or removed.
+///
+/// # Example
+///
+/// ```ignore
+/// struct DatabaseWriter {
+///     connection: DatabaseConnection,
+/// }
+///
+/// impl CacheWriter<String, User> for DatabaseWriter {
+///     fn write(&self, key: &String, value: &User) -> Result<()> {
+///         self.connection.save_user(key, value)
+///     }
+///
+///     fn write_all(&self, entries: &HashMap<String, User>) -> Result<()> {
+///         self.connection.save_users(entries)
+///     }
+///
+///     fn delete(&self, key: &String) -> Result<()> {
+///         self.connection.delete_user(key)
+///     }
+///
+///     fn delete_all(&self, keys: &[String]) -> Result<()> {
+///         self.connection.delete_users(keys)
+///     }
+/// }
+/// ```
+pub trait CacheWriter<K, V>: Send + Sync {
+    /// Writes the specified entry to the external data source.
+    ///
+    /// This is called when an entry is created or updated in the cache.
+    fn write(&self, key: &K, value: &V) -> Result<()>;
+
+    /// Writes all specified entries to the external data source.
+    ///
+    /// This is called when multiple entries are created or updated.
+    fn write_all(&self, entries: &HashMap<K, V>) -> Result<()>
+    where
+        K: Eq + Hash;
+
+    /// Deletes the entry with the specified key from the external data source.
+    ///
+    /// This is called when an entry is removed from the cache.
+    fn delete(&self, key: &K) -> Result<()>;
+
+    /// Deletes all entries with the specified keys from the external data source.
+    ///
+    /// This is called when multiple entries are removed from the cache.
+    fn delete_all(&self, keys: &[K]) -> Result<()>;
+}
+
+/// A boxed cache writer for type-erased storage.
+pub type BoxedCacheWriter<K, V> = Arc<dyn CacheWriter<K, V>>;
+
+/// A cache writer implementation using closures.
+pub struct FnCacheWriter<K, V> {
+    write_fn: Box<dyn Fn(&K, &V) -> Result<()> + Send + Sync>,
+    write_all_fn: Option<Box<dyn Fn(&HashMap<K, V>) -> Result<()> + Send + Sync>>,
+    delete_fn: Box<dyn Fn(&K) -> Result<()> + Send + Sync>,
+    delete_all_fn: Option<Box<dyn Fn(&[K]) -> Result<()> + Send + Sync>>,
+    _phantom: PhantomData<fn() -> (K, V)>,
+}
+
+impl<K, V> FnCacheWriter<K, V> {
+    /// Creates a new builder for constructing an `FnCacheWriter`.
+    pub fn builder() -> FnCacheWriterBuilder<K, V> {
+        FnCacheWriterBuilder::new()
+    }
+}
+
+impl<K, V> CacheWriter<K, V> for FnCacheWriter<K, V>
+where
+    K: Clone + Eq + Hash + Send + Sync,
+    V: Send + Sync,
+{
+    fn write(&self, key: &K, value: &V) -> Result<()> {
+        (self.write_fn)(key, value)
+    }
+
+    fn write_all(&self, entries: &HashMap<K, V>) -> Result<()> {
+        if let Some(ref write_all_fn) = self.write_all_fn {
+            write_all_fn(entries)
+        } else {
+            for (key, value) in entries {
+                self.write(key, value)?;
+            }
+            Ok(())
+        }
+    }
+
+    fn delete(&self, key: &K) -> Result<()> {
+        (self.delete_fn)(key)
+    }
+
+    fn delete_all(&self, keys: &[K]) -> Result<()> {
+        if let Some(ref delete_all_fn) = self.delete_all_fn {
+            delete_all_fn(keys)
+        } else {
+            for key in keys {
+                self.delete(key)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+impl<K, V> std::fmt::Debug for FnCacheWriter<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FnCacheWriter")
+            .field("has_write_all", &self.write_all_fn.is_some())
+            .field("has_delete_all", &self.delete_all_fn.is_some())
+            .finish()
+    }
+}
+
+/// Builder for creating [`FnCacheWriter`] instances.
+pub struct FnCacheWriterBuilder<K, V> {
+    write_fn: Option<Box<dyn Fn(&K, &V) -> Result<()> + Send + Sync>>,
+    write_all_fn: Option<Box<dyn Fn(&HashMap<K, V>) -> Result<()> + Send + Sync>>,
+    delete_fn: Option<Box<dyn Fn(&K) -> Result<()> + Send + Sync>>,
+    delete_all_fn: Option<Box<dyn Fn(&[K]) -> Result<()> + Send + Sync>>,
+    _phantom: PhantomData<fn() -> (K, V)>,
+}
+
+impl<K, V> FnCacheWriterBuilder<K, V> {
+    fn new() -> Self {
+        Self {
+            write_fn: None,
+            write_all_fn: None,
+            delete_fn: None,
+            delete_all_fn: None,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Sets the function for writing a single entry.
+    ///
+    /// This is required before calling `build()`.
+    pub fn write<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&K, &V) -> Result<()> + Send + Sync + 'static,
+    {
+        self.write_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the function for writing multiple entries.
+    ///
+    /// If not provided, `write_all` will call `write` for each entry individually.
+    pub fn write_all<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&HashMap<K, V>) -> Result<()> + Send + Sync + 'static,
+    {
+        self.write_all_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the function for deleting a single entry.
+    ///
+    /// This is required before calling `build()`.
+    pub fn delete<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&K) -> Result<()> + Send + Sync + 'static,
+    {
+        self.delete_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the function for deleting multiple entries.
+    ///
+    /// If not provided, `delete_all` will call `delete` for each key individually.
+    pub fn delete_all<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&[K]) -> Result<()> + Send + Sync + 'static,
+    {
+        self.delete_all_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Builds the [`FnCacheWriter`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `write` or `delete` were not set.
+    pub fn build(self) -> FnCacheWriter<K, V> {
+        FnCacheWriter {
+            write_fn: self.write_fn.expect("write function is required"),
+            write_all_fn: self.write_all_fn,
+            delete_fn: self.delete_fn.expect("delete function is required"),
+            delete_all_fn: self.delete_all_fn,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<K, V> Default for FnCacheWriterBuilder<K, V> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<K, V> std::fmt::Debug for FnCacheWriterBuilder<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FnCacheWriterBuilder")
+            .field("has_write", &self.write_fn.is_some())
+            .field("has_write_all", &self.write_all_fn.is_some())
+            .field("has_delete", &self.delete_fn.is_some())
+            .field("has_delete_all", &self.delete_all_fn.is_some())
+            .finish()
+    }
+}
+
+/// Configuration for read-through and write-through caching behavior.
+///
+/// This configuration determines how the cache interacts with external
+/// data sources through `CacheLoader` and `CacheWriter` implementations.
+#[derive(Debug, Clone, Default)]
+pub struct CacheConfiguration {
+    /// Whether read-through is enabled.
+    ///
+    /// When enabled, cache misses will trigger a load from the configured
+    /// `CacheLoader` to fetch the value from the external data source.
+    pub read_through: bool,
+
+    /// Whether write-through is enabled.
+    ///
+    /// When enabled, cache modifications (put, remove) will be propagated
+    /// to the configured `CacheWriter` to persist changes to the external
+    /// data source.
+    pub write_through: bool,
+
+    /// Whether to store values by reference or by value.
+    ///
+    /// When true, the cache stores references to values. When false,
+    /// values are copied on get/put operations.
+    pub store_by_value: bool,
+
+    /// Whether statistics collection is enabled.
+    pub statistics_enabled: bool,
+
+    /// Whether management (JMX) is enabled.
+    pub management_enabled: bool,
+}
+
+impl CacheConfiguration {
+    /// Creates a new cache configuration with default settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enables read-through caching.
+    ///
+    /// When read-through is enabled, a `CacheLoader` must be configured
+    /// to load values on cache misses.
+    pub fn read_through(mut self, enabled: bool) -> Self {
+        self.read_through = enabled;
+        self
+    }
+
+    /// Enables write-through caching.
+    ///
+    /// When write-through is enabled, a `CacheWriter` must be configured
+    /// to persist changes to the external data source.
+    pub fn write_through(mut self, enabled: bool) -> Self {
+        self.write_through = enabled;
+        self
+    }
+
+    /// Sets whether values should be stored by value (copied) or by reference.
+    pub fn store_by_value(mut self, enabled: bool) -> Self {
+        self.store_by_value = enabled;
+        self
+    }
+
+    /// Enables statistics collection for this cache.
+    pub fn statistics_enabled(mut self, enabled: bool) -> Self {
+        self.statistics_enabled = enabled;
+        self
+    }
+
+    /// Enables management (JMX) for this cache.
+    pub fn management_enabled(mut self, enabled: bool) -> Self {
+        self.management_enabled = enabled;
+        self
+    }
+
+    /// Returns `true` if read-through is enabled.
+    pub fn is_read_through(&self) -> bool {
+        self.read_through
+    }
+
+    /// Returns `true` if write-through is enabled.
+    pub fn is_write_through(&self) -> bool {
+        self.write_through
+    }
+}
+
 /// Configuration for cache entry listeners specifying which events to receive.
 #[derive(Debug, Clone, Default)]
 pub struct CacheEntryListenerConfig {
@@ -1989,6 +2444,381 @@ mod tests {
         assert_eq!(listener.updated.load(Ordering::Relaxed), 1);
         assert_eq!(listener.removed.load(Ordering::Relaxed), 1);
         assert_eq!(listener.expired.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_cache_loader_trait_is_object_safe() {
+        fn assert_object_safe<K: Send + Sync, V: Send + Sync>(_: &dyn CacheLoader<K, V>) {}
+
+        struct TestLoader;
+        impl CacheLoader<String, i32> for TestLoader {
+            fn load(&self, _key: &String) -> Result<Option<i32>> {
+                Ok(Some(42))
+            }
+            fn load_all(&self, _keys: &[String]) -> Result<HashMap<String, i32>> {
+                Ok(HashMap::new())
+            }
+        }
+
+        let loader = TestLoader;
+        assert_object_safe::<String, i32>(&loader);
+    }
+
+    #[test]
+    fn test_fn_cache_loader_builder() {
+        let loader: FnCacheLoader<String, i32> = FnCacheLoader::builder()
+            .load(|key| {
+                if key == "exists" {
+                    Ok(Some(42))
+                } else {
+                    Ok(None)
+                }
+            })
+            .build();
+
+        assert_eq!(loader.load(&"exists".to_string()).unwrap(), Some(42));
+        assert_eq!(loader.load(&"missing".to_string()).unwrap(), None);
+    }
+
+    #[test]
+    fn test_fn_cache_loader_load_all_default() {
+        let loader: FnCacheLoader<String, i32> = FnCacheLoader::builder()
+            .load(|key| {
+                if key == "a" {
+                    Ok(Some(1))
+                } else if key == "b" {
+                    Ok(Some(2))
+                } else {
+                    Ok(None)
+                }
+            })
+            .build();
+
+        let keys = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let results = loader.load_all(&keys).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results.get("a"), Some(&1));
+        assert_eq!(results.get("b"), Some(&2));
+        assert!(!results.contains_key("c"));
+    }
+
+    #[test]
+    fn test_fn_cache_loader_load_all_custom() {
+        let loader: FnCacheLoader<String, i32> = FnCacheLoader::builder()
+            .load(|_| Ok(None))
+            .load_all(|keys| {
+                let mut map = HashMap::new();
+                for key in keys {
+                    map.insert(key.clone(), key.len() as i32);
+                }
+                Ok(map)
+            })
+            .build();
+
+        let keys = vec!["hello".to_string(), "world".to_string()];
+        let results = loader.load_all(&keys).unwrap();
+
+        assert_eq!(results.get("hello"), Some(&5));
+        assert_eq!(results.get("world"), Some(&5));
+    }
+
+    #[test]
+    fn test_fn_cache_loader_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<FnCacheLoader<String, String>>();
+    }
+
+    #[test]
+    fn test_fn_cache_loader_debug() {
+        let loader: FnCacheLoader<String, i32> = FnCacheLoader::builder()
+            .load(|_| Ok(None))
+            .load_all(|_| Ok(HashMap::new()))
+            .build();
+
+        let debug_str = format!("{:?}", loader);
+        assert!(debug_str.contains("FnCacheLoader"));
+        assert!(debug_str.contains("has_load_all: true"));
+    }
+
+    #[test]
+    fn test_cache_writer_trait_is_object_safe() {
+        fn assert_object_safe<K: Send + Sync, V: Send + Sync>(_: &dyn CacheWriter<K, V>) {}
+
+        struct TestWriter;
+        impl CacheWriter<String, i32> for TestWriter {
+            fn write(&self, _key: &String, _value: &i32) -> Result<()> {
+                Ok(())
+            }
+            fn write_all(&self, _entries: &HashMap<String, i32>) -> Result<()> {
+                Ok(())
+            }
+            fn delete(&self, _key: &String) -> Result<()> {
+                Ok(())
+            }
+            fn delete_all(&self, _keys: &[String]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let writer = TestWriter;
+        assert_object_safe::<String, i32>(&writer);
+    }
+
+    #[test]
+    fn test_fn_cache_writer_builder() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let write_count = Arc::new(AtomicU32::new(0));
+        let delete_count = Arc::new(AtomicU32::new(0));
+
+        let write_counter = Arc::clone(&write_count);
+        let delete_counter = Arc::clone(&delete_count);
+
+        let writer: FnCacheWriter<String, i32> = FnCacheWriter::builder()
+            .write(move |_, _| {
+                write_counter.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            })
+            .delete(move |_| {
+                delete_counter.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            })
+            .build();
+
+        writer.write(&"key".to_string(), &42).unwrap();
+        writer.delete(&"key".to_string()).unwrap();
+
+        assert_eq!(write_count.load(Ordering::Relaxed), 1);
+        assert_eq!(delete_count.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_fn_cache_writer_write_all_default() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let write_count = Arc::new(AtomicU32::new(0));
+        let write_counter = Arc::clone(&write_count);
+
+        let writer: FnCacheWriter<String, i32> = FnCacheWriter::builder()
+            .write(move |_, _| {
+                write_counter.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            })
+            .delete(|_| Ok(()))
+            .build();
+
+        let mut entries = HashMap::new();
+        entries.insert("a".to_string(), 1);
+        entries.insert("b".to_string(), 2);
+        entries.insert("c".to_string(), 3);
+
+        writer.write_all(&entries).unwrap();
+
+        assert_eq!(write_count.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn test_fn_cache_writer_delete_all_default() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let delete_count = Arc::new(AtomicU32::new(0));
+        let delete_counter = Arc::clone(&delete_count);
+
+        let writer: FnCacheWriter<String, i32> = FnCacheWriter::builder()
+            .write(|_, _| Ok(()))
+            .delete(move |_| {
+                delete_counter.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            })
+            .build();
+
+        let keys = vec!["a".to_string(), "b".to_string()];
+        writer.delete_all(&keys).unwrap();
+
+        assert_eq!(delete_count.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn test_fn_cache_writer_custom_batch_operations() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let batch_write_count = Arc::new(AtomicU32::new(0));
+        let batch_delete_count = Arc::new(AtomicU32::new(0));
+
+        let batch_write_counter = Arc::clone(&batch_write_count);
+        let batch_delete_counter = Arc::clone(&batch_delete_count);
+
+        let writer: FnCacheWriter<String, i32> = FnCacheWriter::builder()
+            .write(|_, _| Ok(()))
+            .write_all(move |entries| {
+                batch_write_counter.fetch_add(entries.len() as u32, Ordering::Relaxed);
+                Ok(())
+            })
+            .delete(|_| Ok(()))
+            .delete_all(move |keys| {
+                batch_delete_counter.fetch_add(keys.len() as u32, Ordering::Relaxed);
+                Ok(())
+            })
+            .build();
+
+        let mut entries = HashMap::new();
+        entries.insert("a".to_string(), 1);
+        entries.insert("b".to_string(), 2);
+        writer.write_all(&entries).unwrap();
+
+        let keys = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        writer.delete_all(&keys).unwrap();
+
+        assert_eq!(batch_write_count.load(Ordering::Relaxed), 2);
+        assert_eq!(batch_delete_count.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn test_fn_cache_writer_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<FnCacheWriter<String, String>>();
+    }
+
+    #[test]
+    fn test_fn_cache_writer_debug() {
+        let writer: FnCacheWriter<String, i32> = FnCacheWriter::builder()
+            .write(|_, _| Ok(()))
+            .write_all(|_| Ok(()))
+            .delete(|_| Ok(()))
+            .build();
+
+        let debug_str = format!("{:?}", writer);
+        assert!(debug_str.contains("FnCacheWriter"));
+        assert!(debug_str.contains("has_write_all: true"));
+        assert!(debug_str.contains("has_delete_all: false"));
+    }
+
+    #[test]
+    fn test_cache_configuration_default() {
+        let config = CacheConfiguration::new();
+        assert!(!config.read_through);
+        assert!(!config.write_through);
+        assert!(!config.store_by_value);
+        assert!(!config.statistics_enabled);
+        assert!(!config.management_enabled);
+    }
+
+    #[test]
+    fn test_cache_configuration_builder() {
+        let config = CacheConfiguration::new()
+            .read_through(true)
+            .write_through(true)
+            .store_by_value(true)
+            .statistics_enabled(true)
+            .management_enabled(true);
+
+        assert!(config.is_read_through());
+        assert!(config.is_write_through());
+        assert!(config.store_by_value);
+        assert!(config.statistics_enabled);
+        assert!(config.management_enabled);
+    }
+
+    #[test]
+    fn test_cache_configuration_clone() {
+        let config = CacheConfiguration::new()
+            .read_through(true)
+            .write_through(true);
+
+        let cloned = config.clone();
+        assert_eq!(cloned.read_through, config.read_through);
+        assert_eq!(cloned.write_through, config.write_through);
+    }
+
+    #[test]
+    fn test_cache_configuration_debug() {
+        let config = CacheConfiguration::new().read_through(true);
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("CacheConfiguration"));
+        assert!(debug_str.contains("read_through: true"));
+    }
+
+    #[test]
+    fn test_boxed_cache_loader_type() {
+        struct TestLoader;
+        impl CacheLoader<String, i32> for TestLoader {
+            fn load(&self, _: &String) -> Result<Option<i32>> {
+                Ok(None)
+            }
+            fn load_all(&self, _: &[String]) -> Result<HashMap<String, i32>> {
+                Ok(HashMap::new())
+            }
+        }
+
+        let _boxed: BoxedCacheLoader<String, i32> = Arc::new(TestLoader);
+    }
+
+    #[test]
+    fn test_boxed_cache_writer_type() {
+        struct TestWriter;
+        impl CacheWriter<String, i32> for TestWriter {
+            fn write(&self, _: &String, _: &i32) -> Result<()> {
+                Ok(())
+            }
+            fn write_all(&self, _: &HashMap<String, i32>) -> Result<()> {
+                Ok(())
+            }
+            fn delete(&self, _: &String) -> Result<()> {
+                Ok(())
+            }
+            fn delete_all(&self, _: &[String]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let _boxed: BoxedCacheWriter<String, i32> = Arc::new(TestWriter);
+    }
+
+    #[test]
+    fn test_fn_cache_loader_builder_debug() {
+        let builder: FnCacheLoaderBuilder<String, i32> = FnCacheLoaderBuilder::new()
+            .load(|_| Ok(None));
+
+        let debug_str = format!("{:?}", builder);
+        assert!(debug_str.contains("FnCacheLoaderBuilder"));
+        assert!(debug_str.contains("has_load: true"));
+    }
+
+    #[test]
+    fn test_fn_cache_writer_builder_debug() {
+        let builder: FnCacheWriterBuilder<String, i32> = FnCacheWriterBuilder::new()
+            .write(|_, _| Ok(()))
+            .delete(|_| Ok(()));
+
+        let debug_str = format!("{:?}", builder);
+        assert!(debug_str.contains("FnCacheWriterBuilder"));
+        assert!(debug_str.contains("has_write: true"));
+        assert!(debug_str.contains("has_delete: true"));
+    }
+
+    #[test]
+    fn test_cache_loader_error_propagation() {
+        let loader: FnCacheLoader<String, i32> = FnCacheLoader::builder()
+            .load(|_| Err(HazelcastError::Serialization("test error".to_string())))
+            .build();
+
+        let result = loader.load(&"key".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cache_writer_error_propagation() {
+        let writer: FnCacheWriter<String, i32> = FnCacheWriter::builder()
+            .write(|_, _| Err(HazelcastError::Serialization("write error".to_string())))
+            .delete(|_| Err(HazelcastError::Serialization("delete error".to_string())))
+            .build();
+
+        let write_result = writer.write(&"key".to_string(), &42);
+        assert!(write_result.is_err());
+
+        let delete_result = writer.delete(&"key".to_string());
+        assert!(delete_result.is_err());
     }
 
     #[test]
