@@ -1,14 +1,76 @@
 //! Distributed PN (Positive-Negative) Counter proxy implementation.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use bytes::BytesMut;
+use uuid::Uuid;
 use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::{ClientMessage, HazelcastError, Result};
 
 use crate::connection::ConnectionManager;
+
+/// A timestamp observed from a specific replica.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReplicaTimestamp {
+    /// UUID of the replica member.
+    replica_id: Uuid,
+    /// Logical timestamp from that replica.
+    timestamp: i64,
+}
+
+/// Tracks observed timestamps from cluster replicas for monotonic read guarantees.
+///
+/// PN Counters use this to ensure clients don't read stale values by sending
+/// their observed timestamps to the cluster, which routes requests to replicas
+/// that have at least those timestamps.
+#[derive(Debug, Clone, Default)]
+struct ReplicaTimestampVector {
+    timestamps: Vec<ReplicaTimestamp>,
+}
+
+impl ReplicaTimestampVector {
+    /// Creates a new empty timestamp vector.
+    fn new() -> Self {
+        Self { timestamps: Vec::new() }
+    }
+
+    /// Merges observed timestamps from a response into this vector.
+    /// For each replica, keeps the maximum observed timestamp.
+    fn merge(&mut self, other: &[ReplicaTimestamp]) {
+        for incoming in other {
+            if let Some(existing) = self.timestamps.iter_mut()
+                .find(|t| t.replica_id == incoming.replica_id)
+            {
+                if incoming.timestamp > existing.timestamp {
+                    existing.timestamp = incoming.timestamp;
+                }
+            } else {
+                self.timestamps.push(incoming.clone());
+            }
+        }
+    }
+
+    /// Encodes the timestamp vector into a frame for sending to the server.
+    /// Format: [entry_count: i32][entries...] where each entry is:
+    /// [uuid_most_sig_bits: i64][uuid_least_sig_bits: i64][timestamp: i64]
+    fn to_frame(&self) -> Frame {
+        let entry_count = self.timestamps.len() as i32;
+        let capacity = 4 + self.timestamps.len() * 24;
+        let mut buf = BytesMut::with_capacity(capacity);
+
+        buf.extend_from_slice(&entry_count.to_le_bytes());
+        for ts in &self.timestamps {
+            let (most, least) = ts.replica_id.as_u64_pair();
+            buf.extend_from_slice(&(most as i64).to_le_bytes());
+            buf.extend_from_slice(&(least as i64).to_le_bytes());
+            buf.extend_from_slice(&ts.timestamp.to_le_bytes());
+        }
+
+        Frame::with_content(buf)
+    }
+}
 
 /// A distributed PN Counter (Positive-Negative Counter) proxy for performing conflict-free
 /// counter operations on a Hazelcast cluster.
@@ -24,6 +86,8 @@ use crate::connection::ConnectionManager;
 pub struct PNCounter {
     name: String,
     connection_manager: Arc<ConnectionManager>,
+    /// Observed replica timestamps for monotonic read guarantees.
+    observed_timestamps: Arc<Mutex<ReplicaTimestampVector>>,
 }
 
 impl PNCounter {
@@ -32,6 +96,7 @@ impl PNCounter {
         Self {
             name,
             connection_manager,
+            observed_timestamps: Arc::new(Mutex::new(ReplicaTimestampVector::new())),
         }
     }
 
@@ -47,10 +112,10 @@ impl PNCounter {
     pub async fn get(&self) -> Result<i64> {
         let mut message = ClientMessage::create_for_encode_any_partition(PN_COUNTER_GET);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::empty_replica_timestamps_frame());
+        message.add_frame(self.replica_timestamps_frame());
 
         let response = self.invoke(message).await?;
-        Self::decode_long_response(&response)
+        self.decode_response_and_update_timestamps(&response)
     }
 
     /// Adds the given delta to the counter and returns the new value.
@@ -59,10 +124,10 @@ impl PNCounter {
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(delta));
         message.add_frame(Self::bool_frame(false)); // get_before_update = false
-        message.add_frame(Self::empty_replica_timestamps_frame());
+        message.add_frame(self.replica_timestamps_frame());
 
         let response = self.invoke(message).await?;
-        Self::decode_long_response(&response)
+        self.decode_response_and_update_timestamps(&response)
     }
 
     /// Adds the given delta to the counter and returns the previous value.
@@ -71,10 +136,10 @@ impl PNCounter {
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(delta));
         message.add_frame(Self::bool_frame(true)); // get_before_update = true
-        message.add_frame(Self::empty_replica_timestamps_frame());
+        message.add_frame(self.replica_timestamps_frame());
 
         let response = self.invoke(message).await?;
-        Self::decode_long_response(&response)
+        self.decode_response_and_update_timestamps(&response)
     }
 
     /// Subtracts the given delta from the counter and returns the new value.
@@ -126,8 +191,11 @@ impl PNCounter {
         Frame::with_content(buf)
     }
 
-    fn empty_replica_timestamps_frame() -> Frame {
-        Frame::with_content(BytesMut::new())
+    fn replica_timestamps_frame(&self) -> Frame {
+        self.observed_timestamps
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .to_frame()
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
@@ -147,18 +215,17 @@ impl PNCounter {
         })
     }
 
-    fn decode_long_response(response: &ClientMessage) -> Result<i64> {
+    /// Decodes a PNCounter response, extracts the value and updates observed timestamps.
+    fn decode_response_and_update_timestamps(&self, response: &ClientMessage) -> Result<i64> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
-        if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 8 {
+        let value = if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 8 {
             let offset = RESPONSE_HEADER_SIZE;
-            Ok(i64::from_le_bytes([
+            i64::from_le_bytes([
                 initial_frame.content[offset],
                 initial_frame.content[offset + 1],
                 initial_frame.content[offset + 2],
@@ -167,10 +234,81 @@ impl PNCounter {
                 initial_frame.content[offset + 5],
                 initial_frame.content[offset + 6],
                 initial_frame.content[offset + 7],
-            ]))
+            ])
         } else {
-            Ok(0)
+            return Err(HazelcastError::Serialization("response too short".to_string()));
+        };
+
+        if frames.len() > 1 {
+            let ts_frame = &frames[1];
+            if ts_frame.content.len() >= 4 {
+                let entry_count = i32::from_le_bytes([
+                    ts_frame.content[0],
+                    ts_frame.content[1],
+                    ts_frame.content[2],
+                    ts_frame.content[3],
+                ]) as usize;
+
+                let mut incoming_timestamps = Vec::with_capacity(entry_count);
+                let mut offset = 4;
+
+                for _ in 0..entry_count {
+                    if offset + 24 > ts_frame.content.len() {
+                        break;
+                    }
+
+                    let most = i64::from_le_bytes([
+                        ts_frame.content[offset],
+                        ts_frame.content[offset + 1],
+                        ts_frame.content[offset + 2],
+                        ts_frame.content[offset + 3],
+                        ts_frame.content[offset + 4],
+                        ts_frame.content[offset + 5],
+                        ts_frame.content[offset + 6],
+                        ts_frame.content[offset + 7],
+                    ]) as u64;
+                    offset += 8;
+
+                    let least = i64::from_le_bytes([
+                        ts_frame.content[offset],
+                        ts_frame.content[offset + 1],
+                        ts_frame.content[offset + 2],
+                        ts_frame.content[offset + 3],
+                        ts_frame.content[offset + 4],
+                        ts_frame.content[offset + 5],
+                        ts_frame.content[offset + 6],
+                        ts_frame.content[offset + 7],
+                    ]) as u64;
+                    offset += 8;
+
+                    let timestamp = i64::from_le_bytes([
+                        ts_frame.content[offset],
+                        ts_frame.content[offset + 1],
+                        ts_frame.content[offset + 2],
+                        ts_frame.content[offset + 3],
+                        ts_frame.content[offset + 4],
+                        ts_frame.content[offset + 5],
+                        ts_frame.content[offset + 6],
+                        ts_frame.content[offset + 7],
+                    ]);
+                    offset += 8;
+
+                    incoming_timestamps.push(ReplicaTimestamp {
+                        replica_id: Uuid::from_u64_pair(most, least),
+                        timestamp,
+                    });
+                }
+
+                if !incoming_timestamps.is_empty() {
+                    self.observed_timestamps
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .merge(&incoming_timestamps);
+                }
+            }
         }
+
+        Ok(value)
     }
 }
 
@@ -179,6 +317,7 @@ impl Clone for PNCounter {
         Self {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
+            observed_timestamps: Arc::clone(&self.observed_timestamps),
         }
     }
 }
@@ -258,8 +397,86 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_replica_timestamps_frame() {
-        let frame = PNCounter::empty_replica_timestamps_frame();
-        assert!(frame.content.is_empty());
+    fn test_replica_timestamp_vector_new() {
+        let vector = ReplicaTimestampVector::new();
+        assert!(vector.timestamps.is_empty());
+    }
+
+    #[test]
+    fn test_replica_timestamp_vector_merge_new_replica() {
+        let mut vector = ReplicaTimestampVector::new();
+        let uuid = Uuid::new_v4();
+        let incoming = vec![ReplicaTimestamp { replica_id: uuid, timestamp: 100 }];
+
+        vector.merge(&incoming);
+
+        assert_eq!(vector.timestamps.len(), 1);
+        assert_eq!(vector.timestamps[0].replica_id, uuid);
+        assert_eq!(vector.timestamps[0].timestamp, 100);
+    }
+
+    #[test]
+    fn test_replica_timestamp_vector_merge_keeps_max() {
+        let mut vector = ReplicaTimestampVector::new();
+        let uuid = Uuid::new_v4();
+
+        vector.merge(&[ReplicaTimestamp { replica_id: uuid, timestamp: 100 }]);
+
+        vector.merge(&[ReplicaTimestamp { replica_id: uuid, timestamp: 50 }]);
+        assert_eq!(vector.timestamps[0].timestamp, 100);
+
+        vector.merge(&[ReplicaTimestamp { replica_id: uuid, timestamp: 200 }]);
+        assert_eq!(vector.timestamps[0].timestamp, 200);
+    }
+
+    #[test]
+    fn test_replica_timestamp_vector_merge_multiple_replicas() {
+        let mut vector = ReplicaTimestampVector::new();
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+
+        vector.merge(&[
+            ReplicaTimestamp { replica_id: uuid1, timestamp: 100 },
+            ReplicaTimestamp { replica_id: uuid2, timestamp: 200 },
+        ]);
+
+        assert_eq!(vector.timestamps.len(), 2);
+    }
+
+    #[test]
+    fn test_replica_timestamp_vector_to_frame_empty() {
+        let vector = ReplicaTimestampVector::new();
+        let frame = vector.to_frame();
+
+        assert_eq!(frame.content.len(), 4);
+        assert_eq!(i32::from_le_bytes(frame.content[..4].try_into().unwrap()), 0);
+    }
+
+    #[test]
+    fn test_replica_timestamp_vector_to_frame_with_entries() {
+        let mut vector = ReplicaTimestampVector::new();
+        let uuid = Uuid::from_u64_pair(0x1234567890ABCDEF, 0xFEDCBA0987654321);
+        vector.merge(&[ReplicaTimestamp { replica_id: uuid, timestamp: 42 }]);
+
+        let frame = vector.to_frame();
+
+        assert_eq!(frame.content.len(), 28);
+
+        assert_eq!(i32::from_le_bytes(frame.content[0..4].try_into().unwrap()), 1);
+
+        let most = i64::from_le_bytes(frame.content[4..12].try_into().unwrap()) as u64;
+        assert_eq!(most, 0x1234567890ABCDEF);
+
+        let least = i64::from_le_bytes(frame.content[12..20].try_into().unwrap()) as u64;
+        assert_eq!(least, 0xFEDCBA0987654321);
+
+        let timestamp = i64::from_le_bytes(frame.content[20..28].try_into().unwrap());
+        assert_eq!(timestamp, 42);
+    }
+
+    #[test]
+    fn test_pn_counter_clone_shares_timestamps() {
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<PNCounter>();
     }
 }
