@@ -545,6 +545,24 @@ pub const CP_SESSION_HEARTBEAT: i32 = 0x1F0300;
 /// CP Session generate thread ID request.
 pub const CP_SESSION_GENERATE_THREAD_ID: i32 = 0x1F0400;
 
+/// CP Map get request.
+pub const CP_MAP_GET: i32 = 0x230100;
+
+/// CP Map put request.
+pub const CP_MAP_PUT: i32 = 0x230200;
+
+/// CP Map set request.
+pub const CP_MAP_SET: i32 = 0x230300;
+
+/// CP Map remove request.
+pub const CP_MAP_REMOVE: i32 = 0x230400;
+
+/// CP Map delete request.
+pub const CP_MAP_DELETE: i32 = 0x230500;
+
+/// CP Map compare and set request.
+pub const CP_MAP_COMPARE_AND_SET: i32 = 0x230600;
+
 /// SQL execute request.
 pub const SQL_EXECUTE: i32 = 0x210100;
 

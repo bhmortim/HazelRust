@@ -21,9 +21,9 @@ use crate::listener::{
     MemberEvent,
 };
 use crate::proxy::{
-    AtomicLong, AtomicReference, CardinalityEstimator, CountDownLatch, FencedLock, FlakeIdGenerator,
-    ICache, IList, IMap, IQueue, ISet, ITopic, MultiMap, PNCounter, ReliableTopic, ReplicatedMap,
-    Ringbuffer, Semaphore,
+    AtomicLong, AtomicReference, CPMap, CardinalityEstimator, CountDownLatch, FencedLock,
+    FlakeIdGenerator, ICache, IList, IMap, IQueue, ISet, ITopic, MultiMap, PNCounter,
+    ReliableTopic, ReplicatedMap, Ringbuffer, Semaphore,
 };
 use crate::sql::SqlService;
 use crate::transaction::{TransactionContext, TransactionOptions, XATransaction, Xid};
@@ -303,6 +303,46 @@ impl HazelcastClient {
         T: Serializable + Deserializable + Send + Sync,
     {
         AtomicReference::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed CP Map proxy for the given name.
+    ///
+    /// The CP Map provides a key-value store with strong consistency guarantees
+    /// through the CP (Consistent Partition) subsystem using the Raft consensus algorithm.
+    ///
+    /// Unlike the regular `IMap`, `CPMap` guarantees linearizable operations,
+    /// making it suitable for scenarios requiring strong consistency such as
+    /// configuration management or leader election metadata.
+    ///
+    /// Note: CPMap requires the CP subsystem to be enabled on the Hazelcast cluster.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `K`: The key type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    /// - `V`: The value type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let cp_map = client.get_cp_map::<String, String>("my-cp-map");
+    ///
+    /// // Strong consistency guarantees for all operations
+    /// cp_map.put("config-key".to_string(), "config-value".to_string()).await?;
+    /// let value = cp_map.get(&"config-key".to_string()).await?;
+    ///
+    /// // Atomic compare-and-set operation
+    /// let success = cp_map.compare_and_set(
+    ///     &"config-key".to_string(),
+    ///     &"config-value".to_string(),
+    ///     "new-value".to_string()
+    /// ).await?;
+    /// ```
+    pub fn get_cp_map<K, V>(&self, name: &str) -> CPMap<K, V>
+    where
+        K: Serializable + Deserializable + Send + Sync,
+        V: Serializable + Deserializable + Send + Sync,
+    {
+        CPMap::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns a distributed replicated map proxy for the given name.
