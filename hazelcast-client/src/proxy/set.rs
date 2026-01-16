@@ -131,6 +131,64 @@ where
         Ok(())
     }
 
+    /// Adds all elements in the specified collection to this set.
+    ///
+    /// Returns `true` if this set changed as a result of the call.
+    pub async fn add_all(&self, items: Vec<T>) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(SET_ADD_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, &items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Removes from this set all of its elements that are contained in the specified collection.
+    ///
+    /// Returns `true` if this set changed as a result of the call.
+    pub async fn remove_all(&self, items: &[T]) -> Result<bool> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(SET_REMOVE_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Retains only the elements in this set that are contained in the specified collection.
+    ///
+    /// Returns `true` if this set changed as a result of the call.
+    pub async fn retain_all(&self, items: &[T]) -> Result<bool> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(SET_RETAIN_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Returns `true` if this set contains all of the elements in the specified collection.
+    pub async fn contains_all(&self, items: &[T]) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(SET_CONTAINS_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
         value.serialize(&mut output)?;
@@ -143,6 +201,20 @@ where
 
     fn data_frame(data: &[u8]) -> Frame {
         Frame::with_content(BytesMut::from(data))
+    }
+
+    fn add_data_list_frames(&self, message: &mut ClientMessage, items: &[T]) -> Result<()> {
+        let mut list_buf = BytesMut::new();
+        list_buf.extend_from_slice(&(items.len() as i32).to_le_bytes());
+
+        for item in items {
+            let item_data = Self::serialize_value(item)?;
+            list_buf.extend_from_slice(&(item_data.len() as i32).to_le_bytes());
+            list_buf.extend_from_slice(&item_data);
+        }
+
+        message.add_frame(Frame::with_content(list_buf));
+        Ok(())
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {

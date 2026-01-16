@@ -125,6 +125,18 @@ pub const SET_CLEAR: i32 = 0x060500;
 /// Set size request.
 pub const SET_SIZE: i32 = 0x060800;
 
+/// Set contains all request.
+pub const SET_CONTAINS_ALL: i32 = 0x060300;
+
+/// Set add all request.
+pub const SET_ADD_ALL: i32 = 0x060600;
+
+/// Set remove all request.
+pub const SET_REMOVE_ALL: i32 = 0x060700;
+
+/// Set retain all request.
+pub const SET_RETAIN_ALL: i32 = 0x060900;
+
 /// List size request.
 pub const LIST_SIZE: i32 = 0x050100;
 
