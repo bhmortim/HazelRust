@@ -150,6 +150,123 @@ where
         Ok(self.size().await? == 0)
     }
 
+    /// Inserts the specified element into this queue, waiting if necessary
+    /// for space to become available.
+    pub async fn put(&self, item: T) -> Result<()> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        let item_data = Self::serialize_value(&item)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_PUT);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&item_data));
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
+    /// Retrieves and removes the head of this queue, waiting if necessary
+    /// until an element becomes available.
+    pub async fn take(&self) -> Result<T> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_TAKE);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke(message).await?;
+        Self::decode_nullable_response(&response)?
+            .ok_or_else(|| HazelcastError::Serialization("expected non-null response".to_string()))
+    }
+
+    /// Removes a single instance of the specified element from this queue, if present.
+    ///
+    /// Returns `true` if the queue contained the specified element.
+    pub async fn remove(&self, item: &T) -> Result<bool> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+        let item_data = Self::serialize_value(item)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_REMOVE);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&item_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Returns `true` if this queue contains the specified element.
+    pub async fn contains(&self, item: &T) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+        let item_data = Self::serialize_value(item)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_CONTAINS);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&item_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Adds all elements in the specified collection to this queue.
+    ///
+    /// Returns `true` if this queue changed as a result of the call.
+    pub async fn add_all(&self, items: Vec<T>) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_ADD_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, &items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Removes from this queue all of its elements that are contained in the specified collection.
+    ///
+    /// Returns `true` if this queue changed as a result of the call.
+    pub async fn remove_all(&self, items: &[T]) -> Result<bool> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_COMPARE_AND_REMOVE_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Returns `true` if this queue contains all of the elements in the specified collection.
+    pub async fn contains_all(&self, items: &[T]) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_CONTAINS_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+        self.add_data_list_frames(&mut message, items)?;
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Removes at most the given number of elements from this queue and returns them.
+    ///
+    /// This operation may be more efficient than repeatedly polling this queue.
+    pub async fn drain_to(&self, max: usize) -> Result<Vec<T>> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_DRAIN_TO_MAX_SIZE);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::int_frame(max as i32));
+
+        let response = self.invoke(message).await?;
+        Self::decode_list_response(&response)
+    }
+
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
         value.serialize(&mut output)?;
@@ -168,6 +285,26 @@ where
         let mut buf = BytesMut::with_capacity(8);
         buf.extend_from_slice(&value.to_le_bytes());
         Frame::with_content(buf)
+    }
+
+    fn int_frame(value: i32) -> Frame {
+        let mut buf = BytesMut::with_capacity(4);
+        buf.extend_from_slice(&value.to_le_bytes());
+        Frame::with_content(buf)
+    }
+
+    fn add_data_list_frames(&self, message: &mut ClientMessage, items: &[T]) -> Result<()> {
+        let mut list_buf = BytesMut::new();
+        list_buf.extend_from_slice(&(items.len() as i32).to_le_bytes());
+
+        for item in items {
+            let item_data = Self::serialize_value(item)?;
+            list_buf.extend_from_slice(&(item_data.len() as i32).to_le_bytes());
+            list_buf.extend_from_slice(&item_data);
+        }
+
+        message.add_frame(Frame::with_content(list_buf));
+        Ok(())
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
@@ -243,6 +380,52 @@ where
         } else {
             Ok(0)
         }
+    }
+
+    fn decode_list_response<V: Deserializable>(response: &ClientMessage) -> Result<Vec<V>> {
+        let frames = response.frames();
+        if frames.len() < 2 {
+            return Ok(Vec::new());
+        }
+
+        let data_frame = &frames[1];
+        if data_frame.content.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let content = &data_frame.content;
+        if content.len() < 4 {
+            return Ok(Vec::new());
+        }
+
+        let count = i32::from_le_bytes([content[0], content[1], content[2], content[3]]) as usize;
+        let mut results = Vec::with_capacity(count);
+        let mut offset = 4;
+
+        for _ in 0..count {
+            if offset + 4 > content.len() {
+                break;
+            }
+
+            let item_len = i32::from_le_bytes([
+                content[offset],
+                content[offset + 1],
+                content[offset + 2],
+                content[offset + 3],
+            ]) as usize;
+            offset += 4;
+
+            if offset + item_len > content.len() {
+                break;
+            }
+
+            let item_data = &content[offset..offset + item_len];
+            let mut input = ObjectDataInput::new(item_data);
+            results.push(V::deserialize(&mut input)?);
+            offset += item_len;
+        }
+
+        Ok(results)
     }
 }
 
@@ -367,5 +550,81 @@ mod tests {
     fn test_serialize_string() {
         let data = IQueue::<String>::serialize_value(&"hello".to_string()).unwrap();
         assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_int_frame() {
+        let frame = IQueue::<String>::int_frame(42);
+        assert_eq!(frame.content.len(), 4);
+        assert_eq!(
+            i32::from_le_bytes(frame.content[..4].try_into().unwrap()),
+            42
+        );
+    }
+
+    #[tokio::test]
+    async fn test_queue_permission_denied_take() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let queue: IQueue<String> = IQueue::new("test".to_string(), cm);
+
+        let result = queue.take().await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_queue_permission_denied_remove() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let queue: IQueue<String> = IQueue::new("test".to_string(), cm);
+
+        let result = queue.remove(&"item".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_queue_permission_denied_contains() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+        perms.grant(PermissionAction::Remove);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let queue: IQueue<String> = IQueue::new("test".to_string(), cm);
+
+        let result = queue.contains(&"item".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 }

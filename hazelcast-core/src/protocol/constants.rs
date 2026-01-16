@@ -110,6 +110,30 @@ pub const QUEUE_SIZE: i32 = 0x030300;
 /// Queue peek request.
 pub const QUEUE_PEEK: i32 = 0x030400;
 
+/// Queue put request (blocking).
+pub const QUEUE_PUT: i32 = 0x030500;
+
+/// Queue take request (blocking).
+pub const QUEUE_TAKE: i32 = 0x030600;
+
+/// Queue remove request.
+pub const QUEUE_REMOVE: i32 = 0x030700;
+
+/// Queue contains request.
+pub const QUEUE_CONTAINS: i32 = 0x030800;
+
+/// Queue add all request.
+pub const QUEUE_ADD_ALL: i32 = 0x030900;
+
+/// Queue compare and remove all request.
+pub const QUEUE_COMPARE_AND_REMOVE_ALL: i32 = 0x030A00;
+
+/// Queue drain to max size request.
+pub const QUEUE_DRAIN_TO_MAX_SIZE: i32 = 0x030C00;
+
+/// Queue contains all request.
+pub const QUEUE_CONTAINS_ALL: i32 = 0x030D00;
+
 /// Set add request.
 pub const SET_ADD: i32 = 0x060100;
 
