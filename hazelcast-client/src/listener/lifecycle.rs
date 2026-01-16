@@ -17,6 +17,8 @@ pub enum LifecycleEvent {
     ClientConnected,
     /// The client has disconnected from the cluster.
     ClientDisconnected,
+    /// The client has changed cluster due to failover.
+    ClientChangedCluster,
 }
 
 impl LifecycleEvent {
@@ -29,6 +31,7 @@ impl LifecycleEvent {
             Self::Shutdown => "SHUTDOWN",
             Self::ClientConnected => "CLIENT_CONNECTED",
             Self::ClientDisconnected => "CLIENT_DISCONNECTED",
+            Self::ClientChangedCluster => "CLIENT_CHANGED_CLUSTER",
         }
     }
 }
@@ -51,6 +54,7 @@ mod tests {
         assert_eq!(LifecycleEvent::Shutdown.name(), "SHUTDOWN");
         assert_eq!(LifecycleEvent::ClientConnected.name(), "CLIENT_CONNECTED");
         assert_eq!(LifecycleEvent::ClientDisconnected.name(), "CLIENT_DISCONNECTED");
+        assert_eq!(LifecycleEvent::ClientChangedCluster.name(), "CLIENT_CHANGED_CLUSTER");
     }
 
     #[test]
@@ -61,6 +65,7 @@ mod tests {
         assert_eq!(LifecycleEvent::Shutdown.to_string(), "SHUTDOWN");
         assert_eq!(LifecycleEvent::ClientConnected.to_string(), "CLIENT_CONNECTED");
         assert_eq!(LifecycleEvent::ClientDisconnected.to_string(), "CLIENT_DISCONNECTED");
+        assert_eq!(LifecycleEvent::ClientChangedCluster.to_string(), "CLIENT_CHANGED_CLUSTER");
     }
 
     #[test]

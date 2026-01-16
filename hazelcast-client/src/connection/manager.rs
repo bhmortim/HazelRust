@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::AtomicI32;
+use std::sync::atomic::{AtomicI32, AtomicUsize};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +15,7 @@ use hazelcast_core::{HazelcastError, Result};
 
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
-use crate::config::{ClientConfig, Permissions};
+use crate::config::{ClientConfig, ClientFailoverConfig, Permissions};
 use crate::cluster::{MigrationEvent, PartitionLostEvent};
 use crate::listener::{
     DistributedObjectEvent, LifecycleEvent, Member, MemberEvent, MemberEventType,
@@ -81,6 +81,9 @@ pub struct ConnectionManager {
     migration_sender: broadcast::Sender<MigrationEvent>,
     partition_lost_sender: broadcast::Sender<PartitionLostEvent>,
     shutdown: tokio::sync::watch::Sender<bool>,
+    failover_config: Option<ClientFailoverConfig>,
+    current_cluster_index: AtomicUsize,
+    current_try_count: AtomicUsize,
 }
 
 impl ConnectionManager {
@@ -108,6 +111,9 @@ impl ConnectionManager {
             migration_sender,
             partition_lost_sender,
             shutdown,
+            failover_config: None,
+            current_cluster_index: AtomicUsize::new(0),
+            current_try_count: AtomicUsize::new(0),
         }
     }
 
@@ -117,6 +123,48 @@ impl ConnectionManager {
             config.network().addresses().to_vec(),
         );
         Self::new(config, discovery)
+    }
+
+    /// Creates a connection manager with failover support.
+    ///
+    /// The manager will automatically try backup clusters when the primary
+    /// cluster becomes unavailable.
+    pub fn with_failover(failover_config: ClientFailoverConfig) -> Self {
+        let primary_config = failover_config
+            .get_config(0)
+            .expect("failover config must have at least one cluster")
+            .clone();
+
+        let discovery = super::discovery::StaticAddressDiscovery::new(
+            primary_config.network().addresses().to_vec(),
+        );
+
+        let (event_sender, _) = broadcast::channel(64);
+        let (membership_sender, _) = broadcast::channel(64);
+        let (lifecycle_sender, _) = broadcast::channel(16);
+        let (distributed_object_sender, _) = broadcast::channel(64);
+        let (migration_sender, _) = broadcast::channel(64);
+        let (partition_lost_sender, _) = broadcast::channel(32);
+        let (shutdown, _) = tokio::sync::watch::channel(false);
+
+        Self {
+            config: Arc::new(primary_config),
+            discovery: Arc::new(discovery),
+            connections: Arc::new(RwLock::new(HashMap::new())),
+            members: Arc::new(RwLock::new(HashMap::new())),
+            partition_table: Arc::new(RwLock::new(HashMap::new())),
+            partition_count: AtomicI32::new(0),
+            event_sender,
+            membership_sender,
+            lifecycle_sender,
+            distributed_object_sender,
+            migration_sender,
+            partition_lost_sender,
+            shutdown,
+            failover_config: Some(failover_config),
+            current_cluster_index: AtomicUsize::new(0),
+            current_try_count: AtomicUsize::new(0),
+        }
     }
 
     /// Subscribes to connection lifecycle events.
@@ -451,6 +499,144 @@ impl ConnectionManager {
     /// waiting for the async shutdown to complete.
     pub fn is_shutdown_requested(&self) -> bool {
         *self.shutdown.borrow()
+    }
+
+    /// Returns `true` if failover is configured.
+    pub fn has_failover(&self) -> bool {
+        self.failover_config.is_some()
+    }
+
+    /// Returns the current cluster index (0 for primary).
+    pub fn current_cluster_index(&self) -> usize {
+        self.current_cluster_index.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Returns the failover configuration, if any.
+    pub fn failover_config(&self) -> Option<&ClientFailoverConfig> {
+        self.failover_config.as_ref()
+    }
+
+    /// Triggers failover to the next available cluster.
+    ///
+    /// This method will:
+    /// 1. Increment the try count for the current cluster
+    /// 2. If try count exceeds the configured limit, move to the next cluster
+    /// 3. Attempt to connect to the new cluster
+    /// 4. Emit a `ClientChangedCluster` lifecycle event on success
+    ///
+    /// Returns `Ok(())` if failover was successful, or an error if all clusters
+    /// have been exhausted.
+    #[instrument(
+        name = "connection_manager.trigger_failover",
+        skip(self),
+        fields(
+            current_cluster = self.current_cluster_index(),
+            has_failover = self.has_failover()
+        )
+    )]
+    pub async fn trigger_failover(&self) -> Result<()> {
+        let failover_config = match &self.failover_config {
+            Some(config) => config,
+            None => {
+                tracing::warn!("failover requested but no failover configuration");
+                return Err(HazelcastError::Connection(
+                    "failover not configured".to_string(),
+                ));
+            }
+        };
+
+        let current_tries = self.current_try_count.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+        let max_tries = failover_config.try_count() as usize;
+
+        tracing::debug!(
+            current_tries = current_tries,
+            max_tries = max_tries,
+            "checking failover attempt count"
+        );
+
+        if current_tries < max_tries {
+            tracing::info!(
+                attempt = current_tries,
+                max = max_tries,
+                "retrying current cluster"
+            );
+            return self.reconnect_current_cluster().await;
+        }
+
+        let cluster_count = failover_config.cluster_count();
+        let current_index = self.current_cluster_index.load(std::sync::atomic::Ordering::Acquire);
+        let next_index = (current_index + 1) % cluster_count;
+
+        tracing::info!(
+            from_cluster = current_index,
+            to_cluster = next_index,
+            "failing over to next cluster"
+        );
+
+        self.current_try_count.store(0, std::sync::atomic::Ordering::Release);
+        self.current_cluster_index.store(next_index, std::sync::atomic::Ordering::Release);
+
+        let new_config = failover_config
+            .get_config(next_index)
+            .ok_or_else(|| HazelcastError::Connection("invalid cluster index".to_string()))?;
+
+        let addresses: Vec<SocketAddr> = self.connections.read().await.keys().copied().collect();
+        for address in addresses {
+            let _ = self.disconnect(address).await;
+        }
+
+        self.members.write().await.clear();
+        self.clear_partition_table().await;
+
+        let new_addresses = new_config.network().addresses();
+        let mut connected = false;
+
+        for address in new_addresses {
+            match self.connect_to(*address).await {
+                Ok(_) => {
+                    connected = true;
+                    tracing::info!(address = %address, "connected to failover cluster");
+                }
+                Err(e) => {
+                    tracing::warn!(address = %address, error = %e, "failed to connect to failover address");
+                }
+            }
+        }
+
+        if connected {
+            let _ = self.lifecycle_sender.send(LifecycleEvent::ClientChangedCluster);
+            tracing::info!(
+                cluster_index = next_index,
+                cluster_name = %new_config.cluster_name(),
+                "successfully failed over to new cluster"
+            );
+            Ok(())
+        } else {
+            tracing::error!(cluster_index = next_index, "failed to connect to any address in failover cluster");
+            Err(HazelcastError::Connection(
+                "failed to connect to failover cluster".to_string(),
+            ))
+        }
+    }
+
+    async fn reconnect_current_cluster(&self) -> Result<()> {
+        let addresses = self.config.network().addresses();
+
+        for address in addresses {
+            match self.connect_to(*address).await {
+                Ok(_) => {
+                    tracing::info!(address = %address, "reconnected to current cluster");
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!(address = %address, error = %e, "failed to reconnect");
+                }
+            }
+        }
+
+        Err(HazelcastError::Connection(
+            "failed to reconnect to current cluster".to_string(),
+        ))
     }
 
     /// Checks if connected to the specified address.
@@ -1918,5 +2104,151 @@ mod tests {
             }
             _ => panic!("expected Connected event"),
         }
+    }
+
+    #[test]
+    fn test_connection_manager_with_failover() {
+        use crate::config::{ClientConfigBuilder, ClientFailoverConfig};
+
+        let config1 = ClientConfigBuilder::new()
+            .cluster_name("primary")
+            .build()
+            .unwrap();
+        let config2 = ClientConfigBuilder::new()
+            .cluster_name("backup")
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .add_client_config(config2)
+            .try_count(2)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::with_failover(failover);
+
+        assert!(manager.has_failover());
+        assert_eq!(manager.current_cluster_index(), 0);
+        assert!(manager.failover_config().is_some());
+        assert_eq!(manager.failover_config().unwrap().cluster_count(), 2);
+    }
+
+    #[test]
+    fn test_connection_manager_without_failover() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let manager = ConnectionManager::from_config(config);
+
+        assert!(!manager.has_failover());
+        assert_eq!(manager.current_cluster_index(), 0);
+        assert!(manager.failover_config().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_trigger_failover_without_config() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let manager = ConnectionManager::from_config(config);
+
+        let result = manager.trigger_failover().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            HazelcastError::Connection(msg) => {
+                assert!(msg.contains("failover not configured"));
+            }
+            e => panic!("expected Connection error, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_failover_lifecycle_event() {
+        use crate::config::{ClientConfigBuilder, ClientFailoverConfig};
+
+        let (listener1, addr1) = create_mock_server().await;
+        let (listener2, addr2) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener1.accept().await;
+        });
+        tokio::spawn(async move {
+            let _ = listener2.accept().await;
+        });
+
+        let config1 = ClientConfigBuilder::new()
+            .cluster_name("primary")
+            .add_address(addr1)
+            .build()
+            .unwrap();
+        let config2 = ClientConfigBuilder::new()
+            .cluster_name("backup")
+            .add_address(addr2)
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .add_client_config(config2)
+            .try_count(1)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::with_failover(failover);
+        let mut lifecycle_rx = manager.subscribe_lifecycle();
+
+        manager.connect_to(addr1).await.unwrap();
+
+        let _ = manager.trigger_failover().await;
+
+        assert_eq!(manager.current_cluster_index(), 1);
+
+        let mut found_event = false;
+        while let Ok(event) = tokio::time::timeout(Duration::from_millis(100), lifecycle_rx.recv()).await {
+            if let Ok(LifecycleEvent::ClientChangedCluster) = event {
+                found_event = true;
+                break;
+            }
+        }
+        assert!(found_event, "expected ClientChangedCluster lifecycle event");
+    }
+
+    #[tokio::test]
+    async fn test_failover_cycles_through_clusters() {
+        use crate::config::{ClientConfigBuilder, ClientFailoverConfig};
+
+        let config1 = ClientConfigBuilder::new()
+            .cluster_name("cluster1")
+            .add_address("192.0.2.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+        let config2 = ClientConfigBuilder::new()
+            .cluster_name("cluster2")
+            .add_address("192.0.2.2:5701".parse().unwrap())
+            .build()
+            .unwrap();
+        let config3 = ClientConfigBuilder::new()
+            .cluster_name("cluster3")
+            .add_address("192.0.2.3:5701".parse().unwrap())
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .add_client_config(config2)
+            .add_client_config(config3)
+            .try_count(1)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::with_failover(failover);
+
+        assert_eq!(manager.current_cluster_index(), 0);
+
+        let _ = manager.trigger_failover().await;
+        assert_eq!(manager.current_cluster_index(), 1);
+
+        let _ = manager.trigger_failover().await;
+        assert_eq!(manager.current_cluster_index(), 2);
+
+        let _ = manager.trigger_failover().await;
+        assert_eq!(manager.current_cluster_index(), 0);
     }
 }

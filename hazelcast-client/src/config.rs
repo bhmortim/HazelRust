@@ -264,6 +264,112 @@ impl WanReplicationRefBuilder {
     }
 }
 
+/// Default number of times to try each cluster before failover.
+const DEFAULT_FAILOVER_TRY_COUNT: u32 = 3;
+
+/// Configuration for client failover behavior.
+///
+/// When the primary cluster becomes unavailable, the client will
+/// automatically try to connect to backup clusters in order.
+/// After exhausting all clusters, it will cycle back to the first.
+#[derive(Debug, Clone)]
+pub struct ClientFailoverConfig {
+    /// The list of client configurations to try, in order.
+    /// The first configuration is the primary cluster.
+    client_configs: Vec<ClientConfig>,
+    /// Number of times to try each cluster before moving to the next.
+    try_count: u32,
+}
+
+impl ClientFailoverConfig {
+    /// Creates a new builder for `ClientFailoverConfig`.
+    pub fn builder() -> ClientFailoverConfigBuilder {
+        ClientFailoverConfigBuilder::new()
+    }
+
+    /// Returns the client configurations for all clusters.
+    pub fn client_configs(&self) -> &[ClientConfig] {
+        &self.client_configs
+    }
+
+    /// Returns the number of times to try each cluster before failover.
+    pub fn try_count(&self) -> u32 {
+        self.try_count
+    }
+
+    /// Returns the number of configured clusters.
+    pub fn cluster_count(&self) -> usize {
+        self.client_configs.len()
+    }
+
+    /// Returns the client configuration at the given index.
+    pub fn get_config(&self, index: usize) -> Option<&ClientConfig> {
+        self.client_configs.get(index)
+    }
+}
+
+/// Builder for `ClientFailoverConfig`.
+#[derive(Debug, Clone, Default)]
+pub struct ClientFailoverConfigBuilder {
+    client_configs: Vec<ClientConfig>,
+    try_count: Option<u32>,
+}
+
+impl ClientFailoverConfigBuilder {
+    /// Creates a new failover configuration builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a client configuration for a cluster.
+    ///
+    /// The first configuration added is the primary cluster.
+    /// Subsequent configurations are backup clusters tried in order.
+    pub fn add_client_config(mut self, config: ClientConfig) -> Self {
+        self.client_configs.push(config);
+        self
+    }
+
+    /// Sets the client configurations, replacing any previously added.
+    pub fn client_configs(mut self, configs: impl IntoIterator<Item = ClientConfig>) -> Self {
+        self.client_configs = configs.into_iter().collect();
+        self
+    }
+
+    /// Sets the number of times to try each cluster before moving to the next.
+    ///
+    /// Defaults to 3 if not specified.
+    pub fn try_count(mut self, count: u32) -> Self {
+        self.try_count = Some(count);
+        self
+    }
+
+    /// Builds the failover configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if:
+    /// - No client configurations have been added
+    /// - `try_count` is 0
+    pub fn build(self) -> Result<ClientFailoverConfig, ConfigError> {
+        if self.client_configs.is_empty() {
+            return Err(ConfigError::new(
+                "at least one client configuration is required for failover",
+            ));
+        }
+
+        let try_count = self.try_count.unwrap_or(DEFAULT_FAILOVER_TRY_COUNT);
+        if try_count == 0 {
+            return Err(ConfigError::new("try_count must be at least 1"));
+        }
+
+        Ok(ClientFailoverConfig {
+            client_configs: self.client_configs,
+            try_count,
+        })
+    }
+}
+
 #[cfg(feature = "aws")]
 use crate::connection::AwsDiscoveryConfig;
 
@@ -3570,6 +3676,126 @@ mod tests {
         let config = ClientConfig::default();
         assert_eq!(config.logging().level(), LogLevel::Info);
         assert_eq!(config.logging().format(), LogFormat::Pretty);
+    }
+
+    #[test]
+    fn test_failover_config_builder() {
+        let config1 = ClientConfig::builder()
+            .cluster_name("primary")
+            .build()
+            .unwrap();
+        let config2 = ClientConfig::builder()
+            .cluster_name("backup")
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .add_client_config(config2)
+            .try_count(5)
+            .build()
+            .unwrap();
+
+        assert_eq!(failover.cluster_count(), 2);
+        assert_eq!(failover.try_count(), 5);
+        assert_eq!(failover.get_config(0).unwrap().cluster_name(), "primary");
+        assert_eq!(failover.get_config(1).unwrap().cluster_name(), "backup");
+    }
+
+    #[test]
+    fn test_failover_config_default_try_count() {
+        let config = ClientConfig::builder().build().unwrap();
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config)
+            .build()
+            .unwrap();
+
+        assert_eq!(failover.try_count(), 3); // DEFAULT_FAILOVER_TRY_COUNT
+    }
+
+    #[test]
+    fn test_failover_config_no_configs_fails() {
+        let result = ClientFailoverConfig::builder().build();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("at least one client configuration is required"));
+    }
+
+    #[test]
+    fn test_failover_config_zero_try_count_fails() {
+        let config = ClientConfig::builder().build().unwrap();
+        let result = ClientFailoverConfig::builder()
+            .add_client_config(config)
+            .try_count(0)
+            .build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("try_count must be at least 1"));
+    }
+
+    #[test]
+    fn test_failover_config_get_config_out_of_bounds() {
+        let config = ClientConfig::builder().build().unwrap();
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config)
+            .build()
+            .unwrap();
+
+        assert!(failover.get_config(0).is_some());
+        assert!(failover.get_config(1).is_none());
+    }
+
+    #[test]
+    fn test_failover_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ClientFailoverConfig>();
+    }
+
+    #[test]
+    fn test_failover_config_clone() {
+        let config = ClientConfig::builder()
+            .cluster_name("test")
+            .build()
+            .unwrap();
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config)
+            .build()
+            .unwrap();
+
+        let cloned = failover.clone();
+        assert_eq!(cloned.cluster_count(), failover.cluster_count());
+        assert_eq!(cloned.try_count(), failover.try_count());
+    }
+
+    #[test]
+    fn test_failover_config_client_configs_replaces() {
+        let config1 = ClientConfig::builder()
+            .cluster_name("first")
+            .build()
+            .unwrap();
+        let config2 = ClientConfig::builder()
+            .cluster_name("second")
+            .build()
+            .unwrap();
+        let config3 = ClientConfig::builder()
+            .cluster_name("third")
+            .build()
+            .unwrap();
+
+        let failover = ClientFailoverConfig::builder()
+            .add_client_config(config1)
+            .client_configs([config2, config3])
+            .build()
+            .unwrap();
+
+        assert_eq!(failover.cluster_count(), 2);
+        assert_eq!(failover.get_config(0).unwrap().cluster_name(), "second");
+        assert_eq!(failover.get_config(1).unwrap().cluster_name(), "third");
     }
 
     #[test]
