@@ -77,8 +77,20 @@ pub const MAP_PUT_ALL: i32 = 0x010400;
 /// Map get all request.
 pub const MAP_GET_ALL: i32 = 0x010B00;
 
+/// Map put if absent request.
+pub const MAP_PUT_IF_ABSENT: i32 = 0x010700;
+
 /// Map contains key request.
 pub const MAP_CONTAINS_KEY: i32 = 0x010900;
+
+/// Map replace request.
+pub const MAP_REPLACE: i32 = 0x010A00;
+
+/// Map remove if same request.
+pub const MAP_REMOVE_IF_SAME: i32 = 0x010C00;
+
+/// Map replace if same request.
+pub const MAP_REPLACE_IF_SAME: i32 = 0x011000;
 
 /// Map size request.
 pub const MAP_SIZE: i32 = 0x010500;

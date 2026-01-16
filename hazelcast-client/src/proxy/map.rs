@@ -12,12 +12,12 @@ use bytes::BytesMut;
 use tokio::spawn;
 use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
-    IS_EVENT_FLAG, IS_NULL_FLAG, END_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_ADD_INDEX, MAP_AGGREGATE,
+    END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_ADD_INDEX, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PREDICATE,
     MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_GET, MAP_GET_ALL,
     MAP_KEYS_WITH_PREDICATE, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL,
-    MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_SIZE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
-    RESPONSE_HEADER_SIZE,
+    MAP_PUT_IF_ABSENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME, MAP_REPLACE,
+    MAP_REPLACE_IF_SAME, MAP_SIZE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -340,6 +340,128 @@ where
         Self::decode_nullable_response(&response)
     }
 
+    /// Associates the specified value with the specified key only if the key
+    /// is not already associated with a value.
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the update to the cluster.
+    ///
+    /// Returns `None` if the key was not present (and the value was inserted),
+    /// or `Some(existing_value)` if the key was already present.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Only inserts if "user:1" doesn't exist
+    /// let existing = map.put_if_absent("user:1".to_string(), user).await?;
+    /// if existing.is_some() {
+    ///     println!("User already exists");
+    /// }
+    /// ```
+    pub async fn put_if_absent(&self, key: K, value: V) -> Result<Option<V>> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_PUT_IF_ABSENT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
+
+        let response = self.invoke(message).await?;
+        Self::decode_nullable_response(&response)
+    }
+
+    /// Replaces the entry for the specified key only if it is currently mapped to some value.
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the update to the cluster.
+    ///
+    /// Returns the previous value associated with the key, or `None` if there was no mapping.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Only replaces if "user:1" exists
+    /// let old_value = map.replace(&"user:1".to_string(), new_user).await?;
+    /// match old_value {
+    ///     Some(old) => println!("Replaced: {:?}", old),
+    ///     None => println!("Key not found, nothing replaced"),
+    /// }
+    /// ```
+    pub async fn replace(&self, key: &K, value: V) -> Result<Option<V>> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(key)?;
+        let value_data = Self::serialize_value(&value)?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_REPLACE, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_nullable_response(&response)
+    }
+
+    /// Replaces the entry for the specified key only if currently mapped to the specified value.
+    ///
+    /// This is an atomic compare-and-swap operation. If near-cache is enabled,
+    /// invalidates the local cache entry before sending the update to the cluster.
+    ///
+    /// Returns `true` if the value was replaced, `false` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Atomically update only if current value matches expected
+    /// let replaced = map.replace_if_equal(&key, &old_value, new_value).await?;
+    /// if replaced {
+    ///     println!("Successfully updated");
+    /// } else {
+    ///     println!("Value was modified by another client");
+    /// }
+    /// ```
+    pub async fn replace_if_equal(&self, key: &K, old_value: &V, new_value: V) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(key)?;
+        let old_value_data = Self::serialize_value(old_value)?;
+        let new_value_data = Self::serialize_value(&new_value)?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_REPLACE_IF_SAME, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&old_value_data));
+        message.add_frame(Self::data_frame(&new_value_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
     /// Removes the mapping for a key from this map if it is present.
     ///
     /// If near-cache is enabled, invalidates the local cache entry before
@@ -365,6 +487,46 @@ where
 
         let response = self.invoke(message).await?;
         Self::decode_nullable_response(&response)
+    }
+
+    /// Removes the entry for the specified key only if it is currently mapped to the specified value.
+    ///
+    /// This is an atomic compare-and-delete operation. If near-cache is enabled,
+    /// invalidates the local cache entry before sending the remove to the cluster.
+    ///
+    /// Returns `true` if the value was removed, `false` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Only remove if the value matches what we expect
+    /// let removed = map.remove_if_equal(&key, &expected_value).await?;
+    /// if removed {
+    ///     println!("Entry removed");
+    /// } else {
+    ///     println!("Value didn't match or key not found");
+    /// }
+    /// ```
+    pub async fn remove_if_equal(&self, key: &K, value: &V) -> Result<bool> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(key)?;
+        let value_data = Self::serialize_value(value)?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_REMOVE_IF_SAME, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
     }
 
     /// Returns `true` if this map contains a mapping for the specified key.
