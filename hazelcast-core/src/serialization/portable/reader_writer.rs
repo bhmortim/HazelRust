@@ -401,40 +401,6 @@ impl DefaultPortableReader {
         }
     }
 
-    fn read_nested_portable<P: Portable + Default>(
-        &self,
-        data: &[u8],
-    ) -> Result<P> {
-        let mut input = ObjectDataInput::new(data);
-        let has_value = input.read_bool()?;
-        if !has_value {
-            return Err(HazelcastError::Serialization(
-                "Expected nested portable but found null".to_string(),
-            ));
-        }
-
-        let factory_id = input.read_int()?;
-        let class_id = input.read_int()?;
-        let nested_len = input.read_int()? as usize;
-        let nested_data = input.read_bytes(nested_len)?;
-
-        let nested_reader =
-            DefaultPortableReader::from_bytes(&nested_data, 0, self.factories.clone())?;
-
-        let mut instance = P::default();
-        if instance.factory_id() != factory_id || instance.class_id() != class_id {
-            return Err(HazelcastError::Serialization(format!(
-                "Type mismatch: expected factory_id={}, class_id={}, got factory_id={}, class_id={}",
-                instance.factory_id(),
-                instance.class_id(),
-                factory_id,
-                class_id
-            )));
-        }
-
-        instance.read_portable(&mut { nested_reader })?;
-        Ok(instance)
-    }
 }
 
 impl PortableReader for DefaultPortableReader {
@@ -823,6 +789,86 @@ impl PortableReader for DefaultPortableReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    const TEST_FACTORY_ID: i32 = 100;
+    const INNER_CLASS_ID: i32 = 1;
+    const OUTER_CLASS_ID: i32 = 2;
+
+    #[derive(Debug, Default, PartialEq, Clone)]
+    struct InnerPortable {
+        value: i32,
+        label: String,
+    }
+
+    impl Portable for InnerPortable {
+        fn factory_id(&self) -> i32 {
+            TEST_FACTORY_ID
+        }
+
+        fn class_id(&self) -> i32 {
+            INNER_CLASS_ID
+        }
+
+        fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+            writer.write_int("value", self.value)?;
+            writer.write_string("label", Some(&self.label))?;
+            Ok(())
+        }
+
+        fn read_portable(&mut self, reader: &mut dyn PortableReader) -> Result<()> {
+            self.value = reader.read_int("value")?;
+            self.label = reader.read_string("label")?.unwrap_or_default();
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Default, PartialEq)]
+    struct OuterPortable {
+        name: String,
+        inner: Option<InnerPortable>,
+        items: Option<Vec<InnerPortable>>,
+    }
+
+    impl Portable for OuterPortable {
+        fn factory_id(&self) -> i32 {
+            TEST_FACTORY_ID
+        }
+
+        fn class_id(&self) -> i32 {
+            OUTER_CLASS_ID
+        }
+
+        fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+            writer.write_string("name", Some(&self.name))?;
+            writer.write_portable("inner", self.inner.as_ref())?;
+            writer.write_portable_array("items", self.items.as_deref())?;
+            Ok(())
+        }
+
+        fn read_portable(&mut self, reader: &mut dyn PortableReader) -> Result<()> {
+            self.name = reader.read_string("name")?.unwrap_or_default();
+            self.inner = reader.read_portable("inner")?;
+            self.items = reader.read_portable_array("items")?;
+            Ok(())
+        }
+    }
+
+    struct TestPortableFactory;
+
+    impl PortableFactory for TestPortableFactory {
+        fn factory_id(&self) -> i32 {
+            TEST_FACTORY_ID
+        }
+
+        fn create(&self, class_id: i32) -> Option<Box<dyn Portable>> {
+            match class_id {
+                INNER_CLASS_ID => Some(Box::new(InnerPortable::default())),
+                OUTER_CLASS_ID => Some(Box::new(OuterPortable::default())),
+                _ => None,
+            }
+        }
+    }
 
     fn create_test_class_def() -> ClassDefinition {
         ClassDefinition::with_fields(
@@ -1004,5 +1050,235 @@ mod tests {
             DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
 
         assert_eq!(reader.read_int("f").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_nested_portable_write_read() {
+        let inner_class_def = ClassDefinition::with_fields(
+            TEST_FACTORY_ID,
+            INNER_CLASS_ID,
+            1,
+            vec![
+                FieldDefinition::new("value", FieldType::Int, 0),
+                FieldDefinition::new("label", FieldType::Utf8, 1),
+            ],
+        );
+
+        let outer_class_def = ClassDefinition::with_fields(
+            TEST_FACTORY_ID,
+            OUTER_CLASS_ID,
+            1,
+            vec![
+                FieldDefinition::new("name", FieldType::Utf8, 0),
+                FieldDefinition::new_portable("inner", 1, TEST_FACTORY_ID, INNER_CLASS_ID, 1),
+                FieldDefinition::new_portable_array("items", 2, TEST_FACTORY_ID, INNER_CLASS_ID, 1),
+            ],
+        );
+
+        let outer = OuterPortable {
+            name: "container".to_string(),
+            inner: Some(InnerPortable {
+                value: 42,
+                label: "nested".to_string(),
+            }),
+            items: Some(vec![
+                InnerPortable {
+                    value: 1,
+                    label: "first".to_string(),
+                },
+                InnerPortable {
+                    value: 2,
+                    label: "second".to_string(),
+                },
+            ]),
+        };
+
+        let mut writer = DefaultPortableWriter::new(outer_class_def);
+        outer.write_portable(&mut writer).unwrap();
+        let bytes = writer.to_bytes();
+
+        let mut factories: HashMap<i32, Arc<dyn PortableFactory>> = HashMap::new();
+        factories.insert(TEST_FACTORY_ID, Arc::new(TestPortableFactory));
+
+        let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, factories).unwrap();
+        let mut result = OuterPortable::default();
+        result.read_portable(&mut reader).unwrap();
+
+        assert_eq!(result.name, "container");
+        assert!(result.inner.is_some());
+        let inner = result.inner.unwrap();
+        assert_eq!(inner.value, 42);
+        assert_eq!(inner.label, "nested");
+
+        assert!(result.items.is_some());
+        let items = result.items.unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].value, 1);
+        assert_eq!(items[0].label, "first");
+        assert_eq!(items[1].value, 2);
+        assert_eq!(items[1].label, "second");
+    }
+
+    #[test]
+    fn test_nested_portable_null() {
+        let outer_class_def = ClassDefinition::with_fields(
+            TEST_FACTORY_ID,
+            OUTER_CLASS_ID,
+            1,
+            vec![
+                FieldDefinition::new("name", FieldType::Utf8, 0),
+                FieldDefinition::new_portable("inner", 1, TEST_FACTORY_ID, INNER_CLASS_ID, 1),
+                FieldDefinition::new_portable_array("items", 2, TEST_FACTORY_ID, INNER_CLASS_ID, 1),
+            ],
+        );
+
+        let outer = OuterPortable {
+            name: "empty".to_string(),
+            inner: None,
+            items: None,
+        };
+
+        let mut writer = DefaultPortableWriter::new(outer_class_def);
+        outer.write_portable(&mut writer).unwrap();
+        let bytes = writer.to_bytes();
+
+        let mut factories: HashMap<i32, Arc<dyn PortableFactory>> = HashMap::new();
+        factories.insert(TEST_FACTORY_ID, Arc::new(TestPortableFactory));
+
+        let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, factories).unwrap();
+        let mut result = OuterPortable::default();
+        result.read_portable(&mut reader).unwrap();
+
+        assert_eq!(result.name, "empty");
+        assert!(result.inner.is_none());
+        assert!(result.items.is_none());
+    }
+
+    #[test]
+    fn test_version_evolution_new_field_missing() {
+        let v1_class_def = ClassDefinition::with_fields(
+            1,
+            1,
+            1,
+            vec![FieldDefinition::new("name", FieldType::Utf8, 0)],
+        );
+
+        let mut writer = DefaultPortableWriter::new(v1_class_def);
+        writer.write_string("name", Some("test")).unwrap();
+        let bytes = writer.to_bytes();
+
+        let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
+
+        assert_eq!(
+            reader.read_string("name").unwrap(),
+            Some("test".to_string())
+        );
+        assert!(!reader.has_field("age"));
+        assert_eq!(reader.read_int("age").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_all_array_types() {
+        let class_def = ClassDefinition::with_fields(
+            1,
+            1,
+            1,
+            vec![
+                FieldDefinition::new("bytes", FieldType::ByteArray, 0),
+                FieldDefinition::new("bools", FieldType::BoolArray, 1),
+                FieldDefinition::new("chars", FieldType::CharArray, 2),
+                FieldDefinition::new("shorts", FieldType::ShortArray, 3),
+                FieldDefinition::new("longs", FieldType::LongArray, 4),
+                FieldDefinition::new("floats", FieldType::FloatArray, 5),
+                FieldDefinition::new("doubles", FieldType::DoubleArray, 6),
+            ],
+        );
+
+        let mut writer = DefaultPortableWriter::new(class_def);
+        writer.write_byte_array("bytes", Some(&[1, 2, -128, 127])).unwrap();
+        writer.write_bool_array("bools", Some(&[true, false, true])).unwrap();
+        writer.write_char_array("chars", Some(&['a', 'z', '日'])).unwrap();
+        writer.write_short_array("shorts", Some(&[i16::MIN, 0, i16::MAX])).unwrap();
+        writer.write_long_array("longs", Some(&[i64::MIN, 0, i64::MAX])).unwrap();
+        writer.write_float_array("floats", Some(&[f32::MIN, 0.0, f32::MAX])).unwrap();
+        writer.write_double_array("doubles", Some(&[f64::MIN, 0.0, f64::MAX])).unwrap();
+
+        let bytes = writer.to_bytes();
+        let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
+
+        assert_eq!(reader.read_byte_array("bytes").unwrap(), Some(vec![1, 2, -128, 127]));
+        assert_eq!(reader.read_bool_array("bools").unwrap(), Some(vec![true, false, true]));
+        assert_eq!(reader.read_char_array("chars").unwrap(), Some(vec!['a', 'z', '日']));
+        assert_eq!(reader.read_short_array("shorts").unwrap(), Some(vec![i16::MIN, 0, i16::MAX]));
+        assert_eq!(reader.read_long_array("longs").unwrap(), Some(vec![i64::MIN, 0, i64::MAX]));
+
+        let floats = reader.read_float_array("floats").unwrap().unwrap();
+        assert_eq!(floats.len(), 3);
+        assert_eq!(floats[0], f32::MIN);
+        assert_eq!(floats[1], 0.0);
+        assert_eq!(floats[2], f32::MAX);
+
+        let doubles = reader.read_double_array("doubles").unwrap().unwrap();
+        assert_eq!(doubles.len(), 3);
+        assert_eq!(doubles[0], f64::MIN);
+        assert_eq!(doubles[1], 0.0);
+        assert_eq!(doubles[2], f64::MAX);
+    }
+
+    #[test]
+    fn test_java_compatible_portable_format() {
+        let mut output = ObjectDataOutput::new();
+
+        let _ = output.write_int(3);
+
+        let _ = output.write_string("id");
+        let _ = output.write_int(FieldType::Long.id());
+        let _ = output.write_byte(NOT_NULL_MARKER);
+        let id_data: Vec<u8> = {
+            let mut o = ObjectDataOutput::new();
+            o.write_long(123456789i64).unwrap();
+            o.into_bytes()
+        };
+        let _ = output.write_int(id_data.len() as i32);
+        let _ = output.write_bytes(&id_data);
+
+        let _ = output.write_string("name");
+        let _ = output.write_int(FieldType::Utf8.id());
+        let _ = output.write_byte(NOT_NULL_MARKER);
+        let name_data: Vec<u8> = {
+            let mut o = ObjectDataOutput::new();
+            o.write_bool(true).unwrap();
+            o.write_string("JavaClient").unwrap();
+            o.into_bytes()
+        };
+        let _ = output.write_int(name_data.len() as i32);
+        let _ = output.write_bytes(&name_data);
+
+        let _ = output.write_string("tags");
+        let _ = output.write_int(FieldType::Utf8Array.id());
+        let _ = output.write_byte(NOT_NULL_MARKER);
+        let tags_data: Vec<u8> = {
+            let mut o = ObjectDataOutput::new();
+            o.write_bool(true).unwrap();
+            o.write_int(2).unwrap();
+            o.write_string("tag1").unwrap();
+            o.write_string("tag2").unwrap();
+            o.into_bytes()
+        };
+        let _ = output.write_int(tags_data.len() as i32);
+        let _ = output.write_bytes(&tags_data);
+
+        let bytes = output.into_bytes();
+        let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
+
+        assert_eq!(reader.read_long("id").unwrap(), 123456789i64);
+        assert_eq!(
+            reader.read_string("name").unwrap(),
+            Some("JavaClient".to_string())
+        );
+        assert_eq!(
+            reader.read_string_array("tags").unwrap(),
+            Some(vec!["tag1".to_string(), "tag2".to_string()])
+        );
     }
 }

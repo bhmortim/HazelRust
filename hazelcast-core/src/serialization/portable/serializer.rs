@@ -433,4 +433,270 @@ mod tests {
         let not_found = serializer.get_class_definition(999, 999, 1);
         assert!(not_found.is_none());
     }
+
+    #[derive(Debug, Default, PartialEq, Clone)]
+    struct NestedAddress {
+        city: String,
+        zip: i32,
+    }
+
+    impl Portable for NestedAddress {
+        fn factory_id(&self) -> i32 {
+            TEST_FACTORY_ID
+        }
+
+        fn class_id(&self) -> i32 {
+            ADDRESS_CLASS_ID
+        }
+
+        fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+            writer.write_string("city", Some(&self.city))?;
+            writer.write_int("zip", self.zip)?;
+            Ok(())
+        }
+
+        fn read_portable(&mut self, reader: &mut dyn super::super::PortableReader) -> Result<()> {
+            self.city = reader.read_string("city")?.unwrap_or_default();
+            self.zip = reader.read_int("zip")?;
+            Ok(())
+        }
+    }
+
+    const EMPLOYEE_CLASS_ID: i32 = 3;
+
+    #[derive(Debug, Default, PartialEq)]
+    struct Employee {
+        name: String,
+        home_address: Option<NestedAddress>,
+        work_address: Option<NestedAddress>,
+    }
+
+    impl Portable for Employee {
+        fn factory_id(&self) -> i32 {
+            TEST_FACTORY_ID
+        }
+
+        fn class_id(&self) -> i32 {
+            EMPLOYEE_CLASS_ID
+        }
+
+        fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+            writer.write_string("name", Some(&self.name))?;
+            writer.write_portable("home_address", self.home_address.as_ref())?;
+            writer.write_portable("work_address", self.work_address.as_ref())?;
+            Ok(())
+        }
+
+        fn read_portable(&mut self, reader: &mut dyn super::super::PortableReader) -> Result<()> {
+            self.name = reader.read_string("name")?.unwrap_or_default();
+            self.home_address = reader.read_portable("home_address")?;
+            self.work_address = reader.read_portable("work_address")?;
+            Ok(())
+        }
+    }
+
+    struct ExtendedTestFactory;
+
+    impl PortableFactory for ExtendedTestFactory {
+        fn factory_id(&self) -> i32 {
+            TEST_FACTORY_ID
+        }
+
+        fn create(&self, class_id: i32) -> Option<Box<dyn Portable>> {
+            match class_id {
+                PERSON_CLASS_ID => Some(Box::new(Person::default())),
+                ADDRESS_CLASS_ID => Some(Box::new(NestedAddress::default())),
+                EMPLOYEE_CLASS_ID => Some(Box::new(Employee::default())),
+                _ => None,
+            }
+        }
+    }
+
+    fn create_nested_address_class_def() -> ClassDefinition {
+        ClassDefinition::with_fields(
+            TEST_FACTORY_ID,
+            ADDRESS_CLASS_ID,
+            1,
+            vec![
+                FieldDefinition::new("city", FieldType::Utf8, 0),
+                FieldDefinition::new("zip", FieldType::Int, 1),
+            ],
+        )
+    }
+
+    fn create_employee_class_def() -> ClassDefinition {
+        ClassDefinition::with_fields(
+            TEST_FACTORY_ID,
+            EMPLOYEE_CLASS_ID,
+            1,
+            vec![
+                FieldDefinition::new("name", FieldType::Utf8, 0),
+                FieldDefinition::new_portable(
+                    "home_address",
+                    1,
+                    TEST_FACTORY_ID,
+                    ADDRESS_CLASS_ID,
+                    1,
+                ),
+                FieldDefinition::new_portable(
+                    "work_address",
+                    2,
+                    TEST_FACTORY_ID,
+                    ADDRESS_CLASS_ID,
+                    1,
+                ),
+            ],
+        )
+    }
+
+    #[test]
+    fn test_nested_portable_serialization() {
+        let mut serializer = PortableSerializer::new();
+        serializer.register_factory(Arc::new(ExtendedTestFactory));
+        serializer.register_class_definition(create_nested_address_class_def());
+        serializer.register_class_definition(create_employee_class_def());
+
+        let employee = Employee {
+            name: "John Doe".to_string(),
+            home_address: Some(NestedAddress {
+                city: "New York".to_string(),
+                zip: 10001,
+            }),
+            work_address: Some(NestedAddress {
+                city: "Boston".to_string(),
+                zip: 02101,
+            }),
+        };
+
+        let bytes = serializer.serialize(&employee).unwrap();
+        let result = serializer.deserialize(&bytes).unwrap();
+
+        assert_eq!(result.factory_id(), TEST_FACTORY_ID);
+        assert_eq!(result.class_id(), EMPLOYEE_CLASS_ID);
+    }
+
+    #[test]
+    fn test_nested_portable_with_null() {
+        let mut serializer = PortableSerializer::new();
+        serializer.register_factory(Arc::new(ExtendedTestFactory));
+        serializer.register_class_definition(create_nested_address_class_def());
+        serializer.register_class_definition(create_employee_class_def());
+
+        let employee = Employee {
+            name: "Jane Doe".to_string(),
+            home_address: Some(NestedAddress {
+                city: "Chicago".to_string(),
+                zip: 60601,
+            }),
+            work_address: None,
+        };
+
+        let bytes = serializer.serialize(&employee).unwrap();
+        let result = serializer.deserialize(&bytes).unwrap();
+
+        assert_eq!(result.factory_id(), TEST_FACTORY_ID);
+        assert_eq!(result.class_id(), EMPLOYEE_CLASS_ID);
+    }
+
+    #[test]
+    fn test_version_mismatch_handling() {
+        let mut serializer = PortableSerializer::new();
+        serializer.register_factory(Arc::new(TestFactory));
+
+        let v1_class_def = ClassDefinition::with_fields(
+            TEST_FACTORY_ID,
+            PERSON_CLASS_ID,
+            1,
+            vec![
+                FieldDefinition::new("name", FieldType::Utf8, 0),
+                FieldDefinition::new("age", FieldType::Int, 1),
+                FieldDefinition::new("active", FieldType::Bool, 2),
+            ],
+        );
+        serializer.register_class_definition(v1_class_def);
+
+        let v2_class_def = ClassDefinition::with_fields(
+            TEST_FACTORY_ID,
+            PERSON_CLASS_ID,
+            2,
+            vec![
+                FieldDefinition::new("name", FieldType::Utf8, 0),
+                FieldDefinition::new("age", FieldType::Int, 1),
+                FieldDefinition::new("active", FieldType::Bool, 2),
+                FieldDefinition::new("email", FieldType::Utf8, 3),
+            ],
+        );
+        serializer.register_class_definition(v2_class_def);
+
+        let v1_def = serializer.get_class_definition(TEST_FACTORY_ID, PERSON_CLASS_ID, 1);
+        let v2_def = serializer.get_class_definition(TEST_FACTORY_ID, PERSON_CLASS_ID, 2);
+
+        assert!(v1_def.is_some());
+        assert!(v2_def.is_some());
+        assert_eq!(v1_def.unwrap().field_count(), 3);
+        assert_eq!(v2_def.unwrap().field_count(), 4);
+    }
+
+    #[test]
+    fn test_java_format_compatibility() {
+        use crate::serialization::{DataOutput, ObjectDataOutput};
+
+        let mut output = ObjectDataOutput::new();
+        output.write_int(TEST_FACTORY_ID).unwrap();
+        output.write_int(PERSON_CLASS_ID).unwrap();
+        output.write_int(1).unwrap();
+
+        let mut field_output = ObjectDataOutput::new();
+        field_output.write_int(3).unwrap();
+
+        field_output.write_string("name").unwrap();
+        field_output.write_int(FieldType::Utf8.id()).unwrap();
+        field_output.write_byte(1).unwrap();
+        let name_bytes = {
+            let mut o = ObjectDataOutput::new();
+            o.write_bool(true).unwrap();
+            o.write_string("TestFromJava").unwrap();
+            o.into_bytes()
+        };
+        field_output.write_int(name_bytes.len() as i32).unwrap();
+        field_output.write_bytes(&name_bytes).unwrap();
+
+        field_output.write_string("age").unwrap();
+        field_output.write_int(FieldType::Int.id()).unwrap();
+        field_output.write_byte(1).unwrap();
+        let age_bytes = {
+            let mut o = ObjectDataOutput::new();
+            o.write_int(25).unwrap();
+            o.into_bytes()
+        };
+        field_output.write_int(age_bytes.len() as i32).unwrap();
+        field_output.write_bytes(&age_bytes).unwrap();
+
+        field_output.write_string("active").unwrap();
+        field_output.write_int(FieldType::Bool.id()).unwrap();
+        field_output.write_byte(1).unwrap();
+        let active_bytes = {
+            let mut o = ObjectDataOutput::new();
+            o.write_bool(true).unwrap();
+            o.into_bytes()
+        };
+        field_output.write_int(active_bytes.len() as i32).unwrap();
+        field_output.write_bytes(&active_bytes).unwrap();
+
+        let field_data = field_output.into_bytes();
+        output.write_int(field_data.len() as i32).unwrap();
+        output.write_bytes(&field_data).unwrap();
+
+        let bytes = output.into_bytes();
+
+        let mut serializer = PortableSerializer::new();
+        serializer.register_factory(Arc::new(TestFactory));
+        serializer.register_class_definition(create_person_class_def());
+
+        let result: Person = serializer.deserialize_typed(&bytes).unwrap();
+
+        assert_eq!(result.name, "TestFromJava");
+        assert_eq!(result.age, 25);
+        assert!(result.active);
+    }
 }
