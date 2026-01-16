@@ -20,7 +20,7 @@ pub mod security;
 pub mod sql;
 pub mod transaction;
 
-pub use cache::{EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder};
+pub use cache::{EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder, QueryCache, QueryCacheConfig, QueryCacheConfigBuilder, QueryCacheStats};
 pub use client::HazelcastClient;
 pub use executor::{
     Callable, CallableTask, ExecutionCallback, ExecutionTarget, ExecutorService,

@@ -2791,6 +2791,97 @@ where
         self.invalidation_registration.lock().unwrap().is_some()
     }
 
+    /// Returns a continuous query cache for this map.
+    ///
+    /// The query cache maintains a local view of entries matching the given predicate.
+    /// It subscribes to entry events and automatically updates when matching entries
+    /// change in the map.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - A unique name for this query cache
+    /// * `predicate` - The predicate to filter which entries are cached
+    /// * `include_value` - Whether to include values in the cache
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::Predicates;
+    ///
+    /// let predicate = Predicates::equal("status", &"active".to_string())?;
+    /// let cache = map.get_query_cache("active-users", &predicate, true).await?;
+    ///
+    /// // Fast local reads
+    /// if let Some(user) = cache.get(&"user123".to_string()) {
+    ///     println!("User: {:?}", user);
+    /// }
+    /// ```
+    pub async fn get_query_cache(
+        &self,
+        name: &str,
+        predicate: &dyn Predicate,
+        include_value: bool,
+    ) -> Result<crate::cache::QueryCache<K, V>>
+    where
+        K: Eq + Hash + Clone + 'static,
+        V: Clone + 'static,
+    {
+        use crate::cache::QueryCache;
+
+        let query_cache = QueryCache::new(name.to_string(), self.name.clone(), include_value);
+
+        let initial_entries = self.entries_with_predicate(predicate).await?;
+        query_cache.populate(initial_entries);
+
+        let cache_handle = query_cache.cache_handle();
+        let stats_handle = query_cache.stats_handle();
+
+        let config = EntryListenerConfig::new()
+            .include_value(include_value)
+            .on_added()
+            .on_updated()
+            .on_removed()
+            .on_evicted()
+            .on_expired();
+
+        let registration = self
+            .add_entry_listener_with_predicate(config, predicate, move |event: EntryEvent<K, V>| {
+                stats_handle.record_event();
+
+                let key_data = {
+                    let mut output = ObjectDataOutput::new();
+                    if event.key.serialize(&mut output).is_err() {
+                        return;
+                    }
+                    output.into_bytes()
+                };
+
+                let mut cache = cache_handle.write().unwrap();
+
+                match event.event_type {
+                    EntryEventType::Added | EntryEventType::Updated => {
+                        if let Some(ref value) = event.new_value {
+                            let mut output = ObjectDataOutput::new();
+                            if value.serialize(&mut output).is_ok() {
+                                cache.insert(key_data, output.into_bytes());
+                            }
+                        }
+                    }
+                    EntryEventType::Removed
+                    | EntryEventType::Evicted
+                    | EntryEventType::Expired => {
+                        cache.remove(&key_data);
+                    }
+                    _ => {}
+                }
+            })
+            .await?;
+
+        query_cache.set_listener_registration(registration);
+
+        Ok(query_cache)
+    }
+
     /// Adds an entry listener to this map using the [`EntryListener`] trait.
     ///
     /// Events are dispatched to the appropriate trait method based on event type.
