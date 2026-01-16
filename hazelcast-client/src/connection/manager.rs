@@ -16,7 +16,9 @@ use hazelcast_core::{HazelcastError, Result};
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
 use crate::config::{ClientConfig, Permissions};
-use crate::listener::{LifecycleEvent, Member, MemberEvent, MemberEventType};
+use crate::listener::{
+    DistributedObjectEvent, LifecycleEvent, Member, MemberEvent, MemberEventType,
+};
 
 /// Events emitted during connection lifecycle.
 #[derive(Debug, Clone)]
@@ -74,6 +76,7 @@ pub struct ConnectionManager {
     event_sender: broadcast::Sender<ConnectionEvent>,
     membership_sender: broadcast::Sender<MemberEvent>,
     lifecycle_sender: broadcast::Sender<LifecycleEvent>,
+    distributed_object_sender: broadcast::Sender<DistributedObjectEvent>,
     shutdown: tokio::sync::watch::Sender<bool>,
 }
 
@@ -83,6 +86,7 @@ impl ConnectionManager {
         let (event_sender, _) = broadcast::channel(64);
         let (membership_sender, _) = broadcast::channel(64);
         let (lifecycle_sender, _) = broadcast::channel(16);
+        let (distributed_object_sender, _) = broadcast::channel(64);
         let (shutdown, _) = tokio::sync::watch::channel(false);
 
         Self {
@@ -95,6 +99,7 @@ impl ConnectionManager {
             event_sender,
             membership_sender,
             lifecycle_sender,
+            distributed_object_sender,
             shutdown,
         }
     }
@@ -120,6 +125,16 @@ impl ConnectionManager {
     /// Subscribes to client lifecycle events.
     pub fn subscribe_lifecycle(&self) -> broadcast::Receiver<LifecycleEvent> {
         self.lifecycle_sender.subscribe()
+    }
+
+    /// Subscribes to distributed object events.
+    pub fn subscribe_distributed_object(&self) -> broadcast::Receiver<DistributedObjectEvent> {
+        self.distributed_object_sender.subscribe()
+    }
+
+    /// Broadcasts a distributed object event to all subscribers.
+    pub fn broadcast_distributed_object_event(&self, event: DistributedObjectEvent) {
+        let _ = self.distributed_object_sender.send(event);
     }
 
     /// Returns the current list of known cluster members.

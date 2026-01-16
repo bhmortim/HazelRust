@@ -15,11 +15,136 @@ pub use item_listener::{
 pub use lifecycle::LifecycleEvent;
 pub use membership::{Member, MemberEvent, MemberEventType, MembershipListener};
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tokio::sync::watch;
 use uuid::Uuid;
+
+/// Type of distributed object event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DistributedObjectEventType {
+    /// A distributed object was created.
+    Created,
+    /// A distributed object was destroyed.
+    Destroyed,
+}
+
+impl DistributedObjectEventType {
+    /// Creates an event type from its wire format value.
+    pub fn from_value(value: &str) -> Option<Self> {
+        match value {
+            "CREATED" => Some(Self::Created),
+            "DESTROYED" => Some(Self::Destroyed),
+            _ => None,
+        }
+    }
+
+    /// Returns the wire format value for this event type.
+    pub fn value(&self) -> &'static str {
+        match self {
+            Self::Created => "CREATED",
+            Self::Destroyed => "DESTROYED",
+        }
+    }
+}
+
+impl std::fmt::Display for DistributedObjectEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value())
+    }
+}
+
+/// An event fired when a distributed object is created or destroyed.
+#[derive(Debug, Clone)]
+pub struct DistributedObjectEvent {
+    /// The name of the service (e.g., "hz:impl:mapService").
+    pub service_name: String,
+    /// The name of the distributed object.
+    pub name: String,
+    /// The type of event that occurred.
+    pub event_type: DistributedObjectEventType,
+    /// UUID of the source cluster member.
+    pub source_uuid: Uuid,
+}
+
+impl DistributedObjectEvent {
+    /// Creates a new distributed object event.
+    pub fn new(
+        service_name: String,
+        name: String,
+        event_type: DistributedObjectEventType,
+        source_uuid: Uuid,
+    ) -> Self {
+        Self {
+            service_name,
+            name,
+            event_type,
+            source_uuid,
+        }
+    }
+
+    /// Returns `true` if this is a creation event.
+    pub fn is_created(&self) -> bool {
+        self.event_type == DistributedObjectEventType::Created
+    }
+
+    /// Returns `true` if this is a destruction event.
+    pub fn is_destroyed(&self) -> bool {
+        self.event_type == DistributedObjectEventType::Destroyed
+    }
+}
+
+/// A listener for distributed object lifecycle events.
+pub trait DistributedObjectListener: Send + Sync {
+    /// Called when a distributed object is created.
+    fn distributed_object_created(&self, event: &DistributedObjectEvent);
+
+    /// Called when a distributed object is destroyed.
+    fn distributed_object_destroyed(&self, event: &DistributedObjectEvent);
+}
+
+/// A boxed distributed object listener.
+pub type BoxedDistributedObjectListener = Box<dyn DistributedObjectListener>;
+
+/// A function-based distributed object listener.
+pub struct FnDistributedObjectListener<F, G>
+where
+    F: Fn(&DistributedObjectEvent) + Send + Sync,
+    G: Fn(&DistributedObjectEvent) + Send + Sync,
+{
+    on_created: F,
+    on_destroyed: G,
+}
+
+impl<F, G> FnDistributedObjectListener<F, G>
+where
+    F: Fn(&DistributedObjectEvent) + Send + Sync,
+    G: Fn(&DistributedObjectEvent) + Send + Sync,
+{
+    /// Creates a new function-based distributed object listener.
+    pub fn new(on_created: F, on_destroyed: G) -> Self {
+        Self {
+            on_created,
+            on_destroyed,
+        }
+    }
+}
+
+impl<F, G> DistributedObjectListener for FnDistributedObjectListener<F, G>
+where
+    F: Fn(&DistributedObjectEvent) + Send + Sync,
+    G: Fn(&DistributedObjectEvent) + Send + Sync,
+{
+    fn distributed_object_created(&self, event: &DistributedObjectEvent) {
+        (self.on_created)(event);
+    }
+
+    fn distributed_object_destroyed(&self, event: &DistributedObjectEvent) {
+        (self.on_destroyed)(event);
+    }
+}
 
 /// Type of entry event fired by map listeners.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -337,6 +462,104 @@ impl ListenerStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_distributed_object_event_type_values() {
+        assert_eq!(DistributedObjectEventType::Created.value(), "CREATED");
+        assert_eq!(DistributedObjectEventType::Destroyed.value(), "DESTROYED");
+    }
+
+    #[test]
+    fn test_distributed_object_event_type_from_value() {
+        assert_eq!(
+            DistributedObjectEventType::from_value("CREATED"),
+            Some(DistributedObjectEventType::Created)
+        );
+        assert_eq!(
+            DistributedObjectEventType::from_value("DESTROYED"),
+            Some(DistributedObjectEventType::Destroyed)
+        );
+        assert_eq!(DistributedObjectEventType::from_value("UNKNOWN"), None);
+    }
+
+    #[test]
+    fn test_distributed_object_event_type_display() {
+        assert_eq!(DistributedObjectEventType::Created.to_string(), "CREATED");
+        assert_eq!(DistributedObjectEventType::Destroyed.to_string(), "DESTROYED");
+    }
+
+    #[test]
+    fn test_distributed_object_event_creation() {
+        let source = Uuid::new_v4();
+        let event = DistributedObjectEvent::new(
+            "hz:impl:mapService".to_string(),
+            "my-map".to_string(),
+            DistributedObjectEventType::Created,
+            source,
+        );
+
+        assert_eq!(event.service_name, "hz:impl:mapService");
+        assert_eq!(event.name, "my-map");
+        assert_eq!(event.event_type, DistributedObjectEventType::Created);
+        assert_eq!(event.source_uuid, source);
+        assert!(event.is_created());
+        assert!(!event.is_destroyed());
+    }
+
+    #[test]
+    fn test_distributed_object_event_destroyed() {
+        let source = Uuid::new_v4();
+        let event = DistributedObjectEvent::new(
+            "hz:impl:queueService".to_string(),
+            "my-queue".to_string(),
+            DistributedObjectEventType::Destroyed,
+            source,
+        );
+
+        assert!(!event.is_created());
+        assert!(event.is_destroyed());
+    }
+
+    #[test]
+    fn test_fn_distributed_object_listener() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let created_count = Arc::new(AtomicUsize::new(0));
+        let destroyed_count = Arc::new(AtomicUsize::new(0));
+
+        let created_counter = Arc::clone(&created_count);
+        let destroyed_counter = Arc::clone(&destroyed_count);
+
+        let listener = FnDistributedObjectListener::new(
+            move |_| {
+                created_counter.fetch_add(1, Ordering::Relaxed);
+            },
+            move |_| {
+                destroyed_counter.fetch_add(1, Ordering::Relaxed);
+            },
+        );
+
+        let event = DistributedObjectEvent::new(
+            "service".to_string(),
+            "name".to_string(),
+            DistributedObjectEventType::Created,
+            Uuid::new_v4(),
+        );
+
+        listener.distributed_object_created(&event);
+        listener.distributed_object_destroyed(&event);
+
+        assert_eq!(created_count.load(Ordering::Relaxed), 1);
+        assert_eq!(destroyed_count.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_distributed_object_event_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<DistributedObjectEvent>();
+        assert_send_sync::<DistributedObjectEventType>();
+    }
 
     #[test]
     fn test_listener_id_uniqueness() {

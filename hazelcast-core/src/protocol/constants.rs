@@ -344,6 +344,12 @@ pub const CLIENT_ADD_MEMBERSHIP_LISTENER: i32 = 0x000300;
 /// Client remove membership listener request.
 pub const CLIENT_REMOVE_MEMBERSHIP_LISTENER: i32 = 0x000301;
 
+/// Client add distributed object listener request.
+pub const CLIENT_ADD_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000800;
+
+/// Client remove distributed object listener request.
+pub const CLIENT_REMOVE_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000900;
+
 /// ReplicatedMap put request.
 pub const REPLICATED_MAP_PUT: i32 = 0x0D0100;
 

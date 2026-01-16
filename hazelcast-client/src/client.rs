@@ -11,7 +11,10 @@ use crate::connection::ConnectionManager;
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};
 use crate::executor::ExecutorService;
 use crate::jet::JetService;
-use crate::listener::{LifecycleEvent, Member, MemberEvent};
+use crate::listener::{
+    BoxedDistributedObjectListener, DistributedObjectEvent, DistributedObjectListener,
+    LifecycleEvent, ListenerId, ListenerRegistration, Member, MemberEvent,
+};
 use crate::proxy::{
     AtomicLong, CountDownLatch, FencedLock, FlakeIdGenerator, IList, IMap, IQueue, ISet, ITopic,
     MultiMap, PNCounter, ReliableTopic, ReplicatedMap, Ringbuffer, Semaphore,
@@ -45,12 +48,54 @@ use crate::transaction::{TransactionContext, TransactionOptions, XATransaction, 
 ///     Ok(())
 /// }
 /// ```
+use std::sync::RwLock;
+
+/// Internal state for managing distributed object listeners.
+struct DistributedObjectListenerState {
+    listeners: std::collections::HashMap<ListenerId, (Arc<dyn DistributedObjectListener>, ListenerRegistration)>,
+}
+
+impl std::fmt::Debug for DistributedObjectListenerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DistributedObjectListenerState")
+            .field("listener_count", &self.listeners.len())
+            .finish()
+    }
+}
+
+/// The main entry point for connecting to a Hazelcast cluster.
+///
+/// `HazelcastClient` manages connections to cluster members and provides
+/// access to distributed data structures.
+///
+/// # Example
+///
+/// ```ignore
+/// use hazelcast_client::{ClientConfig, HazelcastClient};
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let config = ClientConfig::builder()
+///         .cluster_name("dev")
+///         .build()?;
+///
+///     let client = HazelcastClient::new(config).await?;
+///     let map = client.get_map::<String, String>("my-map");
+///
+///     map.put("key".to_string(), "value".to_string()).await?;
+///     let value = map.get(&"key".to_string()).await?;
+///
+///     client.shutdown().await?;
+///     Ok(())
+/// }
+/// ```
 #[derive(Debug)]
 pub struct HazelcastClient {
     config: Arc<ClientConfig>,
     connection_manager: Arc<ConnectionManager>,
     statistics_collector: Arc<StatisticsCollector>,
     client_uuid: Uuid,
+    distributed_object_listeners: RwLock<DistributedObjectListenerState>,
 }
 
 impl HazelcastClient {
@@ -81,6 +126,9 @@ impl HazelcastClient {
             connection_manager: Arc::new(connection_manager),
             statistics_collector: Arc::new(StatisticsCollector::new()),
             client_uuid,
+            distributed_object_listeners: RwLock::new(DistributedObjectListenerState {
+                listeners: std::collections::HashMap::new(),
+            }),
         })
     }
 
@@ -621,6 +669,137 @@ impl HazelcastClient {
     /// ```
     pub fn subscribe_lifecycle(&self) -> tokio::sync::broadcast::Receiver<LifecycleEvent> {
         self.connection_manager.subscribe_lifecycle()
+    }
+
+    /// Subscribes to distributed object events.
+    ///
+    /// The returned receiver will emit events when distributed objects are
+    /// created or destroyed on the cluster.
+    pub fn subscribe_distributed_object(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<DistributedObjectEvent> {
+        self.connection_manager.subscribe_distributed_object()
+    }
+
+    /// Adds a distributed object listener.
+    ///
+    /// The listener will be notified when distributed objects are created or
+    /// destroyed on the cluster.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener` - The listener to add
+    ///
+    /// # Returns
+    ///
+    /// A `ListenerId` that can be used to remove the listener later.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::listener::{DistributedObjectListener, DistributedObjectEvent};
+    ///
+    /// struct MyListener;
+    ///
+    /// impl DistributedObjectListener for MyListener {
+    ///     fn distributed_object_created(&self, event: &DistributedObjectEvent) {
+    ///         println!("Created: {} ({})", event.name, event.service_name);
+    ///     }
+    ///
+    ///     fn distributed_object_destroyed(&self, event: &DistributedObjectEvent) {
+    ///         println!("Destroyed: {} ({})", event.name, event.service_name);
+    ///     }
+    /// }
+    ///
+    /// let listener_id = client.add_distributed_object_listener(MyListener).await?;
+    /// ```
+    pub async fn add_distributed_object_listener<L>(&self, listener: L) -> Result<ListenerId>
+    where
+        L: DistributedObjectListener + 'static,
+    {
+        let listener_id = ListenerId::new();
+        let registration = ListenerRegistration::new(listener_id);
+        let listener_arc: Arc<dyn DistributedObjectListener> = Arc::new(listener);
+
+        let mut rx = self.connection_manager.subscribe_distributed_object();
+        let listener_clone = Arc::clone(&listener_arc);
+        let active_flag = registration.active_flag();
+
+        tokio::spawn(async move {
+            while active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                match rx.recv().await {
+                    Ok(event) => {
+                        if !active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                            break;
+                        }
+                        match event.event_type {
+                            crate::listener::DistributedObjectEventType::Created => {
+                                listener_clone.distributed_object_created(&event);
+                            }
+                            crate::listener::DistributedObjectEventType::Destroyed => {
+                                listener_clone.distributed_object_destroyed(&event);
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        {
+            let mut state = self
+                .distributed_object_listeners
+                .write()
+                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+            state.listeners.insert(listener_id, (listener_arc, registration));
+        }
+
+        tracing::debug!(listener_id = %listener_id, "added distributed object listener");
+        Ok(listener_id)
+    }
+
+    /// Removes a distributed object listener.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener_id` - The ID of the listener to remove
+    ///
+    /// # Returns
+    ///
+    /// `true` if the listener was found and removed, `false` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let listener_id = client.add_distributed_object_listener(MyListener).await?;
+    /// // ... later ...
+    /// let removed = client.remove_distributed_object_listener(listener_id).await?;
+    /// ```
+    pub async fn remove_distributed_object_listener(&self, listener_id: ListenerId) -> Result<bool> {
+        let removed = {
+            let mut state = self
+                .distributed_object_listeners
+                .write()
+                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+
+            if let Some((_, registration)) = state.listeners.remove(&listener_id) {
+                registration.deactivate();
+                true
+            } else {
+                false
+            }
+        };
+
+        if removed {
+            tracing::debug!(listener_id = %listener_id, "removed distributed object listener");
+        }
+
+        Ok(removed)
     }
 
     /// Returns a snapshot of current client statistics.
