@@ -751,3 +751,9 @@ pub const MAP_ADD_INTERCEPTOR: i32 = 0x013300;
 
 /// Map remove interceptor request.
 pub const MAP_REMOVE_INTERCEPTOR: i32 = 0x013400;
+
+/// Map load all keys request.
+pub const MAP_LOAD_ALL: i32 = 0x012000;
+
+/// Map load given keys request.
+pub const MAP_LOAD_GIVEN_KEYS: i32 = 0x012100;

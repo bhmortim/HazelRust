@@ -18,12 +18,12 @@ use hazelcast_core::protocol::constants::{
     MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL, MAP_EXECUTE_ON_ALL_KEYS,
     MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE, MAP_FLUSH,
     MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED,
-    MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOCK, MAP_PROJECT,
-    MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT,
-    MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME, MAP_REMOVE_INTERCEPTOR,
-    MAP_REPLACE, MAP_REPLACE_IF_SAME, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT,
-    MAP_UNLOCK, MAP_VALUES_WITH_PAGING_PREDICATE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
-    RESPONSE_HEADER_SIZE,
+    MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOAD_ALL, MAP_LOAD_GIVEN_KEYS,
+    MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT,
+    MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
+    MAP_REMOVE_INTERCEPTOR, MAP_REPLACE, MAP_REPLACE_IF_SAME, MAP_SET_TTL, MAP_SIZE,
+    MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK, MAP_VALUES_WITH_PAGING_PREDICATE,
+    MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -3136,6 +3136,113 @@ where
         Self::decode_string_response(&response)
     }
 
+    /// Triggers loading of all keys from the configured MapLoader.
+    ///
+    /// If the map has a `MapLoader` configured on the server, this method
+    /// triggers the loader to populate entries for all known keys. The actual
+    /// loading is performed on the server side.
+    ///
+    /// # Arguments
+    ///
+    /// * `replace_existing` - If `true`, existing entries in the map will be
+    ///   replaced with values from the MapLoader. If `false`, only missing
+    ///   entries will be loaded.
+    ///
+    /// # Note
+    ///
+    /// This is a server-side operation. The client does not need to implement
+    /// `MapLoader`; it only triggers the loading operation on the cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Load all keys, replacing existing entries
+    /// map.load_all_keys(true).await?;
+    ///
+    /// // Load all keys, keeping existing entries
+    /// map.load_all_keys(false).await?;
+    /// ```
+    pub async fn load_all_keys(&self, replace_existing: bool) -> Result<()> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+
+        if replace_existing {
+            if let Some(ref cache) = self.near_cache {
+                let mut cache_guard = cache.lock().unwrap();
+                cache_guard.clear();
+            }
+        }
+
+        let mut message = ClientMessage::create_for_encode(MAP_LOAD_ALL, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::bool_frame(replace_existing));
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
+    /// Triggers loading of specific keys from the configured MapLoader.
+    ///
+    /// If the map has a `MapLoader` configured on the server, this method
+    /// triggers the loader to populate entries for the specified keys. The
+    /// actual loading is performed on the server side.
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - The keys to load from the MapLoader
+    /// * `replace_existing` - If `true`, existing entries in the map will be
+    ///   replaced with values from the MapLoader. If `false`, only missing
+    ///   entries will be loaded.
+    ///
+    /// # Note
+    ///
+    /// This is a server-side operation. The client does not need to implement
+    /// `MapLoader`; it only triggers the loading operation on the cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let keys = vec!["user:1".to_string(), "user:2".to_string()];
+    ///
+    /// // Load specific keys, replacing existing entries
+    /// map.load_all(&keys, true).await?;
+    ///
+    /// // Load specific keys, keeping existing entries
+    /// map.load_all(&keys, false).await?;
+    /// ```
+    pub async fn load_all(&self, keys: &[K], replace_existing: bool) -> Result<()> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+
+        if keys.is_empty() {
+            return Ok(());
+        }
+
+        if replace_existing {
+            if let Some(ref cache) = self.near_cache {
+                let mut cache_guard = cache.lock().unwrap();
+                for key in keys {
+                    if let Ok(key_data) = Self::serialize_value(key) {
+                        cache_guard.invalidate(&key_data);
+                    }
+                }
+            }
+        }
+
+        let mut message = ClientMessage::create_for_encode(MAP_LOAD_GIVEN_KEYS, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::bool_frame(replace_existing));
+        message.add_frame(Self::int_frame(keys.len() as i32));
+
+        for key in keys {
+            let key_data = Self::serialize_value(key)?;
+            message.add_frame(Self::data_frame(&key_data));
+        }
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
     /// Removes an interceptor from this map.
     ///
     /// # Arguments
@@ -4671,6 +4778,136 @@ mod tests {
         let ttl = Duration::from_secs(60);
         let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
         assert_eq!(ttl_ms, 60000);
+    }
+
+    #[tokio::test]
+    async fn test_load_all_keys_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.load_all_keys(true).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_load_all_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let keys = vec!["key1".to_string(), "key2".to_string()];
+        let result = map.load_all(&keys, true).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_load_all_keys_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.load_all_keys(false).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
+    async fn test_load_all_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let keys = vec!["key1".to_string()];
+        let result = map.load_all(&keys, true).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
+    async fn test_load_all_empty_keys_returns_ok() {
+        use crate::config::ClientConfigBuilder;
+        use crate::connection::ConnectionManager;
+
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let keys: Vec<String> = Vec::new();
+        let result = map.load_all(&keys, true).await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_load_all_keys_clears_near_cache_when_replacing() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(map.has_near_cache());
+    }
+
+    #[test]
+    fn test_load_all_invalidates_near_cache_when_replacing() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(map.has_near_cache());
     }
 
     #[tokio::test]
