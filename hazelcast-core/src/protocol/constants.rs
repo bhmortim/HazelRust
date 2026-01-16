@@ -824,6 +824,12 @@ pub const CACHE_GET_AND_REPLACE: i32 = 0x130E00;
 /// Cache size request.
 pub const CACHE_SIZE: i32 = 0x130F00;
 
+/// Cache event journal subscribe request.
+pub const CACHE_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x131500;
+
+/// Cache event journal read request.
+pub const CACHE_EVENT_JOURNAL_READ: i32 = 0x131600;
+
 // Jet operations
 
 /// Jet submit job request.
