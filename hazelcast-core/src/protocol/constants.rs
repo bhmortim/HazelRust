@@ -338,6 +338,12 @@ pub const MAP_IS_LOCKED: i32 = 0x011800;
 /// Map add entry listener with predicate request.
 pub const MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x011900;
 
+/// Map add entry listener for a specific key request.
+pub const MAP_ADD_ENTRY_LISTENER_TO_KEY: i32 = 0x011C00;
+
+/// Map add entry listener for a specific key with predicate request.
+pub const MAP_ADD_ENTRY_LISTENER_TO_KEY_WITH_PREDICATE: i32 = 0x011D00;
+
 /// Client add membership listener request.
 pub const CLIENT_ADD_MEMBERSHIP_LISTENER: i32 = 0x000300;
 

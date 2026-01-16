@@ -246,6 +246,8 @@ pub struct EntryListenerConfig {
     pub on_evicted: bool,
     /// Whether to receive EXPIRED events.
     pub on_expired: bool,
+    /// Whether this listener is registered for a specific key.
+    pub key_filter: bool,
 }
 
 impl EntryListenerConfig {
@@ -263,7 +265,22 @@ impl EntryListenerConfig {
             on_removed: true,
             on_evicted: true,
             on_expired: true,
+            key_filter: false,
         }
+    }
+
+    /// Marks this listener as being registered for a specific key.
+    ///
+    /// When set, the listener will only receive events for the specified key.
+    /// The actual key is passed to the `add_entry_listener_for_key` method.
+    pub fn for_key(mut self) -> Self {
+        self.key_filter = true;
+        self
+    }
+
+    /// Returns `true` if this listener is configured for a specific key.
+    pub fn is_key_filtered(&self) -> bool {
+        self.key_filter
     }
 
     /// Sets whether to include entry values in events.
@@ -692,7 +709,21 @@ mod tests {
         assert!(config.on_removed);
         assert!(config.on_evicted);
         assert!(config.on_expired);
+        assert!(!config.key_filter);
         assert_eq!(config.event_flags(), 1 | 2 | 4 | 8 | 16);
+    }
+
+    #[test]
+    fn test_entry_listener_config_for_key() {
+        let config = EntryListenerConfig::new()
+            .on_added()
+            .on_removed()
+            .for_key();
+
+        assert!(config.on_added);
+        assert!(config.on_removed);
+        assert!(config.key_filter);
+        assert!(config.is_key_filtered());
     }
 
     #[test]
