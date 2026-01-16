@@ -130,6 +130,86 @@ fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
 }
 
 // ============================================================================
+// Index Hints
+// ============================================================================
+
+/// Index hint for query optimization.
+///
+/// Specifies which index should be used when executing a query.
+/// This is an optimization hint that may improve query performance
+/// when the specified index exists.
+///
+/// # Example
+///
+/// ```ignore
+/// use hazelcast_client::query::*;
+///
+/// let hint = IndexHint::new("age_idx");
+/// let pred = Predicates::with_index_hint(
+///     Predicates::greater_than("age", &18i32)?,
+///     hint,
+/// );
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexHint {
+    index_name: String,
+}
+
+impl IndexHint {
+    /// Creates a new index hint with the specified index name.
+    pub fn new(index_name: impl Into<String>) -> Self {
+        Self {
+            index_name: index_name.into(),
+        }
+    }
+
+    /// Returns the name of the index.
+    pub fn index_name(&self) -> &str {
+        &self.index_name
+    }
+}
+
+/// A predicate wrapper that includes an index hint for query optimization.
+///
+/// Wraps another predicate and associates it with an index hint that
+/// suggests which index should be used for the query.
+#[derive(Debug)]
+pub struct IndexedPredicate {
+    inner: Box<dyn Predicate>,
+    hint: IndexHint,
+}
+
+impl IndexedPredicate {
+    /// Creates a new indexed predicate.
+    pub fn new<P: Predicate + 'static>(predicate: P, hint: IndexHint) -> Self {
+        Self {
+            inner: Box::new(predicate),
+            hint,
+        }
+    }
+
+    /// Returns the index hint.
+    pub fn hint(&self) -> &IndexHint {
+        &self.hint
+    }
+
+    /// Returns a reference to the inner predicate.
+    pub fn inner(&self) -> &dyn Predicate {
+        self.inner.as_ref()
+    }
+}
+
+impl Predicate for IndexedPredicate {
+    fn class_id(&self) -> i32 {
+        self.inner.class_id()
+    }
+
+    fn write_data(&self, output: &mut ObjectDataOutput) -> Result<()> {
+        self.inner.write_data(output)
+    }
+}
+
+// ============================================================================
 // Predicate Implementations
 // ============================================================================
 
@@ -777,6 +857,28 @@ impl Predicates {
     pub fn not<P: Predicate + 'static>(predicate: P) -> NotPredicate {
         NotPredicate::new(predicate)
     }
+
+    /// Wraps a predicate with an index hint for query optimization.
+    ///
+    /// The index hint suggests which index should be used when executing
+    /// the query, potentially improving performance.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::*;
+    ///
+    /// let pred = Predicates::with_index_hint(
+    ///     Predicates::greater_than("age", &18i32)?,
+    ///     IndexHint::new("age_idx"),
+    /// );
+    /// ```
+    pub fn with_index_hint<P: Predicate + 'static>(
+        predicate: P,
+        hint: IndexHint,
+    ) -> IndexedPredicate {
+        IndexedPredicate::new(predicate, hint)
+    }
 }
 
 #[cfg(test)]
@@ -984,5 +1086,52 @@ mod tests {
         assert_send_sync::<EqualPredicate>();
         assert_send_sync::<LikePredicate>();
         assert_send_sync::<SqlPredicate>();
+    }
+
+    #[test]
+    fn test_index_hint_new() {
+        let hint = IndexHint::new("my_index");
+        assert_eq!(hint.index_name(), "my_index");
+    }
+
+    #[test]
+    fn test_index_hint_equality() {
+        let hint1 = IndexHint::new("idx");
+        let hint2 = IndexHint::new("idx");
+        let hint3 = IndexHint::new("other");
+        assert_eq!(hint1, hint2);
+        assert_ne!(hint1, hint3);
+    }
+
+    #[test]
+    fn test_indexed_predicate() {
+        let pred = EqualPredicate::new("name", &"John".to_string()).unwrap();
+        let hint = IndexHint::new("name_idx");
+        let indexed = IndexedPredicate::new(pred, hint);
+
+        assert_eq!(indexed.hint().index_name(), "name_idx");
+        assert_eq!(indexed.class_id(), class_ids::EQUAL_PREDICATE);
+
+        let data = indexed.to_predicate_data().unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_predicates_with_index_hint() {
+        let pred = Predicates::greater_than("age", &18i32).unwrap();
+        let indexed = Predicates::with_index_hint(pred, IndexHint::new("age_idx"));
+
+        assert_eq!(indexed.hint().index_name(), "age_idx");
+        assert_eq!(indexed.class_id(), class_ids::GREATER_LESS_PREDICATE);
+    }
+
+    #[test]
+    fn test_indexed_predicate_with_compound() {
+        let and_pred = AndPredicate::of(TruePredicate::new(), FalsePredicate::new());
+        let indexed = Predicates::with_index_hint(and_pred, IndexHint::new("compound_idx"));
+
+        assert_eq!(indexed.class_id(), class_ids::AND_PREDICATE);
+        let data = indexed.to_predicate_data().unwrap();
+        assert!(!data.is_empty());
     }
 }
