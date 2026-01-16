@@ -2721,6 +2721,48 @@ where
         self.decode_entry_processor_results::<E::Output>(&response)
     }
 
+    /// Asynchronously executes an entry processor on the entry with the given key.
+    ///
+    /// This method spawns the operation on a separate task and returns a handle
+    /// that can be awaited or polled. Useful for fire-and-forget patterns or
+    /// starting multiple operations concurrently.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `E`: The entry processor type implementing [`EntryProcessor`]
+    ///
+    /// # Returns
+    ///
+    /// A `JoinHandle` that resolves to the result of executing the processor on
+    /// the entry, or `None` if the key does not exist and the processor returns
+    /// no result.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Start multiple entry processor executions concurrently
+    /// let handle1 = map.submit_to_key("user:1".to_string(), increment_processor.clone());
+    /// let handle2 = map.submit_to_key("user:2".to_string(), increment_processor.clone());
+    ///
+    /// // Await results
+    /// let result1 = handle1.await??;
+    /// let result2 = handle2.await??;
+    /// ```
+    pub fn submit_to_key<E>(
+        &self,
+        key: K,
+        processor: E,
+    ) -> tokio::task::JoinHandle<Result<Option<E::Output>>>
+    where
+        E: EntryProcessor + 'static,
+        E::Output: 'static,
+        K: 'static,
+        V: 'static,
+    {
+        let this = self.clone();
+        spawn(async move { this.execute_on_key(&key, &processor).await })
+    }
+
     /// Adds an index to this map with the given configuration.
     ///
     /// Indexes improve query performance for predicates that filter on the
@@ -6958,6 +7000,31 @@ mod tests {
     }
 
     #[test]
+    fn test_submit_to_key_returns_join_handle() {
+        use crate::proxy::EntryProcessor;
+
+        struct TestProcessor;
+        impl EntryProcessor for TestProcessor {
+            type Output = i32;
+        }
+        impl Serializable for TestProcessor {
+            fn serialize(&self, _output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+                Ok(())
+            }
+        }
+
+        fn check_return_type<K, V>(_map: &IMap<K, V>)
+        where
+            K: Serializable + Deserializable + Send + Sync + 'static,
+            V: Serializable + Deserializable + Send + Sync + 'static,
+        {
+            let _ = |m: &IMap<K, V>, k: K| -> tokio::task::JoinHandle<Result<Option<i32>>> {
+                m.submit_to_key(k, TestProcessor)
+            };
+        }
+    }
+
+    #[test]
     fn test_put_async_returns_join_handle() {
         fn check_return_type<K, V>(_map: &IMap<K, V>)
         where
@@ -7013,5 +7080,29 @@ mod tests {
             map.remove_async("key".to_string());
         let _contains_handle: tokio::task::JoinHandle<Result<bool>> =
             map.contains_key_async("key".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_submit_to_key_spawns_task() {
+        use crate::connection::ConnectionManager;
+        use crate::proxy::EntryProcessor;
+        use std::net::SocketAddr;
+
+        struct TestProcessor;
+        impl EntryProcessor for TestProcessor {
+            type Output = i32;
+        }
+        impl Serializable for TestProcessor {
+            fn serialize(&self, _output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+                Ok(())
+            }
+        }
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let map: IMap<String, i32> = IMap::new("test".to_string(), cm);
+
+        let _handle: tokio::task::JoinHandle<Result<Option<i32>>> =
+            map.submit_to_key("key".to_string(), TestProcessor);
     }
 }
