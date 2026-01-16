@@ -1035,6 +1035,35 @@ where
 
     /// Executes an entry processor on all entries in this map.
     ///
+    /// This is equivalent to [`execute_on_entries`](Self::execute_on_entries).
+    ///
+    /// # Type Parameters
+    ///
+    /// - `E`: The entry processor type implementing [`EntryProcessor`]
+    ///
+    /// # Returns
+    ///
+    /// A map of all keys to their processing results.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let results = map.execute_on_all(&reset_counter_processor).await?;
+    /// println!("Processed {} entries", results.len());
+    /// ```
+    pub async fn execute_on_all<E>(
+        &self,
+        processor: &E,
+    ) -> Result<EntryProcessorResult<K, E::Output>>
+    where
+        E: EntryProcessor,
+        K: Eq + Hash + Clone,
+    {
+        self.execute_on_entries(processor).await
+    }
+
+    /// Executes an entry processor on all entries in this map.
+    ///
     /// The processor is sent to all cluster members, where it executes on each
     /// entry atomically. This is useful for bulk updates or aggregations.
     ///

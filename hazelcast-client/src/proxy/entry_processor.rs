@@ -123,6 +123,99 @@ mod tests {
         }
     }
 
+    impl Deserializable for TestProcessor {
+        fn deserialize(input: &mut ObjectDataInput) -> Result<Self> {
+            Ok(Self {
+                value: input.read_i32()?,
+            })
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct MultiFieldProcessor {
+        operation: i32,
+        delta: i64,
+        multiplier: f64,
+    }
+
+    impl EntryProcessor for MultiFieldProcessor {
+        type Output = MultiFieldResult;
+    }
+
+    impl Serializable for MultiFieldProcessor {
+        fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
+            output.write_i32(self.operation)?;
+            output.write_i64(self.delta)?;
+            output.write_f64(self.multiplier)?;
+            Ok(())
+        }
+    }
+
+    impl Deserializable for MultiFieldProcessor {
+        fn deserialize(input: &mut ObjectDataInput) -> Result<Self> {
+            Ok(Self {
+                operation: input.read_i32()?,
+                delta: input.read_i64()?,
+                multiplier: input.read_f64()?,
+            })
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct MultiFieldResult {
+        old_value: i64,
+        new_value: i64,
+        success: bool,
+    }
+
+    impl Serializable for MultiFieldResult {
+        fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
+            output.write_i64(self.old_value)?;
+            output.write_i64(self.new_value)?;
+            output.write_bool(self.success)?;
+            Ok(())
+        }
+    }
+
+    impl Deserializable for MultiFieldResult {
+        fn deserialize(input: &mut ObjectDataInput) -> Result<Self> {
+            Ok(Self {
+                old_value: input.read_i64()?,
+                new_value: input.read_i64()?,
+                success: input.read_bool()?,
+            })
+        }
+    }
+
+    struct StringFieldProcessor {
+        name: String,
+        prefix: String,
+        count: i32,
+    }
+
+    impl EntryProcessor for StringFieldProcessor {
+        type Output = String;
+    }
+
+    impl Serializable for StringFieldProcessor {
+        fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
+            output.write_string(&self.name)?;
+            output.write_string(&self.prefix)?;
+            output.write_i32(self.count)?;
+            Ok(())
+        }
+    }
+
+    impl Deserializable for StringFieldProcessor {
+        fn deserialize(input: &mut ObjectDataInput) -> Result<Self> {
+            Ok(Self {
+                name: input.read_string()?,
+                prefix: input.read_string()?,
+                count: input.read_i32()?,
+            })
+        }
+    }
+
     #[test]
     fn test_entry_processor_trait_bounds() {
         fn assert_send_sync<T: Send + Sync>() {}
@@ -201,5 +294,87 @@ mod tests {
     fn test_entry_processor_result_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<EntryProcessorResult<String, i32>>();
+    }
+
+    #[test]
+    fn test_entry_processor_round_trip_serialization() {
+        let processor = MultiFieldProcessor {
+            operation: 42,
+            delta: 1000i64,
+            multiplier: 3.14159,
+        };
+
+        let mut output = ObjectDataOutput::new();
+        processor.serialize(&mut output).unwrap();
+        let bytes = output.into_bytes();
+
+        assert_eq!(bytes.len(), 4 + 8 + 8); // i32 + i64 + f64
+
+        let mut input = ObjectDataInput::new(&bytes);
+        let deserialized = MultiFieldProcessor::deserialize(&mut input).unwrap();
+
+        assert_eq!(deserialized.operation, 42);
+        assert_eq!(deserialized.delta, 1000i64);
+        assert!((deserialized.multiplier - 3.14159).abs() < f64::EPSILON);
+        assert_eq!(processor, deserialized);
+    }
+
+    #[test]
+    fn test_entry_processor_output_deserialization() {
+        let result = MultiFieldResult {
+            old_value: 100,
+            new_value: 150,
+            success: true,
+        };
+
+        let mut output = ObjectDataOutput::new();
+        result.serialize(&mut output).unwrap();
+        let bytes = output.into_bytes();
+
+        assert_eq!(bytes.len(), 8 + 8 + 1); // i64 + i64 + bool
+
+        let mut input = ObjectDataInput::new(&bytes);
+        let deserialized = MultiFieldResult::deserialize(&mut input).unwrap();
+
+        assert_eq!(deserialized.old_value, 100);
+        assert_eq!(deserialized.new_value, 150);
+        assert!(deserialized.success);
+        assert_eq!(result, deserialized);
+    }
+
+    #[test]
+    fn test_entry_processor_with_string_fields() {
+        let processor = StringFieldProcessor {
+            name: "increment-processor".to_string(),
+            prefix: "user_".to_string(),
+            count: 5,
+        };
+
+        let mut output = ObjectDataOutput::new();
+        processor.serialize(&mut output).unwrap();
+        let bytes = output.into_bytes();
+
+        assert!(!bytes.is_empty());
+
+        let mut input = ObjectDataInput::new(&bytes);
+        let deserialized = StringFieldProcessor::deserialize(&mut input).unwrap();
+
+        assert_eq!(deserialized.name, "increment-processor");
+        assert_eq!(deserialized.prefix, "user_");
+        assert_eq!(deserialized.count, 5);
+    }
+
+    #[test]
+    fn test_simple_processor_round_trip() {
+        let processor = TestProcessor { value: 12345 };
+
+        let mut output = ObjectDataOutput::new();
+        processor.serialize(&mut output).unwrap();
+        let bytes = output.into_bytes();
+
+        let mut input = ObjectDataInput::new(&bytes);
+        let deserialized = TestProcessor::deserialize(&mut input).unwrap();
+
+        assert_eq!(deserialized.value, 12345);
     }
 }
