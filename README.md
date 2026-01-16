@@ -1,7 +1,10 @@
 # Hazelcast Rust Client
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
+<!-- Uncomment after adding .github/workflows/ci.yml:
 [![CI](https://github.com/hazelcast/hazelcast-rust-client/actions/workflows/ci.yml/badge.svg)](https://github.com/hazelcast/hazelcast-rust-client/actions)
+-->
 
 <!-- Uncomment these badges after publishing to crates.io:
 [![Crates.io](https://img.shields.io/crates/v/hazelcast-client.svg)](https://crates.io/crates/hazelcast-client)
