@@ -43,7 +43,7 @@ pub use pn_counter::PNCounter;
 pub use queue::IQueue;
 pub use reliable_topic::{ReliableTopic, ReliableTopicConfig, ReliableTopicMessage, ReliableTopicStats};
 pub use replicated_map::ReplicatedMap;
-pub use ringbuffer::{OverflowPolicy, Ringbuffer};
+pub use ringbuffer::{FalseFilter, OverflowPolicy, Ringbuffer, RingbufferFilter, TrueFilter};
 pub use semaphore::Semaphore;
 pub use set::ISet;
 pub use topic::{ITopic, TopicMessage};

@@ -18,6 +18,70 @@ pub enum OverflowPolicy {
     Fail = 1,
 }
 
+/// A filter function for ringbuffer read operations.
+///
+/// Filters are executed on the server side to reduce network traffic.
+/// They must be serializable using the IdentifiedDataSerializable format.
+///
+/// # Example
+///
+/// ```ignore
+/// use hazelcast_client::proxy::{Ringbuffer, TrueFilter};
+///
+/// let (items, next_seq, read_count) = rb.read_many_with_filter(0, 1, 100, TrueFilter).await?;
+/// ```
+pub trait RingbufferFilter<T>: Send + Sync {
+    /// Returns the factory ID for serialization.
+    fn factory_id(&self) -> i32;
+
+    /// Returns the class ID for serialization.
+    fn class_id(&self) -> i32;
+
+    /// Writes the filter data to the output buffer.
+    fn write_data(&self, output: &mut Vec<u8>) -> Result<()>;
+}
+
+/// A filter that accepts all items.
+///
+/// This is useful for testing or when you want to use other read_many_with_filter
+/// features without actually filtering.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TrueFilter;
+
+impl<T> RingbufferFilter<T> for TrueFilter {
+    fn factory_id(&self) -> i32 {
+        -32
+    }
+
+    fn class_id(&self) -> i32 {
+        7
+    }
+
+    fn write_data(&self, _output: &mut Vec<u8>) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// A filter that rejects all items.
+///
+/// This is useful for testing filter behavior.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FalseFilter;
+
+impl<T> RingbufferFilter<T> for FalseFilter {
+    fn factory_id(&self) -> i32 {
+        -32
+    }
+
+    fn class_id(&self) -> i32 {
+        6
+    }
+
+    fn write_data(&self, _output: &mut Vec<u8>) -> Result<()> {
+        Ok(())
+    }
+}
+
 /// A distributed ringbuffer that stores a fixed-capacity sequence of items.
 ///
 /// The ringbuffer provides a circular buffer with sequence-based access.
@@ -55,6 +119,15 @@ where
     /// Returns the name of this ringbuffer.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Serializes a filter to the IdentifiedDataSerializable format.
+    fn serialize_filter<F: RingbufferFilter<T>>(&self, filter: &F) -> Result<Vec<u8>> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&filter.factory_id().to_be_bytes());
+        data.extend_from_slice(&filter.class_id().to_be_bytes());
+        filter.write_data(&mut data)?;
+        Ok(data)
     }
 
     /// Adds an item to the tail of the ringbuffer.
@@ -220,6 +293,78 @@ where
         Ok((items, next_seq))
     }
 
+    /// Reads multiple items from the ringbuffer with server-side filtering.
+    ///
+    /// This is similar to `read_many` but applies a filter on the server side,
+    /// which can significantly reduce network traffic when only a subset of
+    /// items are needed.
+    ///
+    /// - `start_sequence`: The sequence to start reading from
+    /// - `min_count`: Minimum number of items to read (blocks until available)
+    /// - `max_count`: Maximum number of items to read
+    /// - `filter`: A filter to apply on the server side
+    ///
+    /// Returns a tuple of (filtered_items, next_sequence_to_read, read_count).
+    /// The `read_count` indicates how many items were scanned (before filtering).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::proxy::TrueFilter;
+    ///
+    /// let (items, next_seq, read_count) = rb.read_many_with_filter(0, 1, 100, TrueFilter).await?;
+    /// ```
+    pub async fn read_many_with_filter<F: RingbufferFilter<T>>(
+        &self,
+        start_sequence: i64,
+        min_count: i32,
+        max_count: i32,
+        filter: F,
+    ) -> Result<(Vec<T>, i64, i32)> {
+        let filter_data = self.serialize_filter(&filter)?;
+
+        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE + 24);
+        request.set_message_type(RINGBUFFER_READ_MANY);
+        request.set_partition_id(PARTITION_ID_ANY);
+
+        request.add_frame(Frame::new_string_frame(&self.name));
+
+        let mut params_frame = Frame::new(20);
+        params_frame.append_i64(start_sequence);
+        params_frame.append_i32(min_count);
+        params_frame.append_i32(max_count);
+        request.add_frame(params_frame);
+
+        request.add_frame(Frame::new_data_frame(&filter_data));
+        request.finalize();
+
+        let response = self.connection_manager.send(request).await?;
+        let frames = response.frames();
+        if frames.is_empty() {
+            return Err(HazelcastError::Protocol("empty response".into()));
+        }
+
+        let initial_frame = &frames[0];
+        let read_count = initial_frame.read_i32(RESPONSE_HEADER_SIZE);
+        let next_seq = initial_frame.read_i64(RESPONSE_HEADER_SIZE + 4);
+
+        let mut items = Vec::with_capacity(read_count as usize);
+        let mut i = 1;
+        while i < frames.len() {
+            let frame = &frames[i];
+            if frame.is_end() {
+                break;
+            }
+            if !frame.is_begin() && !frame.is_null() {
+                let item = T::deserialize(&frame.content())?;
+                items.push(item);
+            }
+            i += 1;
+        }
+
+        Ok((items, next_seq, read_count))
+    }
+
     /// Returns the capacity of this ringbuffer.
     pub async fn capacity(&self) -> Result<i64> {
         let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE);
@@ -334,5 +479,34 @@ mod tests {
     fn test_ringbuffer_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<Ringbuffer<String>>();
+    }
+
+    #[test]
+    fn test_true_filter_serialization() {
+        let filter = TrueFilter;
+        assert_eq!(filter.factory_id(), -32);
+        assert_eq!(filter.class_id(), 7);
+
+        let mut output = Vec::new();
+        <TrueFilter as RingbufferFilter<String>>::write_data(&filter, &mut output).unwrap();
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_false_filter_serialization() {
+        let filter = FalseFilter;
+        assert_eq!(filter.factory_id(), -32);
+        assert_eq!(filter.class_id(), 6);
+
+        let mut output = Vec::new();
+        <FalseFilter as RingbufferFilter<String>>::write_data(&filter, &mut output).unwrap();
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_filters_are_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<TrueFilter>();
+        assert_send_sync::<FalseFilter>();
     }
 }
