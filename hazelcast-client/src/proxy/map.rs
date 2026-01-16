@@ -668,6 +668,119 @@ where
         Self::decode_int_response(&response).map(|v| v as usize)
     }
 
+    /// Asynchronously retrieves the value associated with the given key.
+    ///
+    /// This method spawns the operation on a separate task and returns a handle
+    /// that can be awaited or polled. Useful for fire-and-forget patterns or
+    /// starting multiple operations concurrently.
+    ///
+    /// If near-cache is enabled, checks the local cache first. On a cache miss,
+    /// fetches from the cluster and populates the near-cache.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Start multiple gets concurrently
+    /// let handle1 = map.get_async("key1".to_string());
+    /// let handle2 = map.get_async("key2".to_string());
+    ///
+    /// // Await results
+    /// let result1 = handle1.await??;
+    /// let result2 = handle2.await??;
+    /// ```
+    pub fn get_async(&self, key: K) -> tokio::task::JoinHandle<Result<Option<V>>>
+    where
+        K: 'static,
+        V: 'static,
+    {
+        let this = self.clone();
+        spawn(async move { this.get(&key).await })
+    }
+
+    /// Asynchronously associates the specified value with the specified key.
+    ///
+    /// This method spawns the operation on a separate task and returns a handle
+    /// that can be awaited or polled. Useful for fire-and-forget patterns or
+    /// starting multiple operations concurrently.
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the update to the cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Start multiple puts concurrently
+    /// let handle1 = map.put_async("key1".to_string(), "value1".to_string());
+    /// let handle2 = map.put_async("key2".to_string(), "value2".to_string());
+    ///
+    /// // Await results (previous values)
+    /// let old1 = handle1.await??;
+    /// let old2 = handle2.await??;
+    /// ```
+    pub fn put_async(&self, key: K, value: V) -> tokio::task::JoinHandle<Result<Option<V>>>
+    where
+        K: 'static,
+        V: 'static,
+    {
+        let this = self.clone();
+        spawn(async move { this.put(key, value).await })
+    }
+
+    /// Asynchronously removes the mapping for a key from this map.
+    ///
+    /// This method spawns the operation on a separate task and returns a handle
+    /// that can be awaited or polled. Useful for fire-and-forget patterns or
+    /// starting multiple operations concurrently.
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the remove to the cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Start multiple removes concurrently
+    /// let handle1 = map.remove_async("key1".to_string());
+    /// let handle2 = map.remove_async("key2".to_string());
+    ///
+    /// // Await results (previous values)
+    /// let old1 = handle1.await??;
+    /// let old2 = handle2.await??;
+    /// ```
+    pub fn remove_async(&self, key: K) -> tokio::task::JoinHandle<Result<Option<V>>>
+    where
+        K: 'static,
+        V: 'static,
+    {
+        let this = self.clone();
+        spawn(async move { this.remove(&key).await })
+    }
+
+    /// Asynchronously checks if this map contains a mapping for the specified key.
+    ///
+    /// This method spawns the operation on a separate task and returns a handle
+    /// that can be awaited or polled. Useful for fire-and-forget patterns or
+    /// starting multiple operations concurrently.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Start multiple contains checks concurrently
+    /// let handle1 = map.contains_key_async("key1".to_string());
+    /// let handle2 = map.contains_key_async("key2".to_string());
+    ///
+    /// // Await results
+    /// let exists1 = handle1.await??;
+    /// let exists2 = handle2.await??;
+    /// ```
+    pub fn contains_key_async(&self, key: K) -> tokio::task::JoinHandle<Result<bool>>
+    where
+        K: 'static,
+        V: 'static,
+    {
+        let this = self.clone();
+        spawn(async move { this.contains_key(&key).await })
+    }
+
     /// Puts all entries from the given map into this map.
     ///
     /// This is more efficient than calling `put` for each entry individually.
@@ -5458,5 +5571,78 @@ mod tests {
         let mut output = ObjectDataOutput::new();
         processor.serialize(&mut output).unwrap();
         assert_eq!(output.into_bytes().len(), 4);
+    }
+
+    #[test]
+    fn test_get_async_returns_join_handle() {
+        fn assert_join_handle<T>(_: tokio::task::JoinHandle<T>) {}
+        fn check_return_type<K, V>(map: &IMap<K, V>)
+        where
+            K: Serializable + Deserializable + Send + Sync + 'static,
+            V: Serializable + Deserializable + Send + Sync + 'static,
+        {
+            let key = unsafe { std::mem::zeroed::<K>() };
+            let _ = |m: &IMap<K, V>| -> tokio::task::JoinHandle<Result<Option<V>>> {
+                m.get_async(key)
+            };
+        }
+    }
+
+    #[test]
+    fn test_put_async_returns_join_handle() {
+        fn check_return_type<K, V>(_map: &IMap<K, V>)
+        where
+            K: Serializable + Deserializable + Send + Sync + 'static,
+            V: Serializable + Deserializable + Send + Sync + 'static,
+        {
+            let _ = |m: &IMap<K, V>, k: K, v: V| -> tokio::task::JoinHandle<Result<Option<V>>> {
+                m.put_async(k, v)
+            };
+        }
+    }
+
+    #[test]
+    fn test_remove_async_returns_join_handle() {
+        fn check_return_type<K, V>(_map: &IMap<K, V>)
+        where
+            K: Serializable + Deserializable + Send + Sync + 'static,
+            V: Serializable + Deserializable + Send + Sync + 'static,
+        {
+            let _ = |m: &IMap<K, V>, k: K| -> tokio::task::JoinHandle<Result<Option<V>>> {
+                m.remove_async(k)
+            };
+        }
+    }
+
+    #[test]
+    fn test_contains_key_async_returns_join_handle() {
+        fn check_return_type<K, V>(_map: &IMap<K, V>)
+        where
+            K: Serializable + Deserializable + Send + Sync + 'static,
+            V: Serializable + Deserializable + Send + Sync + 'static,
+        {
+            let _ = |m: &IMap<K, V>, k: K| -> tokio::task::JoinHandle<Result<bool>> {
+                m.contains_key_async(k)
+            };
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_methods_spawn_tasks() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let _get_handle: tokio::task::JoinHandle<Result<Option<String>>> =
+            map.get_async("key".to_string());
+        let _put_handle: tokio::task::JoinHandle<Result<Option<String>>> =
+            map.put_async("key".to_string(), "value".to_string());
+        let _remove_handle: tokio::task::JoinHandle<Result<Option<String>>> =
+            map.remove_async("key".to_string());
+        let _contains_handle: tokio::task::JoinHandle<Result<bool>> =
+            map.contains_key_async("key".to_string());
     }
 }
