@@ -453,6 +453,77 @@ impl Predicate for RegexPredicate {
     }
 }
 
+/// A predicate for querying JSON documents using JSON path expressions.
+///
+/// This predicate allows querying `HazelcastJsonValue` entries using JSON path
+/// expressions like `$.user.name` or `$.items[0].price`.
+///
+/// # Example
+///
+/// ```ignore
+/// use hazelcast_client::query::*;
+///
+/// // Check if a JSON field equals a value
+/// let pred = JsonPredicate::value_equals("$.user.name", "John");
+///
+/// // Check if a JSON field contains a substring
+/// let pred = JsonPredicate::contains("$.description", "important");
+/// ```
+#[derive(Debug, Clone)]
+pub struct JsonPredicate {
+    sql: String,
+}
+
+impl JsonPredicate {
+    /// Creates a predicate that checks if the value at the JSON path equals the specified value.
+    ///
+    /// # Arguments
+    /// * `path` - A JSON path expression (e.g., `$.user.name`)
+    /// * `value` - The value to compare against
+    pub fn value_equals(path: impl Into<String>, value: impl Into<String>) -> Self {
+        let path = path.into();
+        let value = Self::escape_sql_string(&value.into());
+        Self {
+            sql: format!("JSON_VALUE(this, '{}') = '{}'", path, value),
+        }
+    }
+
+    /// Creates a predicate that checks if the JSON value at the path contains the substring.
+    ///
+    /// # Arguments
+    /// * `path` - A JSON path expression (e.g., `$.user.name`)
+    /// * `substring` - The substring to search for
+    pub fn contains(path: impl Into<String>, substring: impl Into<String>) -> Self {
+        let path = path.into();
+        let substring = Self::escape_sql_string(&substring.into());
+        Self {
+            sql: format!("JSON_VALUE(this, '{}') LIKE '%{}%'", path, substring),
+        }
+    }
+
+    /// Creates a predicate using a raw SQL expression for JSON queries.
+    ///
+    /// Use this for complex JSON queries not covered by other methods.
+    pub fn raw_sql(sql: impl Into<String>) -> Self {
+        Self { sql: sql.into() }
+    }
+
+    fn escape_sql_string(s: &str) -> String {
+        s.replace('\'', "''")
+    }
+}
+
+impl Predicate for JsonPredicate {
+    fn class_id(&self) -> i32 {
+        class_ids::SQL_PREDICATE
+    }
+
+    fn write_data(&self, output: &mut ObjectDataOutput) -> Result<()> {
+        write_string(output, &self.sql)?;
+        Ok(())
+    }
+}
+
 /// A predicate that uses a SQL WHERE clause.
 #[derive(Debug, Clone)]
 pub struct SqlPredicate {
@@ -668,6 +739,30 @@ impl Predicates {
         SqlPredicate::new(expression)
     }
 
+    /// Returns a predicate that checks if the JSON value at the path equals the specified value.
+    ///
+    /// # Arguments
+    /// * `path` - A JSON path expression (e.g., `$.user.name`)
+    /// * `value` - The value to compare against
+    pub fn json_value_equals(
+        path: impl Into<String>,
+        value: impl Into<String>,
+    ) -> JsonPredicate {
+        JsonPredicate::value_equals(path, value)
+    }
+
+    /// Returns a predicate that checks if the JSON value at the path contains the substring.
+    ///
+    /// # Arguments
+    /// * `path` - A JSON path expression (e.g., `$.user.name`)
+    /// * `substring` - The substring to search for
+    pub fn json_contains(
+        path: impl Into<String>,
+        substring: impl Into<String>,
+    ) -> JsonPredicate {
+        JsonPredicate::contains(path, substring)
+    }
+
     /// Returns a predicate that combines predicates with AND logic.
     pub fn and(predicates: Vec<Box<dyn Predicate>>) -> AndPredicate {
         AndPredicate::new(predicates)
@@ -827,6 +922,46 @@ mod tests {
         let _ = Predicates::like("a", "b%");
         let _ = Predicates::regex("a", ".*");
         let _ = Predicates::sql("a = 1");
+    }
+
+    #[test]
+    fn test_json_predicate_value_equals() {
+        let pred = JsonPredicate::value_equals("$.user.name", "John");
+        assert_eq!(pred.class_id(), class_ids::SQL_PREDICATE);
+
+        let data = pred.to_predicate_data().unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_json_predicate_contains() {
+        let pred = JsonPredicate::contains("$.description", "important");
+        assert_eq!(pred.class_id(), class_ids::SQL_PREDICATE);
+
+        let data = pred.to_predicate_data().unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_json_predicate_escapes_quotes() {
+        let pred = JsonPredicate::value_equals("$.name", "O'Brien");
+        let data = pred.to_predicate_data().unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_json_predicate_raw_sql() {
+        let pred = JsonPredicate::raw_sql("JSON_VALUE(this, '$.age') > 18");
+        assert_eq!(pred.class_id(), class_ids::SQL_PREDICATE);
+
+        let data = pred.to_predicate_data().unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_predicates_json_factory() {
+        let _ = Predicates::json_value_equals("$.user.name", "John");
+        let _ = Predicates::json_contains("$.tags", "rust");
     }
 
     #[test]
