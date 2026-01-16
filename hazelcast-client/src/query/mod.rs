@@ -20,10 +20,12 @@
 //! ```
 
 pub mod aggregations;
+pub mod index_config;
 pub mod paging_predicate;
 pub mod projections;
 
 pub use aggregations::*;
+pub use index_config::*;
 pub use paging_predicate::{
     AnchorEntry, EntryKeyComparator, EntryValueComparator, IterationType, PagingComparator,
     PagingPredicate, PagingPredicateBuilder, PagingResult,

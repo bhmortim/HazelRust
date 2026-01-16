@@ -303,6 +303,13 @@ pub enum IndexType {
     ///
     /// Optimized for exact-match lookups. Does not support range queries.
     Hash = 1,
+
+    /// A bitmap index for low-cardinality attributes.
+    ///
+    /// Optimized for attributes with few distinct values. Supports efficient
+    /// equality and IN queries. Requires configuring a unique key to identify
+    /// entries in the bitmap.
+    Bitmap = 2,
 }
 
 impl IndexType {
@@ -329,6 +336,7 @@ pub struct IndexConfig {
     name: Option<String>,
     index_type: IndexType,
     attributes: Vec<String>,
+    bitmap_options: Option<crate::query::BitmapIndexOptions>,
 }
 
 impl IndexConfig {
@@ -351,6 +359,11 @@ impl IndexConfig {
     pub fn attributes(&self) -> &[String] {
         &self.attributes
     }
+
+    /// Returns the bitmap index options, if this is a bitmap index.
+    pub fn bitmap_options(&self) -> Option<&crate::query::BitmapIndexOptions> {
+        self.bitmap_options.as_ref()
+    }
 }
 
 /// Builder for creating [`IndexConfig`] instances.
@@ -359,6 +372,7 @@ pub struct IndexConfigBuilder {
     name: Option<String>,
     index_type: IndexType,
     attributes: Vec<String>,
+    bitmap_options: Option<crate::query::BitmapIndexOptions>,
 }
 
 impl IndexConfigBuilder {
@@ -368,6 +382,7 @@ impl IndexConfigBuilder {
             name: None,
             index_type: IndexType::Sorted,
             attributes: Vec::new(),
+            bitmap_options: None,
         }
     }
 
@@ -407,27 +422,60 @@ impl IndexConfigBuilder {
         self
     }
 
+    /// Sets the bitmap index options.
+    ///
+    /// This automatically sets the index type to [`IndexType::Bitmap`].
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::{BitmapIndexOptions, UniqueKeyTransformation};
+    ///
+    /// let config = IndexConfig::builder()
+    ///     .name("status-bitmap-idx")
+    ///     .add_attribute("status")
+    ///     .bitmap_options(
+    ///         BitmapIndexOptions::builder()
+    ///             .unique_key("__key")
+    ///             .unique_key_transformation(UniqueKeyTransformation::Long)
+    ///             .build()
+    ///     )
+    ///     .build();
+    /// ```
+    pub fn bitmap_options(mut self, options: crate::query::BitmapIndexOptions) -> Self {
+        self.index_type = IndexType::Bitmap;
+        self.bitmap_options = Some(options);
+        self
+    }
+
     /// Builds the [`IndexConfig`].
     ///
     /// # Panics
     ///
-    /// Panics if no attributes have been added.
+    /// Panics if no attributes have been added, or if bitmap index type is set
+    /// without bitmap options.
     pub fn build(self) -> IndexConfig {
         assert!(
             !self.attributes.is_empty(),
             "IndexConfig requires at least one attribute"
         );
 
+        if self.index_type == IndexType::Bitmap && self.bitmap_options.is_none() {
+            panic!("Bitmap index requires bitmap_options to be set");
+        }
+
         IndexConfig {
             name: self.name,
             index_type: self.index_type,
             attributes: self.attributes,
+            bitmap_options: self.bitmap_options,
         }
     }
 
     /// Builds the [`IndexConfig`], returning an error if invalid.
     ///
-    /// Returns an error if no attributes have been added.
+    /// Returns an error if no attributes have been added, or if bitmap index
+    /// type is set without bitmap options.
     pub fn try_build(self) -> Result<IndexConfig> {
         if self.attributes.is_empty() {
             return Err(HazelcastError::Configuration(
@@ -435,10 +483,17 @@ impl IndexConfigBuilder {
             ));
         }
 
+        if self.index_type == IndexType::Bitmap && self.bitmap_options.is_none() {
+            return Err(HazelcastError::Configuration(
+                "Bitmap index requires bitmap_options to be set".to_string(),
+            ));
+        }
+
         Ok(IndexConfig {
             name: self.name,
             index_type: self.index_type,
             attributes: self.attributes,
+            bitmap_options: self.bitmap_options,
         })
     }
 }
@@ -2811,6 +2866,8 @@ where
     ///   Also supports equality checks.
     /// - [`IndexType::Hash`]: Best for equality queries (`=`). Does not support
     ///   range queries but has faster lookups for exact matches.
+    /// - [`IndexType::Bitmap`]: Best for low-cardinality attributes. Optimized
+    ///   for equality and IN queries on attributes with few distinct values.
     ///
     /// # Example
     ///
@@ -2839,6 +2896,22 @@ where
     ///     .build();
     ///
     /// map.add_index(composite).await?;
+    ///
+    /// // Create a bitmap index for low-cardinality attribute
+    /// use hazelcast_client::query::{BitmapIndexOptions, UniqueKeyTransformation};
+    ///
+    /// let bitmap_config = IndexConfig::builder()
+    ///     .name("status-bitmap-idx")
+    ///     .add_attribute("status")
+    ///     .bitmap_options(
+    ///         BitmapIndexOptions::builder()
+    ///             .unique_key("__key")
+    ///             .unique_key_transformation(UniqueKeyTransformation::Long)
+    ///             .build()
+    ///     )
+    ///     .build();
+    ///
+    /// map.add_index(bitmap_config).await?;
     /// ```
     pub async fn add_index(&self, config: IndexConfig) -> Result<()> {
         self.check_permission(PermissionAction::Index)?;
@@ -2862,6 +2935,15 @@ where
         // Encode each attribute
         for attr in &config.attributes {
             message.add_frame(Self::string_frame(attr));
+        }
+
+        // Encode bitmap index options if present
+        if let Some(ref bitmap_opts) = config.bitmap_options {
+            message.add_frame(Self::bool_frame(true)); // has bitmap options
+            message.add_frame(Self::string_frame(bitmap_opts.unique_key()));
+            message.add_frame(Self::int_frame(bitmap_opts.unique_key_transformation().as_i32()));
+        } else {
+            message.add_frame(Self::bool_frame(false)); // no bitmap options
         }
 
         self.invoke(message).await?;
@@ -5139,6 +5221,7 @@ mod tests {
     fn test_index_type_values() {
         assert_eq!(IndexType::Sorted.as_i32(), 0);
         assert_eq!(IndexType::Hash.as_i32(), 1);
+        assert_eq!(IndexType::Bitmap.as_i32(), 2);
     }
 
     #[test]
@@ -5720,6 +5803,154 @@ mod tests {
             .add_attribute("userId")
             .build();
         assert_eq!(equality_query_index.index_type(), IndexType::Hash);
+    }
+
+    #[test]
+    fn test_bitmap_index_config() {
+        use crate::query::{BitmapIndexOptions, UniqueKeyTransformation};
+
+        let config = IndexConfig::builder()
+            .name("status-bitmap-idx")
+            .add_attribute("status")
+            .bitmap_options(
+                BitmapIndexOptions::builder()
+                    .unique_key("__key")
+                    .unique_key_transformation(UniqueKeyTransformation::Long)
+                    .build()
+            )
+            .build();
+
+        assert_eq!(config.name(), Some("status-bitmap-idx"));
+        assert_eq!(config.index_type(), IndexType::Bitmap);
+        assert_eq!(config.attributes(), &["status".to_string()]);
+        assert!(config.bitmap_options().is_some());
+
+        let opts = config.bitmap_options().unwrap();
+        assert_eq!(opts.unique_key(), "__key");
+        assert_eq!(opts.unique_key_transformation(), UniqueKeyTransformation::Long);
+    }
+
+    #[test]
+    fn test_bitmap_index_config_default_options() {
+        use crate::query::BitmapIndexOptions;
+
+        let config = IndexConfig::builder()
+            .add_attribute("category")
+            .bitmap_options(BitmapIndexOptions::new())
+            .build();
+
+        assert_eq!(config.index_type(), IndexType::Bitmap);
+        let opts = config.bitmap_options().unwrap();
+        assert_eq!(opts.unique_key(), "__key");
+    }
+
+    #[test]
+    fn test_bitmap_options_auto_sets_index_type() {
+        use crate::query::BitmapIndexOptions;
+
+        let config = IndexConfig::builder()
+            .index_type(IndexType::Hash)
+            .add_attribute("field")
+            .bitmap_options(BitmapIndexOptions::new())
+            .build();
+
+        assert_eq!(config.index_type(), IndexType::Bitmap);
+    }
+
+    #[test]
+    #[should_panic(expected = "Bitmap index requires bitmap_options")]
+    fn test_bitmap_index_without_options_panics() {
+        IndexConfig::builder()
+            .index_type(IndexType::Bitmap)
+            .add_attribute("field")
+            .build();
+    }
+
+    #[test]
+    fn test_bitmap_index_try_build_without_options_errors() {
+        let result = IndexConfig::builder()
+            .index_type(IndexType::Bitmap)
+            .add_attribute("field")
+            .try_build();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, HazelcastError::Configuration(_)));
+    }
+
+    #[test]
+    fn test_bitmap_index_for_low_cardinality_optimization() {
+        use crate::query::{BitmapIndexOptions, UniqueKeyTransformation};
+
+        let status_index = IndexConfig::builder()
+            .name("order-status-idx")
+            .add_attribute("orderStatus")
+            .bitmap_options(
+                BitmapIndexOptions::builder()
+                    .unique_key("orderId")
+                    .unique_key_transformation(UniqueKeyTransformation::Long)
+                    .build()
+            )
+            .build();
+
+        assert_eq!(status_index.index_type(), IndexType::Bitmap);
+        assert_eq!(status_index.attributes(), &["orderStatus".to_string()]);
+
+        let opts = status_index.bitmap_options().unwrap();
+        assert_eq!(opts.unique_key(), "orderId");
+        assert_eq!(opts.unique_key_transformation(), UniqueKeyTransformation::Long);
+    }
+
+    #[test]
+    fn test_bitmap_index_with_raw_transformation() {
+        use crate::query::{BitmapIndexOptions, UniqueKeyTransformation};
+
+        let config = IndexConfig::builder()
+            .add_attribute("tag")
+            .bitmap_options(
+                BitmapIndexOptions::builder()
+                    .unique_key("__key")
+                    .unique_key_transformation(UniqueKeyTransformation::Raw)
+                    .build()
+            )
+            .build();
+
+        let opts = config.bitmap_options().unwrap();
+        assert_eq!(opts.unique_key_transformation(), UniqueKeyTransformation::Raw);
+    }
+
+    #[test]
+    fn test_bitmap_index_clone() {
+        use crate::query::BitmapIndexOptions;
+
+        let config = IndexConfig::builder()
+            .name("test-idx")
+            .add_attribute("field")
+            .bitmap_options(BitmapIndexOptions::new())
+            .build();
+
+        let cloned = config.clone();
+        assert_eq!(config.name(), cloned.name());
+        assert_eq!(config.index_type(), cloned.index_type());
+        assert_eq!(config.attributes(), cloned.attributes());
+        assert!(cloned.bitmap_options().is_some());
+    }
+
+    #[test]
+    fn test_non_bitmap_index_has_no_bitmap_options() {
+        let sorted_config = IndexConfig::builder()
+            .index_type(IndexType::Sorted)
+            .add_attribute("age")
+            .build();
+
+        assert!(sorted_config.bitmap_options().is_none());
+
+        let hash_config = IndexConfig::builder()
+            .index_type(IndexType::Hash)
+            .add_attribute("email")
+            .build();
+
+        assert!(hash_config.bitmap_options().is_none());
     }
 
     #[test]
