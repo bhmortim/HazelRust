@@ -17,7 +17,7 @@ use hazelcast_core::protocol::{
     SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION, SCHEDULED_EXECUTOR_DISPOSE,
     PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
+use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable, Serializable as _};
 
 use crate::connection::ConnectionManager;
 use crate::listener::Member;
@@ -229,6 +229,8 @@ impl<T: Deserializable> ScheduledFuture<T> {
     ///
     /// For periodic tasks, this will return an error as they do not
     /// produce a single result.
+    ///
+    /// This is an alias for [`get_result`].
     pub async fn get(self) -> Result<T> {
         let (message_type, partition_id) = match &self.target {
             ScheduledTaskTarget::Partition(pid) => {
@@ -247,6 +249,16 @@ impl<T: Deserializable> ScheduledFuture<T> {
 
         let response = self.invoke(message).await?;
         Self::decode_result_response(&response)
+    }
+
+    /// Waits for the task to complete and returns the result.
+    ///
+    /// For periodic tasks, this will return an error as they do not
+    /// produce a single result.
+    ///
+    /// This is an alias for [`get`].
+    pub async fn get_result(self) -> Result<T> {
+        self.get().await
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
@@ -459,6 +471,75 @@ impl ScheduledExecutorService {
         ))
     }
 
+    /// Schedules a callable task to the member owning the specified key's partition.
+    ///
+    /// The task executes once on the member that owns the partition for the given key,
+    /// which can be useful for data locality.
+    pub async fn schedule_on_key_owner<T, R, K>(
+        &self,
+        task: &T,
+        key: &K,
+        delay: Duration,
+    ) -> Result<ScheduledFuture<R>>
+    where
+        T: Callable<R>,
+        R: Deserializable + Send + 'static,
+        K: Serializable,
+    {
+        let callable_task = CallableTask::<R>::new(task)?;
+        let task_name = format!("task-{}", Uuid::new_v4());
+        let delay_nanos = delay.as_nanos() as i64;
+
+        let mut key_data = Vec::new();
+        key.serialize(&mut key_data)?;
+        let partition_id = Self::compute_partition_id(&key_data);
+
+        let mut message =
+            ClientMessage::create_for_encode(SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::byte_frame(ScheduleType::SingleRun as u8));
+        message.add_frame(Self::string_frame(&task_name));
+        message.add_frame(Self::data_frame(callable_task.data()));
+        message.add_frame(Self::long_frame(delay_nanos));
+        message.add_frame(Self::long_frame(0)); // period (not used for single run)
+
+        self.invoke(message).await?;
+
+        Ok(ScheduledFuture::new(
+            self.name.clone(),
+            task_name,
+            ScheduledTaskTarget::Partition(partition_id),
+            Arc::clone(&self.connection_manager),
+        ))
+    }
+
+    /// Schedules a callable task for execution on all cluster members after the given delay.
+    ///
+    /// Returns a vector of futures, one for each member's scheduled task.
+    pub async fn schedule_on_all_members<T, R>(
+        &self,
+        task: &T,
+        delay: Duration,
+    ) -> Result<Vec<ScheduledFuture<R>>>
+    where
+        T: Callable<R>,
+        R: Deserializable + Send + 'static,
+    {
+        let members = self.connection_manager.members().await;
+        if members.is_empty() {
+            return Err(HazelcastError::Connection(
+                "No cluster members available".to_string(),
+            ));
+        }
+
+        let mut futures = Vec::with_capacity(members.len());
+        for member in &members {
+            let future = self.schedule_on_member(task, member, delay).await?;
+            futures.push(future);
+        }
+        Ok(futures)
+    }
+
     /// Schedules a callable task for periodic execution with a fixed delay.
     ///
     /// The task first executes after `initial_delay`, then repeatedly with
@@ -554,6 +635,17 @@ impl ScheduledExecutorService {
 
     fn long_frame(value: i64) -> Frame {
         Frame::with_content(bytes::BytesMut::from(&value.to_le_bytes()[..]))
+    }
+
+    fn compute_partition_id(key_data: &[u8]) -> i32 {
+        if key_data.is_empty() {
+            return PARTITION_ID_ANY;
+        }
+        let mut hash: u32 = 0;
+        for byte in key_data {
+            hash = hash.wrapping_mul(31).wrapping_add(*byte as u32);
+        }
+        (hash % 271) as i32
     }
 
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
