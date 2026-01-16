@@ -16,6 +16,7 @@ use hazelcast_core::{HazelcastError, Result};
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
 use crate::config::{ClientConfig, Permissions};
+use crate::cluster::{MigrationEvent, PartitionLostEvent};
 use crate::listener::{
     DistributedObjectEvent, LifecycleEvent, Member, MemberEvent, MemberEventType,
 };
@@ -77,6 +78,8 @@ pub struct ConnectionManager {
     membership_sender: broadcast::Sender<MemberEvent>,
     lifecycle_sender: broadcast::Sender<LifecycleEvent>,
     distributed_object_sender: broadcast::Sender<DistributedObjectEvent>,
+    migration_sender: broadcast::Sender<MigrationEvent>,
+    partition_lost_sender: broadcast::Sender<PartitionLostEvent>,
     shutdown: tokio::sync::watch::Sender<bool>,
 }
 
@@ -87,6 +90,8 @@ impl ConnectionManager {
         let (membership_sender, _) = broadcast::channel(64);
         let (lifecycle_sender, _) = broadcast::channel(16);
         let (distributed_object_sender, _) = broadcast::channel(64);
+        let (migration_sender, _) = broadcast::channel(64);
+        let (partition_lost_sender, _) = broadcast::channel(32);
         let (shutdown, _) = tokio::sync::watch::channel(false);
 
         Self {
@@ -100,6 +105,8 @@ impl ConnectionManager {
             membership_sender,
             lifecycle_sender,
             distributed_object_sender,
+            migration_sender,
+            partition_lost_sender,
             shutdown,
         }
     }
@@ -135,6 +142,26 @@ impl ConnectionManager {
     /// Broadcasts a distributed object event to all subscribers.
     pub fn broadcast_distributed_object_event(&self, event: DistributedObjectEvent) {
         let _ = self.distributed_object_sender.send(event);
+    }
+
+    /// Subscribes to partition migration events.
+    pub fn subscribe_migration(&self) -> broadcast::Receiver<MigrationEvent> {
+        self.migration_sender.subscribe()
+    }
+
+    /// Broadcasts a migration event to all subscribers.
+    pub fn broadcast_migration_event(&self, event: MigrationEvent) {
+        let _ = self.migration_sender.send(event);
+    }
+
+    /// Subscribes to partition lost events.
+    pub fn subscribe_partition_lost(&self) -> broadcast::Receiver<PartitionLostEvent> {
+        self.partition_lost_sender.subscribe()
+    }
+
+    /// Broadcasts a partition lost event to all subscribers.
+    pub fn broadcast_partition_lost_event(&self, event: PartitionLostEvent) {
+        let _ = self.partition_lost_sender.send(event);
     }
 
     /// Returns the current list of known cluster members.

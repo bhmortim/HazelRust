@@ -371,6 +371,12 @@ pub const CLIENT_ADD_MEMBERSHIP_LISTENER: i32 = 0x000300;
 /// Client remove membership listener request.
 pub const CLIENT_REMOVE_MEMBERSHIP_LISTENER: i32 = 0x000301;
 
+/// Client add partition lost listener request.
+pub const CLIENT_ADD_PARTITION_LOST_LISTENER: i32 = 0x000600;
+
+/// Client remove partition lost listener request.
+pub const CLIENT_REMOVE_PARTITION_LOST_LISTENER: i32 = 0x000700;
+
 /// Client add distributed object listener request.
 pub const CLIENT_ADD_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000800;
 

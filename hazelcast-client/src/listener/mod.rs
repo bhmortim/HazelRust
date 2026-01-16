@@ -1,4 +1,10 @@
 //! Event listener infrastructure for Hazelcast distributed data structures.
+//!
+//! # Partition Listeners
+//!
+//! Partition-related listeners (`MigrationListener`, `PartitionLostListener`)
+//! are available through the [`crate::cluster`] module and can be registered
+//! via [`crate::cluster::PartitionService`].
 
 mod entry_listener;
 mod item_listener;
