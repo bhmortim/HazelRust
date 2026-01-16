@@ -425,6 +425,18 @@ pub const CP_COUNTDOWN_LATCH_AWAIT: i32 = 0x0B0300;
 /// CP CountDownLatch get count request.
 pub const CP_COUNTDOWN_LATCH_GET_COUNT: i32 = 0x0B0400;
 
+/// CP Session create session request.
+pub const CP_SESSION_CREATE_SESSION: i32 = 0x1F0100;
+
+/// CP Session close session request.
+pub const CP_SESSION_CLOSE_SESSION: i32 = 0x1F0200;
+
+/// CP Session heartbeat request.
+pub const CP_SESSION_HEARTBEAT: i32 = 0x1F0300;
+
+/// CP Session generate thread ID request.
+pub const CP_SESSION_GENERATE_THREAD_ID: i32 = 0x1F0400;
+
 /// SQL execute request.
 pub const SQL_EXECUTE: i32 = 0x210100;
 
