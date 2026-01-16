@@ -482,6 +482,24 @@ impl<T: Send + Sync + Debug> Aggregator for DistinctAggregator<T> {
 }
 
 // ============================================================================
+// Type Aliases for Common Aggregators
+// ============================================================================
+
+/// Type alias for the most common sum aggregator (long/i64 values).
+///
+/// Use this when you want to sum integer values and get an `i64` result.
+/// For other numeric types, use the specific aggregators like
+/// [`IntegerSumAggregator`] or [`DoubleSumAggregator`].
+pub type SumAggregator = LongSumAggregator;
+
+/// Type alias for the most common average aggregator.
+///
+/// Use this when you want to compute the average of numeric values and
+/// get an `f64` result. For specific input types, use [`IntegerAvgAggregator`],
+/// [`LongAvgAggregator`], or [`NumberAvgAggregator`].
+pub type AvgAggregator = DoubleAvgAggregator;
+
+// ============================================================================
 // Aggregators Factory
 // ============================================================================
 
@@ -559,6 +577,24 @@ impl Aggregators {
     /// Returns an aggregator that collects distinct values.
     pub fn distinct<T>(attribute: impl Into<String>) -> DistinctAggregator<T> {
         DistinctAggregator::new(attribute)
+    }
+
+    /// Returns an aggregator that computes the sum of values (as i64).
+    ///
+    /// This is a convenience method that returns a [`SumAggregator`] (alias for
+    /// [`LongSumAggregator`]). For other numeric types, use [`integer_sum`](Self::integer_sum),
+    /// [`double_sum`](Self::double_sum), etc.
+    pub fn sum(attribute: impl Into<String>) -> SumAggregator {
+        LongSumAggregator::new(attribute)
+    }
+
+    /// Returns an aggregator that computes the average of values (as f64).
+    ///
+    /// This is a convenience method that returns an [`AvgAggregator`] (alias for
+    /// [`DoubleAvgAggregator`]). For specific input types, use [`integer_avg`](Self::integer_avg),
+    /// [`long_avg`](Self::long_avg), etc.
+    pub fn avg(attribute: impl Into<String>) -> AvgAggregator {
+        DoubleAvgAggregator::new(attribute)
     }
 }
 
@@ -708,6 +744,26 @@ mod tests {
         let _: MinAggregator<i64> = Aggregators::min("value");
         let _: MaxAggregator<i64> = Aggregators::max("value");
         let _: DistinctAggregator<String> = Aggregators::distinct("value");
+        let _ = Aggregators::sum("value");
+        let _ = Aggregators::avg("value");
+    }
+
+    #[test]
+    fn test_sum_aggregator_alias() {
+        let agg: SumAggregator = Aggregators::sum("amount");
+        assert_eq!(agg.class_id(), class_ids::LONG_SUM);
+
+        let data = agg.to_aggregator_data().unwrap();
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_avg_aggregator_alias() {
+        let agg: AvgAggregator = Aggregators::avg("price");
+        assert_eq!(agg.class_id(), class_ids::DOUBLE_AVG);
+
+        let data = agg.to_aggregator_data().unwrap();
+        assert!(!data.is_empty());
     }
 
     #[test]
