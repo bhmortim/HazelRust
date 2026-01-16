@@ -13,16 +13,17 @@ use tokio::spawn;
 use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
     END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER,
-    MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_AGGREGATE,
+    MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_ADD_INTERCEPTOR, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PAGING_PREDICATE,
     MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL, MAP_EXECUTE_ON_ALL_KEYS,
     MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE, MAP_FLUSH,
     MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED,
     MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOCK, MAP_PROJECT,
     MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT,
-    MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME, MAP_REPLACE, MAP_REPLACE_IF_SAME,
-    MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK, MAP_VALUES_WITH_PAGING_PREDICATE,
-    MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME, MAP_REMOVE_INTERCEPTOR,
+    MAP_REPLACE, MAP_REPLACE_IF_SAME, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT,
+    MAP_UNLOCK, MAP_VALUES_WITH_PAGING_PREDICATE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
+    RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -298,6 +299,7 @@ use crate::listener::{
     EntryListenerConfig, ListenerId, ListenerRegistration, ListenerStats,
 };
 use crate::proxy::entry_processor::{EntryProcessor, EntryProcessorResult};
+use crate::proxy::interceptor::MapInterceptor;
 use crate::query::{Aggregator, AnchorEntry, IterationType, PagingPredicate, PagingResult, Predicate, Projection};
 
 /// A distributed map proxy for performing key-value operations on a Hazelcast cluster.
@@ -3100,6 +3102,87 @@ where
         Ok(registration)
     }
 
+    /// Adds an interceptor to this map.
+    ///
+    /// The interceptor will be invoked on the cluster members for all map operations.
+    /// Interceptors can modify values on get, put, and observe remove operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `interceptor` - The interceptor to add
+    ///
+    /// # Returns
+    ///
+    /// A unique identifier for the interceptor that can be used to remove it later.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let interceptor_id = map.add_interceptor(&my_interceptor).await?;
+    /// println!("Interceptor registered with ID: {}", interceptor_id);
+    /// ```
+    pub async fn add_interceptor<I>(&self, interceptor: &I) -> Result<String>
+    where
+        I: MapInterceptor,
+    {
+        self.check_permission(PermissionAction::Put)?;
+        let interceptor_data = Self::serialize_value(interceptor)?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_ADD_INTERCEPTOR, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&interceptor_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_string_response(&response)
+    }
+
+    /// Removes an interceptor from this map.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The identifier returned by `add_interceptor`
+    ///
+    /// # Returns
+    ///
+    /// `true` if the interceptor was found and removed, `false` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let removed = map.remove_interceptor(&interceptor_id).await?;
+    /// if removed {
+    ///     println!("Interceptor removed");
+    /// }
+    /// ```
+    pub async fn remove_interceptor(&self, id: &str) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_REMOVE_INTERCEPTOR, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::string_frame(id));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    fn decode_string_response(response: &ClientMessage) -> Result<String> {
+        let frames = response.frames();
+        if frames.len() < 2 {
+            return Err(HazelcastError::Serialization(
+                "empty string response".to_string(),
+            ));
+        }
+
+        let data_frame = &frames[1];
+        if data_frame.content.is_empty() {
+            return Ok(String::new());
+        }
+
+        String::from_utf8(data_frame.content.to_vec()).map_err(|e| {
+            HazelcastError::Serialization(format!("invalid UTF-8 in response: {}", e))
+        })
+    }
+
     fn decode_entry_processor_results<R>(
         &self,
         response: &ClientMessage,
@@ -4474,6 +4557,106 @@ mod tests {
     fn test_entry_view_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<EntryView<String, i32>>();
+    }
+
+    #[tokio::test]
+    async fn test_add_interceptor_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use crate::proxy::MapInterceptor;
+
+        struct TestInterceptor;
+
+        impl MapInterceptor for TestInterceptor {
+            type Value = String;
+
+            fn intercept_get(&self, value: Option<Self::Value>) -> Option<Self::Value> {
+                value
+            }
+
+            fn intercept_put(&self, _old: Option<Self::Value>, new: Self::Value) -> Self::Value {
+                new
+            }
+
+            fn intercept_remove(&self, _value: Option<Self::Value>) {}
+        }
+
+        impl Serializable for TestInterceptor {
+            fn serialize(&self, _output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.add_interceptor(&TestInterceptor).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_remove_interceptor_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.remove_interceptor("some-id").await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[test]
+    fn test_interceptor_serialization_for_map() {
+        use crate::proxy::MapInterceptor;
+
+        struct PrefixInterceptor {
+            prefix: String,
+        }
+
+        impl MapInterceptor for PrefixInterceptor {
+            type Value = String;
+
+            fn intercept_get(&self, value: Option<Self::Value>) -> Option<Self::Value> {
+                value.map(|v| format!("{}{}", self.prefix, v))
+            }
+
+            fn intercept_put(&self, _old: Option<Self::Value>, new: Self::Value) -> Self::Value {
+                format!("{}{}", self.prefix, new)
+            }
+
+            fn intercept_remove(&self, _value: Option<Self::Value>) {}
+        }
+
+        impl Serializable for PrefixInterceptor {
+            fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+                output.write_string(&self.prefix)?;
+                Ok(())
+            }
+        }
+
+        let interceptor = PrefixInterceptor {
+            prefix: "intercepted_".to_string(),
+        };
+
+        let data = IMap::<String, String>::serialize_value(&interceptor).unwrap();
+        assert!(!data.is_empty());
     }
 
     #[test]

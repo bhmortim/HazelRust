@@ -745,3 +745,9 @@ pub const CARDINALITY_ESTIMATOR_ADD: i32 = 0x160100;
 
 /// CardinalityEstimator estimate request.
 pub const CARDINALITY_ESTIMATOR_ESTIMATE: i32 = 0x160200;
+
+/// Map add interceptor request.
+pub const MAP_ADD_INTERCEPTOR: i32 = 0x013300;
+
+/// Map remove interceptor request.
+pub const MAP_REMOVE_INTERCEPTOR: i32 = 0x013400;
