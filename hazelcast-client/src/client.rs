@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use bytes::BytesMut;
 use hazelcast_core::{Deserializable, Result, Serializable};
 use uuid::Uuid;
 
@@ -50,6 +51,35 @@ use crate::transaction::{TransactionContext, TransactionOptions, XATransaction, 
 /// }
 /// ```
 use std::sync::RwLock;
+
+/// Information about a distributed object in the cluster.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DistributedObjectInfo {
+    /// The service name that manages this distributed object (e.g., "hz:impl:mapService").
+    pub service_name: String,
+    /// The name of the distributed object.
+    pub name: String,
+}
+
+impl DistributedObjectInfo {
+    /// Creates a new DistributedObjectInfo.
+    pub fn new(service_name: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            service_name: service_name.into(),
+            name: name.into(),
+        }
+    }
+
+    /// Returns the service name.
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    /// Returns the object name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
 
 /// Internal state for managing distributed object listeners.
 struct DistributedObjectListenerState {
@@ -769,6 +799,113 @@ impl HazelcastClient {
         self.connection_manager.subscribe_distributed_object()
     }
 
+    /// Returns a collection of all distributed objects in the cluster.
+    ///
+    /// This includes all maps, queues, topics, and other distributed data structures
+    /// that have been created on the cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let objects = client.get_distributed_objects().await?;
+    /// for obj in objects {
+    ///     println!("Object: {} (service: {})", obj.name(), obj.service_name());
+    /// }
+    /// ```
+    pub async fn get_distributed_objects(&self) -> Result<Vec<DistributedObjectInfo>> {
+        use hazelcast_core::protocol::constants::{
+            CLIENT_GET_DISTRIBUTED_OBJECTS, PARTITION_ID_ANY,
+        };
+        use hazelcast_core::protocol::{ClientMessage, Frame};
+
+        let mut request = ClientMessage::new(CLIENT_GET_DISTRIBUTED_OBJECTS);
+        request.set_partition_id(PARTITION_ID_ANY);
+
+        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
+        let address = addresses
+            .first()
+            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
+
+        self.connection_manager.send_to(*address, &request).await?;
+        let response = self.connection_manager.receive_from(*address).await?;
+
+        let mut result = Vec::new();
+        let frames = response.frames();
+
+        let mut frame_idx = 1;
+
+        while frame_idx + 1 < frames.len() {
+            let service_frame = &frames[frame_idx];
+            let name_frame = &frames[frame_idx + 1];
+
+            if service_frame.is_end_frame() {
+                break;
+            }
+
+            let service_name = String::from_utf8_lossy(service_frame.content()).to_string();
+            let name = String::from_utf8_lossy(name_frame.content()).to_string();
+
+            result.push(DistributedObjectInfo::new(service_name, name));
+            frame_idx += 2;
+        }
+
+        tracing::debug!(count = result.len(), "retrieved distributed objects");
+        Ok(result)
+    }
+
+    /// Destroys a distributed object on the cluster.
+    ///
+    /// After destruction, the object is removed from the cluster and any local
+    /// proxies will become invalid.
+    ///
+    /// # Arguments
+    ///
+    /// * `service_name` - The service name (e.g., "hz:impl:mapService" for maps)
+    /// * `name` - The name of the distributed object to destroy
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Destroy a map
+    /// client.destroy_distributed_object("hz:impl:mapService", "my-map").await?;
+    ///
+    /// // Destroy a queue
+    /// client.destroy_distributed_object("hz:impl:queueService", "my-queue").await?;
+    /// ```
+    pub async fn destroy_distributed_object(
+        &self,
+        service_name: &str,
+        name: &str,
+    ) -> Result<()> {
+        use hazelcast_core::protocol::constants::{CLIENT_DESTROY_PROXY, PARTITION_ID_ANY};
+        use hazelcast_core::protocol::{ClientMessage, Frame};
+
+        let mut request = ClientMessage::new(CLIENT_DESTROY_PROXY);
+        request.set_partition_id(PARTITION_ID_ANY);
+
+        let service_bytes = BytesMut::from(service_name.as_bytes());
+        request.add_frame(Frame::with_content(service_bytes));
+
+        let name_bytes = BytesMut::from(name.as_bytes());
+        request.add_frame(Frame::with_content(name_bytes));
+
+        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
+        let address = addresses
+            .first()
+            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
+
+        self.connection_manager.send_to(*address, &request).await?;
+        let _response = self.connection_manager.receive_from(*address).await?;
+
+        tracing::info!(
+            service_name = %service_name,
+            name = %name,
+            "destroyed distributed object"
+        );
+
+        Ok(())
+    }
+
     /// Adds a distributed object listener.
     ///
     /// The listener will be notified when distributed objects are created or
@@ -935,5 +1072,29 @@ mod tests {
     fn test_client_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<HazelcastClient>();
+    }
+
+    #[test]
+    fn test_distributed_object_info() {
+        let info = DistributedObjectInfo::new("hz:impl:mapService", "test-map");
+        assert_eq!(info.service_name(), "hz:impl:mapService");
+        assert_eq!(info.name(), "test-map");
+    }
+
+    #[test]
+    fn test_distributed_object_info_equality() {
+        let info1 = DistributedObjectInfo::new("service", "name");
+        let info2 = DistributedObjectInfo::new("service", "name");
+        let info3 = DistributedObjectInfo::new("service", "other");
+
+        assert_eq!(info1, info2);
+        assert_ne!(info1, info3);
+    }
+
+    #[test]
+    fn test_distributed_object_info_clone() {
+        let info = DistributedObjectInfo::new("service", "name");
+        let cloned = info.clone();
+        assert_eq!(info, cloned);
     }
 }

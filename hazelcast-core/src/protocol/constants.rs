@@ -383,6 +383,15 @@ pub const CLIENT_ADD_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000800;
 /// Client remove distributed object listener request.
 pub const CLIENT_REMOVE_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000900;
 
+/// Client get distributed objects request.
+pub const CLIENT_GET_DISTRIBUTED_OBJECTS: i32 = 0x000A00;
+
+/// Client create proxy request.
+pub const CLIENT_CREATE_PROXY: i32 = 0x000B00;
+
+/// Client destroy proxy request.
+pub const CLIENT_DESTROY_PROXY: i32 = 0x000C00;
+
 /// ReplicatedMap put request.
 pub const REPLICATED_MAP_PUT: i32 = 0x0D0100;
 
