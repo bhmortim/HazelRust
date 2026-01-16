@@ -24,7 +24,10 @@ pub mod paging_predicate;
 pub mod projections;
 
 pub use aggregations::*;
-pub use paging_predicate::*;
+pub use paging_predicate::{
+    AnchorEntry, EntryKeyComparator, EntryValueComparator, IterationType, PagingComparator,
+    PagingPredicate, PagingPredicateBuilder, PagingResult,
+};
 pub use projections::*;
 
 use std::fmt::Debug;

@@ -79,6 +79,163 @@ pub trait PagingComparator<K, V>: Debug + Send + Sync {
     }
 }
 
+/// A comparator that orders entries by their keys in ascending (natural) order.
+///
+/// Note: This comparator requires a corresponding server-side implementation
+/// to be deployed for actual use. The factory_id and class_id must match
+/// the server-side configuration.
+///
+/// # Example
+///
+/// ```ignore
+/// use hazelcast_client::query::{PagingPredicate, EntryKeyComparator};
+///
+/// let comparator = EntryKeyComparator::<String, i32>::new(1, 1); // factory_id, class_id
+/// let predicate = PagingPredicate::with_comparator(10, &comparator)?;
+/// ```
+#[derive(Debug, Clone)]
+pub struct EntryKeyComparator<K, V> {
+    factory_id: i32,
+    class_id: i32,
+    descending: bool,
+    _phantom: PhantomData<fn() -> (K, V)>,
+}
+
+impl<K, V> EntryKeyComparator<K, V> {
+    /// Creates a new key comparator with the specified factory and class IDs.
+    ///
+    /// The IDs must match the server-side comparator implementation.
+    pub fn new(factory_id: i32, class_id: i32) -> Self {
+        Self {
+            factory_id,
+            class_id,
+            descending: false,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Creates a descending key comparator.
+    pub fn descending(factory_id: i32, class_id: i32) -> Self {
+        Self {
+            factory_id,
+            class_id,
+            descending: true,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Returns whether this comparator sorts in descending order.
+    pub fn is_descending(&self) -> bool {
+        self.descending
+    }
+}
+
+impl<K, V> PagingComparator<K, V> for EntryKeyComparator<K, V>
+where
+    K: Ord + Send + Sync,
+    V: Send + Sync,
+{
+    fn factory_id(&self) -> i32 {
+        self.factory_id
+    }
+
+    fn class_id(&self) -> i32 {
+        self.class_id
+    }
+
+    fn compare(&self, a: (&K, &V), b: (&K, &V)) -> Ordering {
+        let result = a.0.cmp(b.0);
+        if self.descending {
+            result.reverse()
+        } else {
+            result
+        }
+    }
+
+    fn write_data(&self, output: &mut ObjectDataOutput) -> Result<()> {
+        let flag: i8 = if self.descending { 1 } else { 0 };
+        flag.serialize(output)?;
+        Ok(())
+    }
+}
+
+/// A comparator that orders entries by their values.
+///
+/// Note: This comparator requires a corresponding server-side implementation
+/// to be deployed for actual use.
+///
+/// # Example
+///
+/// ```ignore
+/// use hazelcast_client::query::{PagingPredicate, EntryValueComparator};
+///
+/// let comparator = EntryValueComparator::<String, i32>::new(1, 2);
+/// let predicate = PagingPredicate::with_comparator(10, &comparator)?;
+/// ```
+#[derive(Debug, Clone)]
+pub struct EntryValueComparator<K, V> {
+    factory_id: i32,
+    class_id: i32,
+    descending: bool,
+    _phantom: PhantomData<fn() -> (K, V)>,
+}
+
+impl<K, V> EntryValueComparator<K, V> {
+    /// Creates a new value comparator with the specified factory and class IDs.
+    pub fn new(factory_id: i32, class_id: i32) -> Self {
+        Self {
+            factory_id,
+            class_id,
+            descending: false,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Creates a descending value comparator.
+    pub fn descending(factory_id: i32, class_id: i32) -> Self {
+        Self {
+            factory_id,
+            class_id,
+            descending: true,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Returns whether this comparator sorts in descending order.
+    pub fn is_descending(&self) -> bool {
+        self.descending
+    }
+}
+
+impl<K, V> PagingComparator<K, V> for EntryValueComparator<K, V>
+where
+    K: Send + Sync,
+    V: Ord + Send + Sync,
+{
+    fn factory_id(&self) -> i32 {
+        self.factory_id
+    }
+
+    fn class_id(&self) -> i32 {
+        self.class_id
+    }
+
+    fn compare(&self, a: (&K, &V), b: (&K, &V)) -> Ordering {
+        let result = a.1.cmp(b.1);
+        if self.descending {
+            result.reverse()
+        } else {
+            result
+        }
+    }
+
+    fn write_data(&self, output: &mut ObjectDataOutput) -> Result<()> {
+        let flag: i8 = if self.descending { 1 } else { 0 };
+        flag.serialize(output)?;
+        Ok(())
+    }
+}
+
 /// An anchor entry marking a page boundary in serialized form.
 ///
 /// Anchors are used internally to track pagination state and enable
@@ -434,6 +591,24 @@ impl<K, V> PagingPredicateBuilder<K, V> {
         self
     }
 
+    /// Sets the iteration type to Key.
+    pub fn order_by_key(mut self) -> Self {
+        self.iteration_type = IterationType::Key;
+        self
+    }
+
+    /// Sets the iteration type to Value.
+    pub fn order_by_value(mut self) -> Self {
+        self.iteration_type = IterationType::Value;
+        self
+    }
+
+    /// Sets the iteration type to Entry.
+    pub fn order_by_entry(mut self) -> Self {
+        self.iteration_type = IterationType::Entry;
+        self
+    }
+
     /// Builds the `PagingPredicate`.
     pub fn build(self) -> PagingPredicate<K, V> {
         PagingPredicate {
@@ -729,5 +904,179 @@ mod tests {
         ]);
         assert_eq!(pred.get_anchor_list().len(), 2);
         assert_eq!(pred.get_anchor_list()[0].key_data(), Some(&[2u8][..]));
+    }
+
+    #[test]
+    fn test_entry_key_comparator_new() {
+        let comp: EntryKeyComparator<String, i32> = EntryKeyComparator::new(100, 1);
+        assert_eq!(comp.factory_id(), 100);
+        assert_eq!(comp.class_id(), 1);
+        assert!(!comp.is_descending());
+    }
+
+    #[test]
+    fn test_entry_key_comparator_descending() {
+        let comp: EntryKeyComparator<String, i32> = EntryKeyComparator::descending(100, 1);
+        assert!(comp.is_descending());
+    }
+
+    #[test]
+    fn test_entry_key_comparator_compare() {
+        let comp: EntryKeyComparator<String, i32> = EntryKeyComparator::new(100, 1);
+
+        let key1 = "apple".to_string();
+        let key2 = "banana".to_string();
+        let val = 42;
+
+        assert_eq!(comp.compare((&key1, &val), (&key2, &val)), Ordering::Less);
+        assert_eq!(comp.compare((&key2, &val), (&key1, &val)), Ordering::Greater);
+        assert_eq!(comp.compare((&key1, &val), (&key1, &val)), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_entry_key_comparator_compare_descending() {
+        let comp: EntryKeyComparator<String, i32> = EntryKeyComparator::descending(100, 1);
+
+        let key1 = "apple".to_string();
+        let key2 = "banana".to_string();
+        let val = 42;
+
+        assert_eq!(comp.compare((&key1, &val), (&key2, &val)), Ordering::Greater);
+        assert_eq!(comp.compare((&key2, &val), (&key1, &val)), Ordering::Less);
+    }
+
+    #[test]
+    fn test_entry_value_comparator_new() {
+        let comp: EntryValueComparator<String, i32> = EntryValueComparator::new(100, 2);
+        assert_eq!(comp.factory_id(), 100);
+        assert_eq!(comp.class_id(), 2);
+        assert!(!comp.is_descending());
+    }
+
+    #[test]
+    fn test_entry_value_comparator_compare() {
+        let comp: EntryValueComparator<String, i32> = EntryValueComparator::new(100, 2);
+
+        let key = "key".to_string();
+        let val1 = 10;
+        let val2 = 20;
+
+        assert_eq!(comp.compare((&key, &val1), (&key, &val2)), Ordering::Less);
+        assert_eq!(comp.compare((&key, &val2), (&key, &val1)), Ordering::Greater);
+        assert_eq!(comp.compare((&key, &val1), (&key, &val1)), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_entry_value_comparator_compare_descending() {
+        let comp: EntryValueComparator<String, i32> = EntryValueComparator::descending(100, 2);
+
+        let key = "key".to_string();
+        let val1 = 10;
+        let val2 = 20;
+
+        assert_eq!(comp.compare((&key, &val1), (&key, &val2)), Ordering::Greater);
+        assert_eq!(comp.compare((&key, &val2), (&key, &val1)), Ordering::Less);
+    }
+
+    #[test]
+    fn test_comparator_serialization() {
+        let comp: EntryKeyComparator<String, i32> = EntryKeyComparator::new(100, 1);
+        let data = comp.to_comparator_data().unwrap();
+
+        assert_eq!(data.len(), 9);
+        assert_eq!(&data[0..4], &100i32.to_be_bytes());
+        assert_eq!(&data[4..8], &1i32.to_be_bytes());
+        assert_eq!(data[8], 0);
+    }
+
+    #[test]
+    fn test_comparator_serialization_descending() {
+        let comp: EntryKeyComparator<String, i32> = EntryKeyComparator::descending(100, 1);
+        let data = comp.to_comparator_data().unwrap();
+
+        assert_eq!(data.len(), 9);
+        assert_eq!(data[8], 1);
+    }
+
+    #[test]
+    fn test_paging_predicate_with_key_comparator() {
+        let comp: EntryKeyComparator<String, i32> = EntryKeyComparator::new(100, 1);
+        let pred = PagingPredicate::<String, i32>::with_comparator(10, &comp).unwrap();
+
+        assert!(pred.has_comparator());
+        assert_eq!(pred.page_size(), 10);
+    }
+
+    #[test]
+    fn test_paging_predicate_with_value_comparator() {
+        let comp: EntryValueComparator<String, i32> = EntryValueComparator::descending(100, 2);
+        let pred = PagingPredicate::<String, i32>::with_comparator(20, &comp).unwrap();
+
+        assert!(pred.has_comparator());
+        assert_eq!(pred.page_size(), 20);
+    }
+
+    #[test]
+    fn test_builder_order_by_key() {
+        let pred: PagingPredicate<String, i32> = PagingPredicateBuilder::new(10)
+            .order_by_key()
+            .build();
+
+        assert_eq!(pred.iteration_type(), IterationType::Key);
+    }
+
+    #[test]
+    fn test_builder_order_by_value() {
+        let pred: PagingPredicate<String, i32> = PagingPredicateBuilder::new(10)
+            .order_by_value()
+            .build();
+
+        assert_eq!(pred.iteration_type(), IterationType::Value);
+    }
+
+    #[test]
+    fn test_builder_order_by_entry() {
+        let pred: PagingPredicate<String, i32> = PagingPredicateBuilder::new(10)
+            .order_by_entry()
+            .build();
+
+        assert_eq!(pred.iteration_type(), IterationType::Entry);
+    }
+
+    #[test]
+    fn test_builder_with_comparator_and_predicate() {
+        let comp: EntryKeyComparator<String, i32> = EntryKeyComparator::descending(100, 1);
+        let pred: PagingPredicate<String, i32> = PagingPredicateBuilder::new(15)
+            .predicate(TruePredicate::new())
+            .comparator(&comp)
+            .unwrap()
+            .order_by_key()
+            .build();
+
+        assert_eq!(pred.page_size(), 15);
+        assert!(pred.has_comparator());
+        assert!(pred.inner.is_some());
+        assert_eq!(pred.iteration_type(), IterationType::Key);
+    }
+
+    #[test]
+    fn test_comparators_are_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<EntryKeyComparator<String, i32>>();
+        assert_send_sync::<EntryValueComparator<String, i32>>();
+    }
+
+    #[test]
+    fn test_serialization_with_comparator() {
+        let comp: EntryKeyComparator<String, i32> = EntryKeyComparator::new(100, 1);
+        let pred = PagingPredicate::<String, i32>::with_comparator(10, &comp).unwrap();
+
+        let data = pred.to_predicate_data().unwrap();
+        assert!(!data.is_empty());
+
+        let pred_no_comp: PagingPredicate<String, i32> = PagingPredicate::new(10);
+        let data_no_comp = pred_no_comp.to_predicate_data().unwrap();
+
+        assert!(data.len() > data_no_comp.len());
     }
 }
