@@ -4,20 +4,25 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::BytesMut;
+use futures::Stream;
 use tokio::spawn;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
     END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER,
     MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_ADD_INTERCEPTOR, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_ADD_PARTITION_LOST_LISTENER, MAP_CLEAR, MAP_CONTAINS_KEY,
     MAP_ENTRIES_WITH_PAGING_PREDICATE, MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL,
-    MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE,
-    MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED,
+    MAP_EVENT_JOURNAL_READ, MAP_EVENT_JOURNAL_SUBSCRIBE, MAP_EXECUTE_ON_ALL_KEYS,
+    MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE, MAP_FLUSH,
+    MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED,
     MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOAD_ALL, MAP_LOAD_GIVEN_KEYS,
     MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT,
     MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
@@ -32,6 +37,157 @@ use hazelcast_core::{
 };
 
 use crate::cache::{NearCache, NearCacheConfig, NearCacheStats};
+
+/// Event types for Event Journal map events.
+///
+/// These represent the different kinds of mutations that can occur on map entries
+/// and are recorded in the Event Journal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(i32)]
+pub enum EventJournalEventType {
+    /// Entry was added to the map.
+    Added = 1,
+    /// Entry was removed from the map.
+    Removed = 2,
+    /// Entry was updated in the map.
+    Updated = 4,
+    /// Entry was evicted from the map.
+    Evicted = 8,
+    /// Entry expired in the map.
+    Expired = 16,
+    /// Entry was loaded from a map store.
+    Loaded = 32,
+}
+
+impl EventJournalEventType {
+    /// Creates an event type from its integer value.
+    ///
+    /// Returns `None` if the value doesn't correspond to a valid event type.
+    pub fn from_value(value: i32) -> Option<Self> {
+        match value {
+            1 => Some(Self::Added),
+            2 => Some(Self::Removed),
+            4 => Some(Self::Updated),
+            8 => Some(Self::Evicted),
+            16 => Some(Self::Expired),
+            32 => Some(Self::Loaded),
+            _ => None,
+        }
+    }
+
+    /// Returns the integer value of this event type.
+    pub fn value(self) -> i32 {
+        self as i32
+    }
+}
+
+/// An event from the Event Journal for a map entry.
+///
+/// Event Journal events represent mutations that have occurred on map entries.
+/// Each event has a sequence number that can be used to track position in the journal.
+#[derive(Debug, Clone)]
+pub struct EventJournalMapEvent<K, V> {
+    /// The type of this event.
+    pub event_type: EventJournalEventType,
+    /// The key of the entry.
+    pub key: K,
+    /// The old value (before the change), if available.
+    pub old_value: Option<V>,
+    /// The new value (after the change), if available.
+    pub new_value: Option<V>,
+    /// The sequence number of this event in the journal.
+    pub sequence: i64,
+}
+
+impl<K, V> EventJournalMapEvent<K, V> {
+    /// Returns the event type.
+    pub fn event_type(&self) -> EventJournalEventType {
+        self.event_type
+    }
+
+    /// Returns a reference to the key.
+    pub fn key(&self) -> &K {
+        &self.key
+    }
+
+    /// Returns a reference to the old value, if present.
+    pub fn old_value(&self) -> Option<&V> {
+        self.old_value.as_ref()
+    }
+
+    /// Returns a reference to the new value, if present.
+    pub fn new_value(&self) -> Option<&V> {
+        self.new_value.as_ref()
+    }
+
+    /// Returns the sequence number of this event.
+    pub fn sequence(&self) -> i64 {
+        self.sequence
+    }
+}
+
+/// Configuration for reading from an Event Journal.
+#[derive(Debug, Clone)]
+pub struct EventJournalConfig {
+    /// The starting sequence number to read from.
+    pub start_sequence: i64,
+    /// The minimum number of events to read in each batch.
+    pub min_size: i32,
+    /// The maximum number of events to read in each batch.
+    pub max_size: i32,
+}
+
+impl Default for EventJournalConfig {
+    fn default() -> Self {
+        Self {
+            start_sequence: -1,
+            min_size: 1,
+            max_size: 100,
+        }
+    }
+}
+
+impl EventJournalConfig {
+    /// Creates a new configuration with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the starting sequence number.
+    ///
+    /// Use `-1` to start from the oldest available sequence.
+    pub fn start_sequence(mut self, sequence: i64) -> Self {
+        self.start_sequence = sequence;
+        self
+    }
+
+    /// Sets the minimum batch size.
+    pub fn min_size(mut self, size: i32) -> Self {
+        self.min_size = size;
+        self
+    }
+
+    /// Sets the maximum batch size.
+    pub fn max_size(mut self, size: i32) -> Self {
+        self.max_size = size;
+        self
+    }
+}
+
+/// An async stream of Event Journal events.
+///
+/// This stream yields events from the Event Journal as they are read from the cluster.
+pub struct EventJournalStream<K, V> {
+    receiver: mpsc::Receiver<Result<EventJournalMapEvent<K, V>>>,
+}
+
+impl<K, V> Stream for EventJournalStream<K, V> {
+    type Item = Result<EventJournalMapEvent<K, V>>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.receiver).poll_recv(cx)
+    }
+}
 
 /// Metadata view of a map entry.
 ///
@@ -3650,6 +3806,301 @@ where
         Ok(())
     }
 
+    /// Reads events from the Event Journal for this map.
+    ///
+    /// The Event Journal is a ring buffer that stores a history of mutations on map entries.
+    /// This method returns an async stream that yields events as they are read from the journal.
+    ///
+    /// # Arguments
+    ///
+    /// * `partition_id` - The partition to read events from
+    /// * `config` - Configuration for reading from the journal
+    ///
+    /// # Returns
+    ///
+    /// An async stream of `EventJournalMapEvent<K, V>` representing mutations.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use futures::StreamExt;
+    ///
+    /// let config = EventJournalConfig::new()
+    ///     .start_sequence(-1)
+    ///     .max_size(100);
+    ///
+    /// let mut stream = map.read_from_event_journal(0, config).await?;
+    ///
+    /// while let Some(result) = stream.next().await {
+    ///     match result {
+    ///         Ok(event) => {
+    ///             println!("Event: {:?}, Key: {:?}, Seq: {}",
+    ///                 event.event_type(), event.key(), event.sequence());
+    ///         }
+    ///         Err(e) => eprintln!("Error: {}", e),
+    ///     }
+    /// }
+    /// ```
+    pub async fn read_from_event_journal(
+        &self,
+        partition_id: i32,
+        config: EventJournalConfig,
+    ) -> Result<EventJournalStream<K, V>>
+    where
+        K: 'static,
+        V: 'static,
+    {
+        self.check_permission(PermissionAction::Read)?;
+
+        // Subscribe to get initial sequence info
+        let (oldest_sequence, newest_sequence) = self.subscribe_to_event_journal(partition_id).await?;
+
+        let start_sequence = if config.start_sequence < 0 {
+            oldest_sequence
+        } else {
+            config.start_sequence.max(oldest_sequence)
+        };
+
+        let (tx, rx) = mpsc::channel(config.max_size as usize);
+
+        let connection_manager = Arc::clone(&self.connection_manager);
+        let map_name = self.name.clone();
+        let min_size = config.min_size;
+        let max_size = config.max_size;
+
+        spawn(async move {
+            let mut current_sequence = start_sequence;
+
+            loop {
+                match Self::read_journal_batch(
+                    &connection_manager,
+                    &map_name,
+                    partition_id,
+                    current_sequence,
+                    min_size,
+                    max_size,
+                )
+                .await
+                {
+                    Ok(events) => {
+                        if events.is_empty() {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            continue;
+                        }
+
+                        for event in events {
+                            current_sequence = event.sequence + 1;
+                            if tx.send(Ok(event)).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                }
+            }
+        });
+
+        Ok(EventJournalStream { receiver: rx })
+    }
+
+    async fn subscribe_to_event_journal(&self, partition_id: i32) -> Result<(i64, i64)> {
+        let mut message =
+            ClientMessage::create_for_encode(MAP_EVENT_JOURNAL_SUBSCRIBE, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke(message).await?;
+        Self::decode_event_journal_subscribe_response(&response)
+    }
+
+    async fn read_journal_batch(
+        connection_manager: &ConnectionManager,
+        map_name: &str,
+        partition_id: i32,
+        start_sequence: i64,
+        min_size: i32,
+        max_size: i32,
+    ) -> Result<Vec<EventJournalMapEvent<K, V>>> {
+        let mut message = ClientMessage::create_for_encode(MAP_EVENT_JOURNAL_READ, partition_id);
+        message.add_frame(Self::string_frame(map_name));
+        message.add_frame(Self::long_frame(start_sequence));
+        message.add_frame(Self::int_frame(min_size));
+        message.add_frame(Self::int_frame(max_size));
+
+        let addresses = connection_manager.connected_addresses().await;
+        let address = addresses.into_iter().next().ok_or_else(|| {
+            HazelcastError::Connection("no connections available".to_string())
+        })?;
+
+        connection_manager.send_to(address, message).await?;
+        let response = connection_manager
+            .receive_from(address)
+            .await?
+            .ok_or_else(|| {
+                HazelcastError::Connection("connection closed unexpectedly".to_string())
+            })?;
+
+        Self::decode_event_journal_read_response(&response)
+    }
+
+    fn decode_event_journal_subscribe_response(response: &ClientMessage) -> Result<(i64, i64)> {
+        let frames = response.frames();
+        if frames.is_empty() {
+            return Err(HazelcastError::Serialization(
+                "empty event journal subscribe response".to_string(),
+            ));
+        }
+
+        let initial_frame = &frames[0];
+        if initial_frame.content.len() < RESPONSE_HEADER_SIZE + 16 {
+            return Err(HazelcastError::Serialization(
+                "invalid event journal subscribe response".to_string(),
+            ));
+        }
+
+        let mut offset = RESPONSE_HEADER_SIZE;
+        let oldest_sequence = i64::from_le_bytes(
+            initial_frame.content[offset..offset + 8]
+                .try_into()
+                .map_err(|_| {
+                    HazelcastError::Serialization("invalid oldest sequence".to_string())
+                })?,
+        );
+        offset += 8;
+
+        let newest_sequence = i64::from_le_bytes(
+            initial_frame.content[offset..offset + 8]
+                .try_into()
+                .map_err(|_| {
+                    HazelcastError::Serialization("invalid newest sequence".to_string())
+                })?,
+        );
+
+        Ok((oldest_sequence, newest_sequence))
+    }
+
+    fn decode_event_journal_read_response(
+        response: &ClientMessage,
+    ) -> Result<Vec<EventJournalMapEvent<K, V>>> {
+        let frames = response.frames();
+        if frames.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let initial_frame = &frames[0];
+        let mut offset = RESPONSE_HEADER_SIZE;
+
+        // Read count of events
+        let count = if initial_frame.content.len() >= offset + 4 {
+            i32::from_le_bytes([
+                initial_frame.content[offset],
+                initial_frame.content[offset + 1],
+                initial_frame.content[offset + 2],
+                initial_frame.content[offset + 3],
+            ])
+        } else {
+            return Ok(Vec::new());
+        };
+        offset += 4;
+
+        // Read next sequence
+        let _next_sequence = if initial_frame.content.len() >= offset + 8 {
+            i64::from_le_bytes(
+                initial_frame.content[offset..offset + 8]
+                    .try_into()
+                    .unwrap_or([0u8; 8]),
+            )
+        } else {
+            0
+        };
+
+        let mut events = Vec::with_capacity(count as usize);
+        let mut frame_idx = 1;
+
+        for _ in 0..count {
+            if frame_idx + 4 >= frames.len() {
+                break;
+            }
+
+            // Read event type
+            let event_type_frame = &frames[frame_idx];
+            let event_type_value = if event_type_frame.content.len() >= 4 {
+                i32::from_le_bytes([
+                    event_type_frame.content[0],
+                    event_type_frame.content[1],
+                    event_type_frame.content[2],
+                    event_type_frame.content[3],
+                ])
+            } else {
+                1
+            };
+            frame_idx += 1;
+
+            let event_type =
+                EventJournalEventType::from_value(event_type_value).unwrap_or(EventJournalEventType::Added);
+
+            // Read sequence
+            let sequence_frame = &frames[frame_idx];
+            let sequence = if sequence_frame.content.len() >= 8 {
+                i64::from_le_bytes(
+                    sequence_frame.content[..8]
+                        .try_into()
+                        .unwrap_or([0u8; 8]),
+                )
+            } else {
+                0
+            };
+            frame_idx += 1;
+
+            // Read key
+            let key_frame = &frames[frame_idx];
+            let key = if !key_frame.content.is_empty() && key_frame.flags & IS_NULL_FLAG == 0 {
+                let mut input = ObjectDataInput::new(&key_frame.content);
+                K::deserialize(&mut input)?
+            } else {
+                frame_idx += 3;
+                continue;
+            };
+            frame_idx += 1;
+
+            // Read old value
+            let old_value_frame = &frames[frame_idx];
+            let old_value = if !old_value_frame.content.is_empty()
+                && old_value_frame.flags & IS_NULL_FLAG == 0
+            {
+                let mut input = ObjectDataInput::new(&old_value_frame.content);
+                V::deserialize(&mut input).ok()
+            } else {
+                None
+            };
+            frame_idx += 1;
+
+            // Read new value
+            let new_value_frame = &frames[frame_idx];
+            let new_value = if !new_value_frame.content.is_empty()
+                && new_value_frame.flags & IS_NULL_FLAG == 0
+            {
+                let mut input = ObjectDataInput::new(&new_value_frame.content);
+                V::deserialize(&mut input).ok()
+            } else {
+                None
+            };
+            frame_idx += 1;
+
+            events.push(EventJournalMapEvent {
+                event_type,
+                key,
+                old_value,
+                new_value,
+                sequence,
+            });
+        }
+
+        Ok(events)
+    }
+
     /// Triggers loading of specific keys from the configured MapLoader.
     ///
     /// If the map has a `MapLoader` configured on the server, this method
@@ -5282,6 +5733,170 @@ mod tests {
         let ttl = Duration::from_secs(60);
         let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
         assert_eq!(ttl_ms, 60000);
+    }
+
+    #[test]
+    fn test_event_journal_event_type_from_value() {
+        assert_eq!(
+            EventJournalEventType::from_value(1),
+            Some(EventJournalEventType::Added)
+        );
+        assert_eq!(
+            EventJournalEventType::from_value(2),
+            Some(EventJournalEventType::Removed)
+        );
+        assert_eq!(
+            EventJournalEventType::from_value(4),
+            Some(EventJournalEventType::Updated)
+        );
+        assert_eq!(
+            EventJournalEventType::from_value(8),
+            Some(EventJournalEventType::Evicted)
+        );
+        assert_eq!(
+            EventJournalEventType::from_value(16),
+            Some(EventJournalEventType::Expired)
+        );
+        assert_eq!(
+            EventJournalEventType::from_value(32),
+            Some(EventJournalEventType::Loaded)
+        );
+        assert_eq!(EventJournalEventType::from_value(0), None);
+        assert_eq!(EventJournalEventType::from_value(64), None);
+    }
+
+    #[test]
+    fn test_event_journal_event_type_value() {
+        assert_eq!(EventJournalEventType::Added.value(), 1);
+        assert_eq!(EventJournalEventType::Removed.value(), 2);
+        assert_eq!(EventJournalEventType::Updated.value(), 4);
+        assert_eq!(EventJournalEventType::Evicted.value(), 8);
+        assert_eq!(EventJournalEventType::Expired.value(), 16);
+        assert_eq!(EventJournalEventType::Loaded.value(), 32);
+    }
+
+    #[test]
+    fn test_event_journal_map_event_accessors() {
+        let event: EventJournalMapEvent<String, i32> = EventJournalMapEvent {
+            event_type: EventJournalEventType::Updated,
+            key: "test-key".to_string(),
+            old_value: Some(10),
+            new_value: Some(20),
+            sequence: 42,
+        };
+
+        assert_eq!(event.event_type(), EventJournalEventType::Updated);
+        assert_eq!(event.key(), "test-key");
+        assert_eq!(event.old_value(), Some(&10));
+        assert_eq!(event.new_value(), Some(&20));
+        assert_eq!(event.sequence(), 42);
+    }
+
+    #[test]
+    fn test_event_journal_map_event_none_values() {
+        let event: EventJournalMapEvent<String, i32> = EventJournalMapEvent {
+            event_type: EventJournalEventType::Added,
+            key: "key".to_string(),
+            old_value: None,
+            new_value: Some(100),
+            sequence: 1,
+        };
+
+        assert_eq!(event.old_value(), None);
+        assert_eq!(event.new_value(), Some(&100));
+    }
+
+    #[test]
+    fn test_event_journal_config_default() {
+        let config = EventJournalConfig::default();
+        assert_eq!(config.start_sequence, -1);
+        assert_eq!(config.min_size, 1);
+        assert_eq!(config.max_size, 100);
+    }
+
+    #[test]
+    fn test_event_journal_config_builder() {
+        let config = EventJournalConfig::new()
+            .start_sequence(100)
+            .min_size(10)
+            .max_size(500);
+
+        assert_eq!(config.start_sequence, 100);
+        assert_eq!(config.min_size, 10);
+        assert_eq!(config.max_size, 500);
+    }
+
+    #[test]
+    fn test_event_journal_event_type_equality() {
+        assert_eq!(EventJournalEventType::Added, EventJournalEventType::Added);
+        assert_ne!(EventJournalEventType::Added, EventJournalEventType::Removed);
+    }
+
+    #[test]
+    fn test_event_journal_event_type_copy() {
+        let t1 = EventJournalEventType::Updated;
+        let t2 = t1;
+        assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn test_event_journal_map_event_clone() {
+        let event: EventJournalMapEvent<String, i32> = EventJournalMapEvent {
+            event_type: EventJournalEventType::Evicted,
+            key: "key".to_string(),
+            old_value: Some(5),
+            new_value: None,
+            sequence: 99,
+        };
+
+        let cloned = event.clone();
+        assert_eq!(cloned.event_type, event.event_type);
+        assert_eq!(cloned.key, event.key);
+        assert_eq!(cloned.old_value, event.old_value);
+        assert_eq!(cloned.new_value, event.new_value);
+        assert_eq!(cloned.sequence, event.sequence);
+    }
+
+    #[test]
+    fn test_event_journal_map_event_debug() {
+        let event: EventJournalMapEvent<String, i32> = EventJournalMapEvent {
+            event_type: EventJournalEventType::Loaded,
+            key: "k".to_string(),
+            old_value: None,
+            new_value: Some(1),
+            sequence: 0,
+        };
+
+        let debug_str = format!("{:?}", event);
+        assert!(debug_str.contains("EventJournalMapEvent"));
+        assert!(debug_str.contains("Loaded"));
+    }
+
+    #[tokio::test]
+    async fn test_read_from_event_journal_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let journal_config = EventJournalConfig::new();
+        let result = map.read_from_event_journal(0, journal_config).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[test]
+    fn test_event_journal_stream_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<EventJournalStream<String, String>>();
     }
 
     #[tokio::test]

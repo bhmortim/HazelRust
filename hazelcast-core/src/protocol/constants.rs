@@ -846,3 +846,9 @@ pub const JET_GET_JOB_METRICS: i32 = 0xFE0900;
 
 /// Jet get job summary list request.
 pub const JET_GET_JOB_SUMMARY_LIST: i32 = 0xFE0A00;
+
+/// Map event journal subscribe request.
+pub const MAP_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x014100;
+
+/// Map event journal read request.
+pub const MAP_EVENT_JOURNAL_READ: i32 = 0x014200;
