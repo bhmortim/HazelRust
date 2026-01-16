@@ -314,6 +314,27 @@ pub const CP_ATOMIC_LONG_ADD_AND_GET: i32 = 0x090500;
 /// CP AtomicLong get and add request.
 pub const CP_ATOMIC_LONG_GET_AND_ADD: i32 = 0x090600;
 
+/// CP AtomicReference get request.
+pub const CP_ATOMIC_REFERENCE_GET: i32 = 0x0A0100;
+
+/// CP AtomicReference set request.
+pub const CP_ATOMIC_REFERENCE_SET: i32 = 0x0A0200;
+
+/// CP AtomicReference get and set request.
+pub const CP_ATOMIC_REFERENCE_GET_AND_SET: i32 = 0x0A0300;
+
+/// CP AtomicReference compare and set request.
+pub const CP_ATOMIC_REFERENCE_COMPARE_AND_SET: i32 = 0x0A0400;
+
+/// CP AtomicReference contains request.
+pub const CP_ATOMIC_REFERENCE_CONTAINS: i32 = 0x0A0500;
+
+/// CP AtomicReference alter request.
+pub const CP_ATOMIC_REFERENCE_ALTER: i32 = 0x0A0600;
+
+/// CP AtomicReference apply request.
+pub const CP_ATOMIC_REFERENCE_APPLY: i32 = 0x0A0700;
+
 /// Map lock request.
 pub const MAP_LOCK: i32 = 0x011200;
 
