@@ -16,9 +16,9 @@ use crate::listener::{
     LifecycleEvent, ListenerId, ListenerRegistration, Member, MemberEvent,
 };
 use crate::proxy::{
-    AtomicLong, CardinalityEstimator, CountDownLatch, FencedLock, FlakeIdGenerator, ICache, IList,
-    IMap, IQueue, ISet, ITopic, MultiMap, PNCounter, ReliableTopic, ReplicatedMap, Ringbuffer,
-    Semaphore,
+    AtomicLong, AtomicReference, CardinalityEstimator, CountDownLatch, FencedLock, FlakeIdGenerator,
+    ICache, IList, IMap, IQueue, ISet, ITopic, MultiMap, PNCounter, ReliableTopic, ReplicatedMap,
+    Ringbuffer, Semaphore,
 };
 use crate::sql::SqlService;
 use crate::transaction::{TransactionContext, TransactionOptions, XATransaction, Xid};
@@ -235,6 +235,23 @@ impl HazelcastClient {
     /// Note: AtomicLong requires the CP subsystem to be enabled on the Hazelcast cluster.
     pub fn get_atomic_long(&self, name: &str) -> AtomicLong {
         AtomicLong::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed atomic reference proxy for the given name.
+    ///
+    /// The atomic reference proxy allows performing atomic operations on object references
+    /// through the CP (Consistent Partition) subsystem.
+    ///
+    /// Note: AtomicReference requires the CP subsystem to be enabled on the Hazelcast cluster.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `T`: The value type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    pub fn get_atomic_reference<T>(&self, name: &str) -> AtomicReference<T>
+    where
+        T: Serializable + Deserializable + Send + Sync,
+    {
+        AtomicReference::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns a distributed replicated map proxy for the given name.
