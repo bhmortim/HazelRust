@@ -802,3 +802,35 @@ pub const CACHE_GET_AND_REPLACE: i32 = 0x130E00;
 
 /// Cache size request.
 pub const CACHE_SIZE: i32 = 0x130F00;
+
+// Jet operations
+
+/// Jet submit job request.
+pub const JET_SUBMIT_JOB: i32 = 0xFE0100;
+
+/// Jet terminate job request.
+pub const JET_TERMINATE_JOB: i32 = 0xFE0200;
+
+/// Jet get job status request.
+pub const JET_GET_JOB_STATUS: i32 = 0xFE0300;
+
+/// Jet get job IDs request.
+pub const JET_GET_JOB_IDS: i32 = 0xFE0400;
+
+/// Jet get job submission time request.
+pub const JET_GET_JOB_SUBMISSION_TIME: i32 = 0xFE0500;
+
+/// Jet get job config request.
+pub const JET_GET_JOB_CONFIG: i32 = 0xFE0600;
+
+/// Jet resume job request.
+pub const JET_RESUME_JOB: i32 = 0xFE0700;
+
+/// Jet export snapshot request.
+pub const JET_EXPORT_SNAPSHOT: i32 = 0xFE0800;
+
+/// Jet get job metrics request.
+pub const JET_GET_JOB_METRICS: i32 = 0xFE0900;
+
+/// Jet get job summary list request.
+pub const JET_GET_JOB_SUMMARY_LIST: i32 = 0xFE0A00;

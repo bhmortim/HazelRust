@@ -13,4 +13,4 @@ pub use pipeline::{
     Pipeline, PipelineBuilder, ProcessorVertex, Sink, Source,
 };
 pub use service::JetService;
-pub use status::JobStatus;
+pub use status::{JobMetrics, JobStatus};
