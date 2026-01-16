@@ -15,7 +15,7 @@ use hazelcast_core::{HazelcastError, Result};
 
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
-use crate::config::{ClientConfig, ClientFailoverConfig, Permissions};
+use crate::config::{ClientConfig, ClientFailoverConfig, Permissions, ReconnectMode};
 use crate::cluster::{MigrationEvent, PartitionLostEvent};
 use crate::listener::{
     DistributedObjectEvent, LifecycleEvent, Member, MemberEvent, MemberEventType,
@@ -871,6 +871,8 @@ impl ConnectionManager {
         let connections = Arc::clone(&self.connections);
         let event_sender = self.event_sender.clone();
         let heartbeat_interval = self.config.network().heartbeat_interval();
+        let reconnect_mode = self.config.network().reconnect_mode();
+        let config = Arc::clone(&self.config);
         let mut shutdown_rx = self.shutdown.subscribe();
 
         tokio::spawn(async move {
@@ -907,8 +909,30 @@ impl ConnectionManager {
                                 let _ = event_sender.send(ConnectionEvent::Disconnected {
                                     id,
                                     address,
-                                    error: Some(error),
+                                    error: Some(error.clone()),
                                 });
+                            }
+                            drop(conns);
+
+                            if reconnect_mode.is_enabled() {
+                                let connections_clone = Arc::clone(&connections);
+                                let event_sender_clone = event_sender.clone();
+                                let config_clone = Arc::clone(&config);
+
+                                let reconnect_task = async move {
+                                    Self::attempt_reconnect(
+                                        address,
+                                        &connections_clone,
+                                        &event_sender_clone,
+                                        &config_clone,
+                                    ).await;
+                                };
+
+                                if reconnect_mode.is_async() {
+                                    tokio::spawn(reconnect_task);
+                                } else {
+                                    reconnect_task.await;
+                                }
                             }
                         }
                     }
@@ -921,6 +945,106 @@ impl ConnectionManager {
                 }
             }
         });
+    }
+
+    async fn attempt_reconnect(
+        address: SocketAddr,
+        connections: &Arc<RwLock<HashMap<SocketAddr, Connection>>>,
+        event_sender: &broadcast::Sender<ConnectionEvent>,
+        config: &Arc<ClientConfig>,
+    ) {
+        let retry_config = config.retry();
+        let mut current_backoff = retry_config.initial_backoff();
+        let mut attempt = 0u32;
+
+        loop {
+            attempt += 1;
+
+            if attempt > retry_config.max_retries() {
+                let error = format!(
+                    "failed to reconnect after {} attempts",
+                    retry_config.max_retries()
+                );
+                tracing::error!(
+                    address = %address,
+                    attempts = attempt,
+                    "reconnection failed permanently"
+                );
+                let _ = event_sender.send(ConnectionEvent::ReconnectFailed {
+                    address,
+                    error,
+                });
+                return;
+            }
+
+            let _ = event_sender.send(ConnectionEvent::ReconnectAttempt {
+                address,
+                attempt,
+                next_delay: current_backoff,
+            });
+
+            tracing::debug!(
+                address = %address,
+                attempt = attempt,
+                backoff = ?current_backoff,
+                "attempting reconnection"
+            );
+
+            tokio::time::sleep(current_backoff).await;
+
+            let connect_result = timeout(
+                config.network().connection_timeout(),
+                Self::create_connection_static(address, config),
+            ).await;
+
+            match connect_result {
+                Ok(Ok(connection)) => {
+                    let id = connection.id();
+                    connections.write().await.insert(address, connection);
+                    let _ = event_sender.send(ConnectionEvent::Connected { id, address });
+                    tracing::info!(
+                        address = %address,
+                        attempt = attempt,
+                        "reconnection successful"
+                    );
+                    return;
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        address = %address,
+                        attempt = attempt,
+                        error = %e,
+                        "reconnection attempt failed"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        address = %address,
+                        attempt = attempt,
+                        "reconnection attempt timed out"
+                    );
+                }
+            }
+
+            current_backoff = std::cmp::min(
+                Duration::from_secs_f64(
+                    current_backoff.as_secs_f64() * retry_config.multiplier(),
+                ),
+                retry_config.max_backoff(),
+            );
+        }
+    }
+
+    async fn create_connection_static(address: SocketAddr, config: &ClientConfig) -> Result<Connection> {
+        #[cfg(feature = "tls")]
+        {
+            let tls_config = config.network().tls();
+            if tls_config.enabled() {
+                return Connection::connect_tls(address, tls_config, None).await;
+            }
+        }
+
+        Connection::connect(address).await
     }
 }
 
@@ -2245,6 +2369,41 @@ mod tests {
             }
         }
         assert!(found_event, "expected ClientChangedCluster lifecycle event");
+    }
+
+    #[tokio::test]
+    async fn test_reconnect_mode_off_no_reconnection() {
+        use crate::config::ReconnectMode;
+
+        let config = ClientConfigBuilder::new()
+            .network(|n| n.reconnect_mode(ReconnectMode::Off))
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::from_config(config);
+        assert_eq!(manager.config.network().reconnect_mode(), ReconnectMode::Off);
+    }
+
+    #[tokio::test]
+    async fn test_reconnect_mode_on_default() {
+        use crate::config::ReconnectMode;
+
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let manager = ConnectionManager::from_config(config);
+        assert_eq!(manager.config.network().reconnect_mode(), ReconnectMode::On);
+    }
+
+    #[tokio::test]
+    async fn test_reconnect_mode_async() {
+        use crate::config::ReconnectMode;
+
+        let config = ClientConfigBuilder::new()
+            .network(|n| n.reconnect_mode(ReconnectMode::Async))
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::from_config(config);
+        assert_eq!(manager.config.network().reconnect_mode(), ReconnectMode::Async);
     }
 
     #[tokio::test]

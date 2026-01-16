@@ -437,6 +437,7 @@ pub struct NetworkConfig {
     wan_replication: Vec<WanReplicationConfig>,
     load_balancer: Arc<dyn LoadBalancer>,
     smart_routing: bool,
+    reconnect_mode: ReconnectMode,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
     #[cfg(feature = "azure")]
@@ -459,7 +460,8 @@ impl std::fmt::Debug for NetworkConfig {
             .field("ws_url", &self.ws_url)
             .field("wan_replication", &self.wan_replication)
             .field("load_balancer", &self.load_balancer)
-            .field("smart_routing", &self.smart_routing);
+            .field("smart_routing", &self.smart_routing)
+            .field("reconnect_mode", &self.reconnect_mode);
         #[cfg(feature = "aws")]
         s.field("aws_discovery", &self.aws_discovery);
         #[cfg(feature = "azure")]
@@ -555,6 +557,16 @@ impl NetworkConfig {
     pub fn smart_routing(&self) -> bool {
         self.smart_routing
     }
+
+    /// Returns the reconnection mode.
+    ///
+    /// Controls how the client handles lost connections:
+    /// - `Off`: No automatic reconnection
+    /// - `On`: Synchronous reconnection (default)
+    /// - `Async`: Asynchronous reconnection in background
+    pub fn reconnect_mode(&self) -> ReconnectMode {
+        self.reconnect_mode
+    }
 }
 
 impl Default for NetworkConfig {
@@ -568,6 +580,7 @@ impl Default for NetworkConfig {
             wan_replication: Vec::new(),
             load_balancer: default_load_balancer(),
             smart_routing: true,
+            reconnect_mode: ReconnectMode::default(),
             #[cfg(feature = "aws")]
             aws_discovery: None,
             #[cfg(feature = "azure")]
@@ -593,6 +606,7 @@ pub struct NetworkConfigBuilder {
     wan_replication: Vec<WanReplicationConfig>,
     load_balancer: Option<Arc<dyn LoadBalancer>>,
     smart_routing: Option<bool>,
+    reconnect_mode: Option<ReconnectMode>,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
     #[cfg(feature = "azure")]
@@ -615,7 +629,8 @@ impl std::fmt::Debug for NetworkConfigBuilder {
             .field("ws_url", &self.ws_url)
             .field("wan_replication", &self.wan_replication)
             .field("load_balancer", &self.load_balancer.is_some())
-            .field("smart_routing", &self.smart_routing);
+            .field("smart_routing", &self.smart_routing)
+            .field("reconnect_mode", &self.reconnect_mode);
         #[cfg(feature = "aws")]
         s.field("aws_discovery", &self.aws_discovery);
         #[cfg(feature = "azure")]
@@ -786,6 +801,27 @@ impl NetworkConfigBuilder {
         self
     }
 
+    /// Sets the reconnection mode for handling lost connections.
+    ///
+    /// - `ReconnectMode::Off`: No automatic reconnection
+    /// - `ReconnectMode::On`: Synchronous reconnection (default)
+    /// - `ReconnectMode::Async`: Asynchronous reconnection in background
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::config::{NetworkConfigBuilder, ReconnectMode};
+    ///
+    /// let config = NetworkConfigBuilder::new()
+    ///     .reconnect_mode(ReconnectMode::Async)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn reconnect_mode(mut self, mode: ReconnectMode) -> Self {
+        self.reconnect_mode = Some(mode);
+        self
+    }
+
     /// Builds the network configuration.
     pub fn build(self) -> Result<NetworkConfig, ConfigError> {
         let addresses = if self.addresses.is_empty() {
@@ -805,6 +841,7 @@ impl NetworkConfigBuilder {
             wan_replication: self.wan_replication,
             load_balancer: self.load_balancer.unwrap_or_else(default_load_balancer),
             smart_routing: self.smart_routing.unwrap_or(true),
+            reconnect_mode: self.reconnect_mode.unwrap_or_default(),
             #[cfg(feature = "aws")]
             aws_discovery: self.aws_discovery,
             #[cfg(feature = "azure")]
@@ -1646,6 +1683,32 @@ impl SecurityConfigBuilder {
             authenticator: self.authenticator,
             permissions: self.permissions,
         })
+    }
+}
+
+/// Reconnection mode for handling lost connections.
+///
+/// Controls how the client behaves when a connection to a cluster member is lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReconnectMode {
+    /// No automatic reconnection. The connection is simply removed.
+    Off,
+    /// Synchronous reconnection. Reconnection attempts block until successful or exhausted.
+    #[default]
+    On,
+    /// Asynchronous reconnection. Reconnection attempts happen in a background task.
+    Async,
+}
+
+impl ReconnectMode {
+    /// Returns `true` if reconnection is enabled (either sync or async).
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, ReconnectMode::Off)
+    }
+
+    /// Returns `true` if reconnection should happen asynchronously.
+    pub fn is_async(&self) -> bool {
+        matches!(self, ReconnectMode::Async)
     }
 }
 
@@ -3989,6 +4052,64 @@ mod tests {
             .build()
             .unwrap();
         assert!(!config.network().smart_routing());
+    }
+
+    #[test]
+    fn test_reconnect_mode_default() {
+        assert_eq!(ReconnectMode::default(), ReconnectMode::On);
+    }
+
+    #[test]
+    fn test_reconnect_mode_is_enabled() {
+        assert!(!ReconnectMode::Off.is_enabled());
+        assert!(ReconnectMode::On.is_enabled());
+        assert!(ReconnectMode::Async.is_enabled());
+    }
+
+    #[test]
+    fn test_reconnect_mode_is_async() {
+        assert!(!ReconnectMode::Off.is_async());
+        assert!(!ReconnectMode::On.is_async());
+        assert!(ReconnectMode::Async.is_async());
+    }
+
+    #[test]
+    fn test_reconnect_mode_is_copy() {
+        fn assert_copy<T: Copy>() {}
+        assert_copy::<ReconnectMode>();
+    }
+
+    #[test]
+    fn test_network_config_reconnect_mode_default() {
+        let config = NetworkConfigBuilder::new().build().unwrap();
+        assert_eq!(config.reconnect_mode(), ReconnectMode::On);
+    }
+
+    #[test]
+    fn test_network_config_reconnect_mode_off() {
+        let config = NetworkConfigBuilder::new()
+            .reconnect_mode(ReconnectMode::Off)
+            .build()
+            .unwrap();
+        assert_eq!(config.reconnect_mode(), ReconnectMode::Off);
+    }
+
+    #[test]
+    fn test_network_config_reconnect_mode_async() {
+        let config = NetworkConfigBuilder::new()
+            .reconnect_mode(ReconnectMode::Async)
+            .build()
+            .unwrap();
+        assert_eq!(config.reconnect_mode(), ReconnectMode::Async);
+    }
+
+    #[test]
+    fn test_client_config_with_reconnect_mode() {
+        let config = ClientConfig::builder()
+            .network(|n| n.reconnect_mode(ReconnectMode::Async))
+            .build()
+            .unwrap();
+        assert_eq!(config.network().reconnect_mode(), ReconnectMode::Async);
     }
 
     #[test]
