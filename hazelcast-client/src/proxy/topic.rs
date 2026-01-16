@@ -4,7 +4,9 @@ use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use super::local_stats::{LatencyStats, LatencyTracker};
 
 use bytes::BytesMut;
 use hazelcast_core::protocol::constants::*;
@@ -98,6 +100,10 @@ pub struct LocalTopicStats {
     pub last_publish_time: Option<u64>,
     /// Unix timestamp in milliseconds of the last received message.
     pub last_receive_time: Option<u64>,
+    /// Latency statistics for publish operations.
+    pub publish_latency: LatencyStats,
+    /// Latency statistics for receive operations.
+    pub receive_latency: LatencyStats,
 }
 
 impl LocalTopicStats {
@@ -120,6 +126,8 @@ struct TopicStatsTracker {
     last_publish_time: AtomicU64,
     last_receive_time: AtomicU64,
     sequence_counter: AtomicI64,
+    publish_latency: LatencyTracker,
+    receive_latency: LatencyTracker,
 }
 
 impl Default for TopicStatsTracker {
@@ -136,6 +144,8 @@ impl TopicStatsTracker {
             last_publish_time: AtomicU64::new(0),
             last_receive_time: AtomicU64::new(0),
             sequence_counter: AtomicI64::new(0),
+            publish_latency: LatencyTracker::new(),
+            receive_latency: LatencyTracker::new(),
         }
     }
 
@@ -146,6 +156,14 @@ impl TopicStatsTracker {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         self.last_publish_time.store(now, Ordering::Relaxed);
+    }
+
+    fn record_publish_latency(&self, duration: Duration) {
+        self.publish_latency.record(duration);
+    }
+
+    fn record_receive_latency(&self, duration: Duration) {
+        self.receive_latency.record(duration);
     }
 
     fn record_receive(&self) -> i64 {
@@ -170,6 +188,8 @@ impl TopicStatsTracker {
             receive_count: self.receive_count.load(Ordering::Relaxed),
             last_publish_time: if last_pub > 0 { Some(last_pub) } else { None },
             last_receive_time: if last_recv > 0 { Some(last_recv) } else { None },
+            publish_latency: self.publish_latency.snapshot(),
+            receive_latency: self.receive_latency.snapshot(),
         }
     }
 }
@@ -761,11 +781,24 @@ mod tests {
             receive_count: 10,
             last_publish_time: Some(1000),
             last_receive_time: Some(2000),
+            publish_latency: LatencyStats::default(),
+            receive_latency: LatencyStats::default(),
         };
         let cloned = stats.clone();
         assert_eq!(cloned.publish_count, 5);
         assert_eq!(cloned.receive_count, 10);
         assert_eq!(cloned.last_publish_time, Some(1000));
         assert_eq!(cloned.last_receive_time, Some(2000));
+    }
+
+    #[test]
+    fn test_topic_stats_tracker_latency() {
+        let tracker = TopicStatsTracker::new();
+        tracker.record_publish_latency(Duration::from_millis(10));
+        tracker.record_receive_latency(Duration::from_millis(5));
+
+        let stats = tracker.snapshot();
+        assert_eq!(stats.publish_latency.count, 1);
+        assert_eq!(stats.receive_latency.count, 1);
     }
 }

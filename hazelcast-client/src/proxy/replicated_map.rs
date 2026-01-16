@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use super::local_stats::{LatencyStats, LatencyTracker};
+
 use bytes::BytesMut;
 use tokio::spawn;
 use uuid::Uuid;
@@ -32,7 +34,7 @@ use crate::listener::{
 static REPLICATED_MAP_INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Statistics for a replicated map instance.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ReplicatedMapStats {
     put_operation_count: Arc<AtomicI64>,
     get_operation_count: Arc<AtomicI64>,
@@ -40,6 +42,9 @@ pub struct ReplicatedMapStats {
     hits: Arc<AtomicI64>,
     misses: Arc<AtomicI64>,
     creation_time: i64,
+    put_latency: Arc<LatencyTracker>,
+    get_latency: Arc<LatencyTracker>,
+    remove_latency: Arc<LatencyTracker>,
 }
 
 impl ReplicatedMapStats {
@@ -54,6 +59,9 @@ impl ReplicatedMapStats {
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0),
+            put_latency: Arc::new(LatencyTracker::new()),
+            get_latency: Arc::new(LatencyTracker::new()),
+            remove_latency: Arc::new(LatencyTracker::new()),
         }
     }
 
@@ -103,11 +111,54 @@ impl ReplicatedMapStats {
     fn record_remove(&self) {
         self.remove_operation_count.fetch_add(1, Ordering::Relaxed);
     }
+
+    fn record_put_latency(&self, duration: Duration) {
+        self.put_latency.record(duration);
+    }
+
+    fn record_get_latency(&self, duration: Duration) {
+        self.get_latency.record(duration);
+    }
+
+    fn record_remove_latency(&self, duration: Duration) {
+        self.remove_latency.record(duration);
+    }
+
+    /// Returns a snapshot of the put latency statistics.
+    pub fn put_latency_snapshot(&self) -> LatencyStats {
+        self.put_latency.snapshot()
+    }
+
+    /// Returns a snapshot of the get latency statistics.
+    pub fn get_latency_snapshot(&self) -> LatencyStats {
+        self.get_latency.snapshot()
+    }
+
+    /// Returns a snapshot of the remove latency statistics.
+    pub fn remove_latency_snapshot(&self) -> LatencyStats {
+        self.remove_latency.snapshot()
+    }
 }
 
 impl Default for ReplicatedMapStats {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Clone for ReplicatedMapStats {
+    fn clone(&self) -> Self {
+        Self {
+            put_operation_count: Arc::clone(&self.put_operation_count),
+            get_operation_count: Arc::clone(&self.get_operation_count),
+            remove_operation_count: Arc::clone(&self.remove_operation_count),
+            hits: Arc::clone(&self.hits),
+            misses: Arc::clone(&self.misses),
+            creation_time: self.creation_time,
+            put_latency: Arc::clone(&self.put_latency),
+            get_latency: Arc::clone(&self.get_latency),
+            remove_latency: Arc::clone(&self.remove_latency),
+        }
     }
 }
 

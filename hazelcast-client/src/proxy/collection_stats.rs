@@ -1,7 +1,9 @@
 //! Local statistics for distributed collection data structures.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+use super::local_stats::{LatencyStats, LatencyTracker};
 
 /// Local statistics for `IQueue` operations.
 #[derive(Debug)]
@@ -13,6 +15,8 @@ pub struct LocalQueueStats {
     rejected_offer_count: AtomicU64,
     empty_poll_count: AtomicU64,
     other_operation_count: AtomicU64,
+    offer_latency: LatencyTracker,
+    poll_latency: LatencyTracker,
 }
 
 impl LocalQueueStats {
@@ -25,6 +29,8 @@ impl LocalQueueStats {
             rejected_offer_count: AtomicU64::new(0),
             empty_poll_count: AtomicU64::new(0),
             other_operation_count: AtomicU64::new(0),
+            offer_latency: LatencyTracker::new(),
+            poll_latency: LatencyTracker::new(),
         }
     }
 
@@ -79,6 +85,22 @@ impl LocalQueueStats {
     pub(crate) fn increment_other(&self) {
         self.other_operation_count.fetch_add(1, Ordering::Relaxed);
     }
+
+    pub(crate) fn record_offer_latency(&self, duration: Duration) {
+        self.offer_latency.record(duration);
+    }
+
+    pub(crate) fn record_poll_latency(&self, duration: Duration) {
+        self.poll_latency.record(duration);
+    }
+
+    pub fn offer_latency_snapshot(&self) -> LatencyStats {
+        self.offer_latency.snapshot()
+    }
+
+    pub fn poll_latency_snapshot(&self) -> LatencyStats {
+        self.poll_latency.snapshot()
+    }
 }
 
 /// Local statistics for `ISet` operations.
@@ -89,6 +111,8 @@ pub struct LocalSetStats {
     remove_count: AtomicU64,
     contains_count: AtomicU64,
     other_operation_count: AtomicU64,
+    add_latency: LatencyTracker,
+    remove_latency: LatencyTracker,
 }
 
 impl LocalSetStats {
@@ -99,6 +123,8 @@ impl LocalSetStats {
             remove_count: AtomicU64::new(0),
             contains_count: AtomicU64::new(0),
             other_operation_count: AtomicU64::new(0),
+            add_latency: LatencyTracker::new(),
+            remove_latency: LatencyTracker::new(),
         }
     }
 
@@ -137,6 +163,22 @@ impl LocalSetStats {
     pub(crate) fn increment_other(&self) {
         self.other_operation_count.fetch_add(1, Ordering::Relaxed);
     }
+
+    pub(crate) fn record_add_latency(&self, duration: Duration) {
+        self.add_latency.record(duration);
+    }
+
+    pub(crate) fn record_remove_latency(&self, duration: Duration) {
+        self.remove_latency.record(duration);
+    }
+
+    pub fn add_latency_snapshot(&self) -> LatencyStats {
+        self.add_latency.snapshot()
+    }
+
+    pub fn remove_latency_snapshot(&self) -> LatencyStats {
+        self.remove_latency.snapshot()
+    }
 }
 
 /// Local statistics for `IList` operations.
@@ -148,6 +190,8 @@ pub struct LocalListStats {
     get_count: AtomicU64,
     set_count: AtomicU64,
     other_operation_count: AtomicU64,
+    add_latency: LatencyTracker,
+    get_latency: LatencyTracker,
 }
 
 impl LocalListStats {
@@ -159,6 +203,8 @@ impl LocalListStats {
             get_count: AtomicU64::new(0),
             set_count: AtomicU64::new(0),
             other_operation_count: AtomicU64::new(0),
+            add_latency: LatencyTracker::new(),
+            get_latency: LatencyTracker::new(),
         }
     }
 
@@ -204,5 +250,21 @@ impl LocalListStats {
 
     pub(crate) fn increment_other(&self) {
         self.other_operation_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_add_latency(&self, duration: Duration) {
+        self.add_latency.record(duration);
+    }
+
+    pub(crate) fn record_get_latency(&self, duration: Duration) {
+        self.get_latency.record(duration);
+    }
+
+    pub fn add_latency_snapshot(&self) -> LatencyStats {
+        self.add_latency.snapshot()
+    }
+
+    pub fn get_latency_snapshot(&self) -> LatencyStats {
+        self.get_latency.snapshot()
     }
 }

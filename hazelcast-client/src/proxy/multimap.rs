@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use super::local_stats::{LatencyStats, LatencyTracker};
+
 use bytes::BytesMut;
 use tokio::spawn;
 use uuid::Uuid;
@@ -37,6 +39,9 @@ pub struct LocalMultiMapStats {
     miss_count: AtomicI64,
     last_access_time: AtomicI64,
     last_update_time: AtomicI64,
+    put_latency: LatencyTracker,
+    get_latency: LatencyTracker,
+    remove_latency: LatencyTracker,
 }
 
 impl LocalMultiMapStats {
@@ -55,6 +60,9 @@ impl LocalMultiMapStats {
             miss_count: AtomicI64::new(0),
             last_access_time: AtomicI64::new(0),
             last_update_time: AtomicI64::new(0),
+            put_latency: LatencyTracker::new(),
+            get_latency: LatencyTracker::new(),
+            remove_latency: LatencyTracker::new(),
         }
     }
 
@@ -101,6 +109,33 @@ impl LocalMultiMapStats {
     fn record_put(&self) {
         self.put_count.fetch_add(1, Ordering::Relaxed);
         self.update_last_update_time();
+    }
+
+    fn record_put_latency(&self, duration: Duration) {
+        self.put_latency.record(duration);
+    }
+
+    fn record_get_latency(&self, duration: Duration) {
+        self.get_latency.record(duration);
+    }
+
+    fn record_remove_latency(&self, duration: Duration) {
+        self.remove_latency.record(duration);
+    }
+
+    /// Returns a snapshot of the put latency statistics.
+    pub fn put_latency_snapshot(&self) -> LatencyStats {
+        self.put_latency.snapshot()
+    }
+
+    /// Returns a snapshot of the get latency statistics.
+    pub fn get_latency_snapshot(&self) -> LatencyStats {
+        self.get_latency.snapshot()
+    }
+
+    /// Returns a snapshot of the remove latency statistics.
+    pub fn remove_latency_snapshot(&self) -> LatencyStats {
+        self.remove_latency.snapshot()
     }
 
     fn record_get(&self, hit: bool) {
@@ -152,6 +187,9 @@ impl Clone for LocalMultiMapStats {
             miss_count: AtomicI64::new(self.miss_count.load(Ordering::Relaxed)),
             last_access_time: AtomicI64::new(self.last_access_time.load(Ordering::Relaxed)),
             last_update_time: AtomicI64::new(self.last_update_time.load(Ordering::Relaxed)),
+            put_latency: LatencyTracker::new(),
+            get_latency: LatencyTracker::new(),
+            remove_latency: LatencyTracker::new(),
         }
     }
 }
@@ -1376,5 +1414,21 @@ mod tests {
         assert_eq!(cloned.remove_count(), 1);
         assert_eq!(cloned.hit_count(), 1);
         assert_eq!(cloned.creation_time(), stats.creation_time());
+    }
+
+    #[test]
+    fn test_local_multi_map_stats_latency() {
+        let stats = LocalMultiMapStats::new();
+        stats.record_put_latency(Duration::from_millis(10));
+        stats.record_get_latency(Duration::from_millis(5));
+        stats.record_remove_latency(Duration::from_millis(15));
+
+        let put_latency = stats.put_latency_snapshot();
+        let get_latency = stats.get_latency_snapshot();
+        let remove_latency = stats.remove_latency_snapshot();
+
+        assert_eq!(put_latency.count, 1);
+        assert_eq!(get_latency.count, 1);
+        assert_eq!(remove_latency.count, 1);
     }
 }

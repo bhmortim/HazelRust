@@ -1,7 +1,9 @@
 //! Local map statistics for client-side operation tracking.
 
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use super::local_stats::{LatencyStats, LatencyTracker};
 
 /// Client-side statistics for map operations.
 ///
@@ -20,6 +22,9 @@ pub struct LocalMapStats {
     owned_entry_count: u64,
     backup_entry_count: u64,
     heap_cost: u64,
+    get_latency: LatencyStats,
+    put_latency: LatencyStats,
+    remove_latency: LatencyStats,
 }
 
 impl LocalMapStats {
@@ -93,6 +98,21 @@ impl LocalMapStats {
     pub fn total_operations(&self) -> u64 {
         self.get_count + self.put_count + self.remove_count
     }
+
+    /// Returns the latency statistics for get operations.
+    pub fn get_latency(&self) -> &LatencyStats {
+        &self.get_latency
+    }
+
+    /// Returns the latency statistics for put operations.
+    pub fn put_latency(&self) -> &LatencyStats {
+        &self.put_latency
+    }
+
+    /// Returns the latency statistics for remove operations.
+    pub fn remove_latency(&self) -> &LatencyStats {
+        &self.remove_latency
+    }
 }
 
 /// Internal tracker for accumulating map statistics atomically.
@@ -105,6 +125,9 @@ pub(crate) struct MapStatsTracker {
     remove_count: AtomicU64,
     last_access_time: AtomicI64,
     last_update_time: AtomicI64,
+    get_latency: LatencyTracker,
+    put_latency: LatencyTracker,
+    remove_latency: LatencyTracker,
 }
 
 impl Default for MapStatsTracker {
@@ -124,6 +147,9 @@ impl MapStatsTracker {
             remove_count: AtomicU64::new(0),
             last_access_time: AtomicI64::new(0),
             last_update_time: AtomicI64::new(0),
+            get_latency: LatencyTracker::new(),
+            put_latency: LatencyTracker::new(),
+            remove_latency: LatencyTracker::new(),
         }
     }
 
@@ -157,6 +183,21 @@ impl MapStatsTracker {
         self.update_modification_time();
     }
 
+    /// Records a get operation latency.
+    pub fn record_get_latency(&self, duration: Duration) {
+        self.get_latency.record(duration);
+    }
+
+    /// Records a put operation latency.
+    pub fn record_put_latency(&self, duration: Duration) {
+        self.put_latency.record(duration);
+    }
+
+    /// Records a remove operation latency.
+    pub fn record_remove_latency(&self, duration: Duration) {
+        self.remove_latency.record(duration);
+    }
+
     /// Returns a snapshot of the current statistics.
     pub fn snapshot(&self, owned_entry_count: u64, heap_cost: u64) -> LocalMapStats {
         LocalMapStats {
@@ -170,6 +211,9 @@ impl MapStatsTracker {
             owned_entry_count,
             backup_entry_count: 0,
             heap_cost,
+            get_latency: self.get_latency.snapshot(),
+            put_latency: self.put_latency.snapshot(),
+            remove_latency: self.remove_latency.snapshot(),
         }
     }
 
@@ -345,5 +389,39 @@ mod tests {
         let tracker = MapStatsTracker::default();
         let stats = tracker.snapshot(0, 0);
         assert_eq!(stats.total_operations(), 0);
+    }
+
+    #[test]
+    fn test_map_stats_tracker_latency() {
+        let tracker = MapStatsTracker::new();
+        tracker.record_get_latency(Duration::from_millis(5));
+        tracker.record_put_latency(Duration::from_millis(10));
+        tracker.record_remove_latency(Duration::from_millis(15));
+
+        let stats = tracker.snapshot(0, 0);
+        assert_eq!(stats.get_latency().count, 1);
+        assert_eq!(stats.put_latency().count, 1);
+        assert_eq!(stats.remove_latency().count, 1);
+    }
+
+    #[test]
+    fn test_map_stats_tracker_latency_multiple() {
+        let tracker = MapStatsTracker::new();
+        tracker.record_get_latency(Duration::from_millis(10));
+        tracker.record_get_latency(Duration::from_millis(20));
+        tracker.record_get_latency(Duration::from_millis(30));
+
+        let stats = tracker.snapshot(0, 0);
+        assert_eq!(stats.get_latency().count, 3);
+        assert_eq!(stats.get_latency().min_nanos, 10_000_000);
+        assert_eq!(stats.get_latency().max_nanos, 30_000_000);
+    }
+
+    #[test]
+    fn test_local_map_stats_latency_accessors() {
+        let stats = LocalMapStats::default();
+        assert_eq!(stats.get_latency().count, 0);
+        assert_eq!(stats.put_latency().count, 0);
+        assert_eq!(stats.remove_latency().count, 0);
     }
 }
