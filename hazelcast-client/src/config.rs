@@ -385,6 +385,8 @@ use crate::connection::KubernetesDiscoveryConfig;
 #[cfg(feature = "cloud")]
 use crate::connection::CloudDiscoveryConfig;
 
+use crate::connection::{default_load_balancer, LoadBalancer};
+
 /// Default cluster name.
 const DEFAULT_CLUSTER_NAME: &str = "dev";
 /// Default slow operation threshold.
@@ -425,7 +427,7 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 /// Network configuration for cluster connections.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NetworkConfig {
     addresses: Vec<SocketAddr>,
     connection_timeout: Duration,
@@ -433,6 +435,7 @@ pub struct NetworkConfig {
     tls: TlsConfig,
     ws_url: Option<String>,
     wan_replication: Vec<WanReplicationConfig>,
+    load_balancer: Arc<dyn LoadBalancer>,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
     #[cfg(feature = "azure")]
@@ -443,6 +446,30 @@ pub struct NetworkConfig {
     kubernetes_discovery: Option<KubernetesDiscoveryConfig>,
     #[cfg(feature = "cloud")]
     cloud_discovery: Option<CloudDiscoveryConfig>,
+}
+
+impl std::fmt::Debug for NetworkConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("NetworkConfig");
+        s.field("addresses", &self.addresses)
+            .field("connection_timeout", &self.connection_timeout)
+            .field("heartbeat_interval", &self.heartbeat_interval)
+            .field("tls", &self.tls)
+            .field("ws_url", &self.ws_url)
+            .field("wan_replication", &self.wan_replication)
+            .field("load_balancer", &self.load_balancer);
+        #[cfg(feature = "aws")]
+        s.field("aws_discovery", &self.aws_discovery);
+        #[cfg(feature = "azure")]
+        s.field("azure_discovery", &self.azure_discovery);
+        #[cfg(feature = "gcp")]
+        s.field("gcp_discovery", &self.gcp_discovery);
+        #[cfg(feature = "kubernetes")]
+        s.field("kubernetes_discovery", &self.kubernetes_discovery);
+        #[cfg(feature = "cloud")]
+        s.field("cloud_discovery", &self.cloud_discovery);
+        s.finish()
+    }
 }
 
 impl NetworkConfig {
@@ -510,6 +537,11 @@ impl NetworkConfig {
     pub fn find_wan_replication(&self, name: &str) -> Option<&WanReplicationConfig> {
         self.wan_replication.iter().find(|w| w.name() == name)
     }
+
+    /// Returns the load balancer for distributing requests across members.
+    pub fn load_balancer(&self) -> &Arc<dyn LoadBalancer> {
+        &self.load_balancer
+    }
 }
 
 impl Default for NetworkConfig {
@@ -521,6 +553,7 @@ impl Default for NetworkConfig {
             tls: TlsConfig::default(),
             ws_url: None,
             wan_replication: Vec::new(),
+            load_balancer: default_load_balancer(),
             #[cfg(feature = "aws")]
             aws_discovery: None,
             #[cfg(feature = "azure")]
@@ -536,7 +569,7 @@ impl Default for NetworkConfig {
 }
 
 /// Builder for `NetworkConfig`.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct NetworkConfigBuilder {
     addresses: Vec<SocketAddr>,
     connection_timeout: Option<Duration>,
@@ -544,6 +577,7 @@ pub struct NetworkConfigBuilder {
     tls: TlsConfigBuilder,
     ws_url: Option<String>,
     wan_replication: Vec<WanReplicationConfig>,
+    load_balancer: Option<Arc<dyn LoadBalancer>>,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
     #[cfg(feature = "azure")]
@@ -554,6 +588,30 @@ pub struct NetworkConfigBuilder {
     kubernetes_discovery: Option<KubernetesDiscoveryConfig>,
     #[cfg(feature = "cloud")]
     cloud_discovery: Option<CloudDiscoveryConfig>,
+}
+
+impl std::fmt::Debug for NetworkConfigBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = f.debug_struct("NetworkConfigBuilder");
+        s.field("addresses", &self.addresses)
+            .field("connection_timeout", &self.connection_timeout)
+            .field("heartbeat_interval", &self.heartbeat_interval)
+            .field("tls", &self.tls)
+            .field("ws_url", &self.ws_url)
+            .field("wan_replication", &self.wan_replication)
+            .field("load_balancer", &self.load_balancer.is_some());
+        #[cfg(feature = "aws")]
+        s.field("aws_discovery", &self.aws_discovery);
+        #[cfg(feature = "azure")]
+        s.field("azure_discovery", &self.azure_discovery);
+        #[cfg(feature = "gcp")]
+        s.field("gcp_discovery", &self.gcp_discovery);
+        #[cfg(feature = "kubernetes")]
+        s.field("kubernetes_discovery", &self.kubernetes_discovery);
+        #[cfg(feature = "cloud")]
+        s.field("cloud_discovery", &self.cloud_discovery);
+        s.finish()
+    }
 }
 
 impl NetworkConfigBuilder {
@@ -669,6 +727,26 @@ impl NetworkConfigBuilder {
         self
     }
 
+    /// Sets the load balancer for distributing requests across cluster members.
+    ///
+    /// When not set, defaults to `RoundRobinLoadBalancer`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::connection::RandomLoadBalancer;
+    /// use std::sync::Arc;
+    ///
+    /// let config = NetworkConfigBuilder::new()
+    ///     .load_balancer(Arc::new(RandomLoadBalancer::new()))
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn load_balancer(mut self, load_balancer: Arc<dyn LoadBalancer>) -> Self {
+        self.load_balancer = Some(load_balancer);
+        self
+    }
+
     /// Builds the network configuration.
     pub fn build(self) -> Result<NetworkConfig, ConfigError> {
         let addresses = if self.addresses.is_empty() {
@@ -686,6 +764,7 @@ impl NetworkConfigBuilder {
             tls,
             ws_url: self.ws_url,
             wan_replication: self.wan_replication,
+            load_balancer: self.load_balancer.unwrap_or_else(default_load_balancer),
             #[cfg(feature = "aws")]
             aws_discovery: self.aws_discovery,
             #[cfg(feature = "azure")]
@@ -3796,6 +3875,47 @@ mod tests {
         assert_eq!(failover.cluster_count(), 2);
         assert_eq!(failover.get_config(0).unwrap().cluster_name(), "second");
         assert_eq!(failover.get_config(1).unwrap().cluster_name(), "third");
+    }
+
+    #[test]
+    fn test_network_config_load_balancer_default() {
+        let config = NetworkConfigBuilder::new().build().unwrap();
+        let members = vec![
+            Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
+            Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap()),
+        ];
+        assert!(config.load_balancer().select(&members).is_some());
+    }
+
+    #[test]
+    fn test_network_config_custom_load_balancer() {
+        use crate::connection::RandomLoadBalancer;
+
+        let config = NetworkConfigBuilder::new()
+            .load_balancer(Arc::new(RandomLoadBalancer::new()))
+            .build()
+            .unwrap();
+
+        let members = vec![
+            Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
+        ];
+        let selected = config.load_balancer().select(&members);
+        assert!(selected.is_some());
+    }
+
+    #[test]
+    fn test_client_config_with_load_balancer() {
+        use crate::connection::RandomLoadBalancer;
+
+        let config = ClientConfig::builder()
+            .network(|n| n.load_balancer(Arc::new(RandomLoadBalancer::new())))
+            .build()
+            .unwrap();
+
+        let members = vec![
+            Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
+        ];
+        assert!(config.network().load_balancer().select(&members).is_some());
     }
 
     #[test]

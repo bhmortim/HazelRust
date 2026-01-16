@@ -2,6 +2,7 @@
 
 mod connection;
 mod discovery;
+mod load_balancer;
 mod manager;
 
 #[cfg(feature = "aws")]
@@ -24,6 +25,9 @@ mod websocket;
 
 pub use connection::{Connection, ConnectionId};
 pub use discovery::{ClusterDiscovery, StaticAddressDiscovery};
+pub use load_balancer::{
+    default_load_balancer, LoadBalancer, RandomLoadBalancer, RoundRobinLoadBalancer,
+};
 pub use manager::{ConnectionEvent, ConnectionManager};
 
 #[cfg(feature = "aws")]
