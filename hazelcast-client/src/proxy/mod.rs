@@ -46,4 +46,4 @@ pub use replicated_map::ReplicatedMap;
 pub use ringbuffer::{FalseFilter, OverflowPolicy, Ringbuffer, RingbufferFilter, TrueFilter};
 pub use semaphore::Semaphore;
 pub use set::ISet;
-pub use topic::{ITopic, TopicMessage};
+pub use topic::{ITopic, LocalTopicStats, TopicMessage};

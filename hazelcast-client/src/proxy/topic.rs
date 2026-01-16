@@ -2,6 +2,7 @@
 
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -10,6 +11,7 @@ use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use tokio::task::JoinHandle;
 
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
@@ -24,6 +26,8 @@ pub struct TopicMessage<T> {
     pub publish_time: u64,
     /// The UUID of the member that published the message, if available.
     pub publishing_member: Option<String>,
+    /// The sequence number of this message (for local ordering).
+    pub sequence: i64,
 }
 
 impl<T> TopicMessage<T> {
@@ -38,6 +42,7 @@ impl<T> TopicMessage<T> {
             message,
             publish_time,
             publishing_member: None,
+            sequence: -1,
         }
     }
 
@@ -47,6 +52,22 @@ impl<T> TopicMessage<T> {
             message,
             publish_time,
             publishing_member,
+            sequence: -1,
+        }
+    }
+
+    /// Creates a topic message with full metadata including sequence.
+    pub fn with_sequence(
+        message: T,
+        publish_time: u64,
+        publishing_member: Option<String>,
+        sequence: i64,
+    ) -> Self {
+        Self {
+            message,
+            publish_time,
+            publishing_member,
+            sequence,
         }
     }
 
@@ -59,6 +80,98 @@ impl<T> TopicMessage<T> {
     pub fn into_payload(self) -> T {
         self.message
     }
+
+    /// Returns the sequence number of this message.
+    pub fn sequence(&self) -> i64 {
+        self.sequence
+    }
+}
+
+/// Local statistics for a topic.
+#[derive(Debug, Clone, Default)]
+pub struct LocalTopicStats {
+    /// Total number of messages published by this client.
+    pub publish_count: u64,
+    /// Total number of messages received by listeners.
+    pub receive_count: u64,
+    /// Unix timestamp in milliseconds of the last publish operation.
+    pub last_publish_time: Option<u64>,
+    /// Unix timestamp in milliseconds of the last received message.
+    pub last_receive_time: Option<u64>,
+}
+
+impl LocalTopicStats {
+    /// Creates a new empty stats instance.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the total operation count (publish + receive).
+    pub fn total_operations(&self) -> u64 {
+        self.publish_count + self.receive_count
+    }
+}
+
+/// Internal stats tracker for ITopic.
+#[derive(Debug)]
+struct TopicStatsTracker {
+    publish_count: AtomicU64,
+    receive_count: AtomicU64,
+    last_publish_time: AtomicU64,
+    last_receive_time: AtomicU64,
+    sequence_counter: AtomicI64,
+}
+
+impl Default for TopicStatsTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TopicStatsTracker {
+    fn new() -> Self {
+        Self {
+            publish_count: AtomicU64::new(0),
+            receive_count: AtomicU64::new(0),
+            last_publish_time: AtomicU64::new(0),
+            last_receive_time: AtomicU64::new(0),
+            sequence_counter: AtomicI64::new(0),
+        }
+    }
+
+    fn record_publish(&self) {
+        self.publish_count.fetch_add(1, Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        self.last_publish_time.store(now, Ordering::Relaxed);
+    }
+
+    fn record_receive(&self) -> i64 {
+        self.receive_count.fetch_add(1, Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        self.last_receive_time.store(now, Ordering::Relaxed);
+        self.sequence_counter.fetch_add(1, Ordering::SeqCst)
+    }
+
+    fn current_sequence(&self) -> i64 {
+        self.sequence_counter.load(Ordering::SeqCst)
+    }
+
+    fn snapshot(&self) -> LocalTopicStats {
+        let last_pub = self.last_publish_time.load(Ordering::Relaxed);
+        let last_recv = self.last_receive_time.load(Ordering::Relaxed);
+        LocalTopicStats {
+            publish_count: self.publish_count.load(Ordering::Relaxed),
+            receive_count: self.receive_count.load(Ordering::Relaxed),
+            last_publish_time: if last_pub > 0 { Some(last_pub) } else { None },
+            last_receive_time: if last_recv > 0 { Some(last_recv) } else { None },
+        }
+    }
 }
 
 /// A distributed topic proxy for pub/sub messaging on a Hazelcast cluster.
@@ -69,6 +182,7 @@ pub struct ITopic<T> {
     name: String,
     connection_manager: Arc<ConnectionManager>,
     stats: Arc<ListenerStats>,
+    local_stats: Arc<TopicStatsTracker>,
     _phantom: PhantomData<fn() -> T>,
 }
 
@@ -79,6 +193,7 @@ impl<T> ITopic<T> {
             name,
             connection_manager,
             stats: Arc::new(ListenerStats::new()),
+            local_stats: Arc::new(TopicStatsTracker::new()),
             _phantom: PhantomData,
         }
     }
@@ -91,6 +206,11 @@ impl<T> ITopic<T> {
     /// Returns statistics for this topic's listener operations.
     pub fn stats(&self) -> &ListenerStats {
         &self.stats
+    }
+
+    /// Returns local statistics for this topic including publish and receive counts.
+    pub fn get_local_topic_stats(&self) -> LocalTopicStats {
+        self.local_stats.snapshot()
     }
 
     fn check_permission(&self, action: PermissionAction) -> Result<()> {
@@ -127,7 +247,29 @@ where
         msg.add_frame(Self::data_frame(&message_data));
 
         self.invoke(msg).await?;
+        self.local_stats.record_publish();
         Ok(())
+    }
+
+    /// Publishes a message asynchronously, returning a handle to the completion future.
+    ///
+    /// This allows non-blocking publish operations where the caller can choose
+    /// to await completion later or ignore the result entirely.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let topic = client.get_topic::<String>("my-topic");
+    /// let handle = topic.publish_async("message".to_string());
+    /// // Do other work...
+    /// handle.await??; // Await completion when needed
+    /// ```
+    pub fn publish_async(&self, message: T) -> JoinHandle<Result<()>>
+    where
+        T: Clone,
+    {
+        let topic = self.clone();
+        tokio::spawn(async move { topic.publish(message).await })
     }
 
     /// Publishes multiple messages to all subscribers of this topic.
@@ -194,6 +336,40 @@ where
     where
         F: Fn(TopicMessage<T>) + Send + Sync + 'static,
     {
+        self.add_message_listener_with_initial_sequence(handler, -1).await
+    }
+
+    /// Registers a message listener starting from a specific sequence number.
+    ///
+    /// Messages with sequence numbers less than `initial_sequence` will be skipped.
+    /// Use `-1` to receive all messages (equivalent to `add_message_listener`).
+    ///
+    /// This is useful for reliable replay scenarios where you want to resume
+    /// processing from a known position.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The callback to invoke for each received message
+    /// * `initial_sequence` - The minimum sequence number to process (-1 for all)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let topic = client.get_topic::<String>("my-topic");
+    /// // Resume from sequence 100
+    /// let registration = topic.add_message_listener_with_initial_sequence(
+    ///     |msg| println!("Seq {}: {}", msg.sequence(), msg.message),
+    ///     100,
+    /// ).await?;
+    /// ```
+    pub async fn add_message_listener_with_initial_sequence<F>(
+        &self,
+        handler: F,
+        initial_sequence: i64,
+    ) -> Result<ListenerRegistration>
+    where
+        F: Fn(TopicMessage<T>) + Send + Sync + 'static,
+    {
         self.check_permission(PermissionAction::Listen)?;
         let mut msg = ClientMessage::create_for_encode_any_partition(TOPIC_ADD_MESSAGE_LISTENER);
         msg.add_frame(Self::string_frame(&self.name));
@@ -206,13 +382,14 @@ where
         let active_flag = registration.active_flag();
         let shutdown_rx = registration.shutdown_receiver();
         let stats = Arc::clone(&self.stats);
+        let local_stats = Arc::clone(&self.local_stats);
         let connection_manager = Arc::clone(&self.connection_manager);
         let topic_name = self.name.clone();
 
         tokio::spawn(async move {
             let mut shutdown = shutdown_rx;
             loop {
-                if !active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                if !active_flag.load(Ordering::Acquire) {
                     break;
                 }
 
@@ -227,9 +404,14 @@ where
                     match connection_manager.receive_from(*address).await {
                         Ok(Some(event_msg)) => {
                             if Self::is_topic_event(&event_msg) {
-                                if let Ok(topic_msg) = Self::decode_topic_event(&event_msg) {
-                                    stats.record_message();
-                                    handler(topic_msg);
+                                if let Ok(mut topic_msg) = Self::decode_topic_event(&event_msg) {
+                                    let seq = local_stats.record_receive();
+                                    topic_msg.sequence = seq;
+
+                                    if initial_sequence < 0 || seq >= initial_sequence {
+                                        stats.record_message();
+                                        handler(topic_msg);
+                                    }
                                 }
                             }
                         }
@@ -348,6 +530,7 @@ impl<T> Clone for ITopic<T> {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
             stats: Arc::clone(&self.stats),
+            local_stats: Arc::clone(&self.local_stats),
             _phantom: PhantomData,
         }
     }
@@ -489,5 +672,100 @@ mod tests {
         let cloned = msg.clone();
         assert_eq!(cloned.payload(), msg.payload());
         assert_eq!(cloned.publish_time, msg.publish_time);
+    }
+
+    #[test]
+    fn test_topic_message_with_sequence() {
+        let msg = TopicMessage::with_sequence(
+            "hello".to_string(),
+            12345,
+            Some("member-1".to_string()),
+            42,
+        );
+        assert_eq!(msg.payload(), "hello");
+        assert_eq!(msg.publish_time, 12345);
+        assert_eq!(msg.publishing_member, Some("member-1".to_string()));
+        assert_eq!(msg.sequence(), 42);
+    }
+
+    #[test]
+    fn test_topic_message_default_sequence() {
+        let msg = TopicMessage::new("hello".to_string());
+        assert_eq!(msg.sequence(), -1);
+    }
+
+    #[test]
+    fn test_local_topic_stats_new() {
+        let stats = LocalTopicStats::new();
+        assert_eq!(stats.publish_count, 0);
+        assert_eq!(stats.receive_count, 0);
+        assert!(stats.last_publish_time.is_none());
+        assert!(stats.last_receive_time.is_none());
+    }
+
+    #[test]
+    fn test_local_topic_stats_total_operations() {
+        let stats = LocalTopicStats {
+            publish_count: 10,
+            receive_count: 25,
+            last_publish_time: None,
+            last_receive_time: None,
+        };
+        assert_eq!(stats.total_operations(), 35);
+    }
+
+    #[test]
+    fn test_topic_stats_tracker() {
+        let tracker = TopicStatsTracker::new();
+        assert_eq!(tracker.current_sequence(), 0);
+
+        tracker.record_publish();
+        let stats = tracker.snapshot();
+        assert_eq!(stats.publish_count, 1);
+        assert!(stats.last_publish_time.is_some());
+
+        let seq = tracker.record_receive();
+        assert_eq!(seq, 0);
+        let seq2 = tracker.record_receive();
+        assert_eq!(seq2, 1);
+
+        let stats = tracker.snapshot();
+        assert_eq!(stats.receive_count, 2);
+        assert!(stats.last_receive_time.is_some());
+    }
+
+    #[test]
+    fn test_get_local_topic_stats() {
+        use crate::config::ClientConfigBuilder;
+        use crate::connection::ConnectionManager;
+
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let topic: ITopic<String> = ITopic::new("test".to_string(), cm);
+
+        let stats = topic.get_local_topic_stats();
+        assert_eq!(stats.publish_count, 0);
+        assert_eq!(stats.receive_count, 0);
+    }
+
+    #[test]
+    fn test_local_topic_stats_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<LocalTopicStats>();
+    }
+
+    #[test]
+    fn test_local_topic_stats_clone() {
+        let stats = LocalTopicStats {
+            publish_count: 5,
+            receive_count: 10,
+            last_publish_time: Some(1000),
+            last_receive_time: Some(2000),
+        };
+        let cloned = stats.clone();
+        assert_eq!(cloned.publish_count, 5);
+        assert_eq!(cloned.receive_count, 10);
+        assert_eq!(cloned.last_publish_time, Some(1000));
+        assert_eq!(cloned.last_receive_time, Some(2000));
     }
 }
