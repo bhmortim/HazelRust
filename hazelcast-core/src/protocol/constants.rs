@@ -206,11 +206,26 @@ pub const CP_ATOMIC_LONG_ADD_AND_GET: i32 = 0x090500;
 /// CP AtomicLong get and add request.
 pub const CP_ATOMIC_LONG_GET_AND_ADD: i32 = 0x090600;
 
+/// Map lock request.
+pub const MAP_LOCK: i32 = 0x011200;
+
+/// Map try lock request.
+pub const MAP_TRY_LOCK: i32 = 0x011300;
+
 /// Map add entry listener request.
 pub const MAP_ADD_ENTRY_LISTENER: i32 = 0x011400;
 
 /// Map remove entry listener request.
 pub const MAP_REMOVE_ENTRY_LISTENER: i32 = 0x011500;
+
+/// Map force unlock request.
+pub const MAP_FORCE_UNLOCK: i32 = 0x011600;
+
+/// Map unlock request.
+pub const MAP_UNLOCK: i32 = 0x011700;
+
+/// Map is locked request.
+pub const MAP_IS_LOCKED: i32 = 0x011800;
 
 /// Client add membership listener request.
 pub const CLIENT_ADD_MEMBERSHIP_LISTENER: i32 = 0x000300;

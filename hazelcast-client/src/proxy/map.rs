@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::BytesMut;
 use tokio::spawn;
@@ -14,10 +14,11 @@ use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
     END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_ADD_INDEX, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PREDICATE,
-    MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_GET, MAP_GET_ALL,
-    MAP_KEYS_WITH_PREDICATE, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL,
-    MAP_PUT_IF_ABSENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME, MAP_REPLACE,
-    MAP_REPLACE_IF_SAME, MAP_SIZE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_FORCE_UNLOCK, MAP_GET,
+    MAP_GET_ALL, MAP_IS_LOCKED, MAP_KEYS_WITH_PREDICATE, MAP_LOCK, MAP_PROJECT,
+    MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT, MAP_REMOVE,
+    MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME, MAP_REPLACE, MAP_REPLACE_IF_SAME, MAP_SIZE,
+    MAP_TRY_LOCK, MAP_UNLOCK, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -185,6 +186,8 @@ impl Default for IndexConfigBuilder {
         Self::new()
     }
 }
+static INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
+
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 use crate::listener::{
@@ -205,6 +208,7 @@ pub struct IMap<K, V> {
     listener_stats: Arc<ListenerStats>,
     near_cache: Option<Arc<Mutex<NearCache<Vec<u8>, Vec<u8>>>>>,
     invalidation_registration: Arc<Mutex<Option<ListenerRegistration>>>,
+    thread_id: i64,
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
@@ -217,6 +221,7 @@ impl<K, V> IMap<K, V> {
             listener_stats: Arc::new(ListenerStats::new()),
             near_cache: None,
             invalidation_registration: Arc::new(Mutex::new(None)),
+            thread_id: std::process::id() as i64,
             _phantom: PhantomData,
         }
     }
@@ -233,6 +238,7 @@ impl<K, V> IMap<K, V> {
             listener_stats: Arc::new(ListenerStats::new()),
             near_cache: Some(Arc::new(Mutex::new(NearCache::new(config)))),
             invalidation_registration: Arc::new(Mutex::new(None)),
+            thread_id: std::process::id() as i64,
             _phantom: PhantomData,
         }
     }
@@ -746,6 +752,145 @@ where
         Ok(())
     }
 
+    /// Acquires the lock for the specified key.
+    ///
+    /// If the lock is not available, the current task waits until the lock
+    /// has been acquired.
+    ///
+    /// Locks are re-entrant: the same thread can acquire the lock multiple
+    /// times. Each `lock` call must be balanced by a corresponding `unlock`.
+    ///
+    /// # Warning
+    ///
+    /// This method uses indefinite blocking. If the lock is never released,
+    /// this method will block forever.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a network error occurs.
+    pub async fn lock(&self, key: &K) -> Result<()> {
+        self.check_permission(PermissionAction::Lock)?;
+        let key_data = Self::serialize_value(key)?;
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_LOCK, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(Self::long_frame(-1)); // TTL: indefinite
+        message.add_frame(Self::invocation_uid_frame());
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
+    /// Tries to acquire the lock for the specified key within the given timeout.
+    ///
+    /// Returns immediately if the lock is available. Otherwise waits up to
+    /// the specified timeout for the lock to become available.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to lock
+    /// * `timeout` - The maximum time to wait for the lock
+    ///
+    /// # Returns
+    ///
+    /// `true` if the lock was acquired, `false` if the timeout expired.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a network error occurs.
+    pub async fn try_lock(&self, key: &K, timeout: Duration) -> Result<bool> {
+        self.check_permission(PermissionAction::Lock)?;
+        let key_data = Self::serialize_value(key)?;
+        let partition_id = compute_partition_hash(&key_data);
+        let timeout_ms = timeout.as_millis() as i64;
+
+        let mut message = ClientMessage::create_for_encode(MAP_TRY_LOCK, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(Self::long_frame(-1)); // TTL: indefinite once acquired
+        message.add_frame(Self::long_frame(timeout_ms));
+        message.add_frame(Self::invocation_uid_frame());
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Releases the lock for the specified key.
+    ///
+    /// The lock must have been acquired by this thread. If the lock was
+    /// acquired multiple times (re-entrant), it must be released the same
+    /// number of times before other threads can acquire it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a network error occurs or the lock is not held
+    /// by the current thread.
+    pub async fn unlock(&self, key: &K) -> Result<()> {
+        self.check_permission(PermissionAction::Lock)?;
+        let key_data = Self::serialize_value(key)?;
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_UNLOCK, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(Self::invocation_uid_frame());
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
+    /// Returns whether the specified key is locked.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the key is locked by any thread, `false` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a network error occurs.
+    pub async fn is_locked(&self, key: &K) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
+        let key_data = Self::serialize_value(key)?;
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_IS_LOCKED, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Forcefully unlocks the specified key, regardless of the lock owner.
+    ///
+    /// This method should be used with caution. It can break the lock
+    /// semantics and lead to data inconsistency if used incorrectly.
+    ///
+    /// Use this method only for administrative purposes when a lock holder
+    /// has crashed and the lock needs to be released manually.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a network error occurs.
+    pub async fn force_unlock(&self, key: &K) -> Result<()> {
+        self.check_permission(PermissionAction::Lock)?;
+        let key_data = Self::serialize_value(key)?;
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_FORCE_UNLOCK, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::invocation_uid_frame());
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
         value.serialize(&mut output)?;
@@ -850,6 +995,19 @@ where
     fn int_frame(value: i32) -> Frame {
         let mut buf = BytesMut::with_capacity(4);
         buf.extend_from_slice(&value.to_le_bytes());
+        Frame::with_content(buf)
+    }
+
+    fn invocation_uid_frame() -> Frame {
+        let counter = INVOCATION_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+
+        let mut buf = BytesMut::with_capacity(16);
+        buf.extend_from_slice(&timestamp.to_le_bytes());
+        buf.extend_from_slice(&counter.to_le_bytes());
         Frame::with_content(buf)
     }
 
@@ -1881,6 +2039,7 @@ impl<K, V> Clone for IMap<K, V> {
             listener_stats: Arc::clone(&self.listener_stats),
             near_cache: self.near_cache.as_ref().map(Arc::clone),
             invalidation_registration: Arc::clone(&self.invalidation_registration),
+            thread_id: self.thread_id,
             _phantom: PhantomData,
         }
     }
