@@ -1918,6 +1918,115 @@ impl LoggingConfigBuilder {
     }
 }
 
+/// Configuration for Management Center integration.
+///
+/// Management Center provides real-time monitoring and management of
+/// Hazelcast clusters. This configuration controls how the client
+/// connects to and communicates with Management Center.
+#[derive(Debug, Clone)]
+pub struct ManagementCenterConfig {
+    enabled: bool,
+    scripting_enabled: bool,
+    url: Option<String>,
+}
+
+impl ManagementCenterConfig {
+    /// Creates a new builder for `ManagementCenterConfig`.
+    pub fn builder() -> ManagementCenterConfigBuilder {
+        ManagementCenterConfigBuilder::new()
+    }
+
+    /// Returns whether Management Center integration is enabled.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Returns whether scripting is enabled in Management Center.
+    ///
+    /// When enabled, the client allows execution of scripts from
+    /// Management Center for diagnostics and management operations.
+    pub fn scripting_enabled(&self) -> bool {
+        self.scripting_enabled
+    }
+
+    /// Returns the Management Center URL.
+    pub fn url(&self) -> Option<&str> {
+        self.url.as_deref()
+    }
+}
+
+impl Default for ManagementCenterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            scripting_enabled: false,
+            url: None,
+        }
+    }
+}
+
+/// Builder for `ManagementCenterConfig`.
+#[derive(Debug, Clone, Default)]
+pub struct ManagementCenterConfigBuilder {
+    enabled: Option<bool>,
+    scripting_enabled: Option<bool>,
+    url: Option<String>,
+}
+
+impl ManagementCenterConfigBuilder {
+    /// Creates a new Management Center configuration builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enables or disables Management Center integration.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = Some(enabled);
+        self
+    }
+
+    /// Enables or disables scripting in Management Center.
+    ///
+    /// When enabled, the client allows execution of scripts from
+    /// Management Center for diagnostics and management operations.
+    /// Disabled by default for security.
+    pub fn scripting_enabled(mut self, enabled: bool) -> Self {
+        self.scripting_enabled = Some(enabled);
+        self
+    }
+
+    /// Sets the Management Center URL.
+    ///
+    /// The URL should point to the Management Center REST endpoint,
+    /// typically in the format `http://host:port/hazelcast-mancenter`.
+    pub fn url(mut self, url: impl Into<String>) -> Self {
+        self.url = Some(url.into());
+        self
+    }
+
+    /// Builds the Management Center configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if:
+    /// - Management Center is enabled but no URL is provided
+    pub fn build(self) -> Result<ManagementCenterConfig, ConfigError> {
+        let enabled = self.enabled.unwrap_or(false);
+
+        if enabled && self.url.is_none() {
+            return Err(ConfigError::new(
+                "Management Center URL is required when enabled",
+            ));
+        }
+
+        Ok(ManagementCenterConfig {
+            enabled,
+            scripting_enabled: self.scripting_enabled.unwrap_or(false),
+            url: self.url,
+        })
+    }
+}
+
 /// Diagnostics configuration for monitoring and troubleshooting.
 #[derive(Debug, Clone)]
 pub struct DiagnosticsConfig {
@@ -2005,6 +2114,7 @@ pub struct ClientConfig {
     quorum_configs: Vec<QuorumConfig>,
     diagnostics: DiagnosticsConfig,
     logging: LoggingConfig,
+    management_center: ManagementCenterConfig,
     user_code_deployment: Option<UserCodeDeploymentConfig>,
 }
 
@@ -2064,6 +2174,11 @@ impl ClientConfig {
         &self.logging
     }
 
+    /// Returns the Management Center configuration.
+    pub fn management_center(&self) -> &ManagementCenterConfig {
+        &self.management_center
+    }
+
     /// Returns the user code deployment configuration, if set.
     pub fn user_code_deployment(&self) -> Option<&UserCodeDeploymentConfig> {
         self.user_code_deployment.as_ref()
@@ -2087,6 +2202,7 @@ pub struct ClientConfigBuilder {
     quorum_configs: Vec<QuorumConfig>,
     diagnostics: DiagnosticsConfigBuilder,
     logging: LoggingConfigBuilder,
+    management_center: ManagementCenterConfigBuilder,
     user_code_deployment: Option<UserCodeDeploymentConfig>,
 }
 
@@ -2230,6 +2346,29 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures Management Center settings using a builder function.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::config::ClientConfigBuilder;
+    ///
+    /// let config = ClientConfigBuilder::new()
+    ///     .management_center(|mc| {
+    ///         mc.enabled(true)
+    ///           .url("http://localhost:8080/hazelcast-mancenter")
+    ///     })
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn management_center<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(ManagementCenterConfigBuilder) -> ManagementCenterConfigBuilder,
+    {
+        self.management_center = f(self.management_center);
+        self
+    }
+
     /// Sets the user code deployment configuration.
     ///
     /// User code deployment allows deploying Java classes to the cluster
@@ -2275,6 +2414,7 @@ impl ClientConfigBuilder {
         let diagnostics = self.diagnostics.build()?;
 
         let logging = self.logging.build();
+        let management_center = self.management_center.build()?;
 
         Ok(ClientConfig {
             cluster_name,
@@ -2285,6 +2425,7 @@ impl ClientConfigBuilder {
             quorum_configs: self.quorum_configs,
             diagnostics,
             logging,
+            management_center,
             user_code_deployment: self.user_code_deployment,
         })
     }
@@ -4130,5 +4271,123 @@ mod tests {
             cloned.target_clusters().len(),
             config.target_clusters().len()
         );
+    }
+
+    #[test]
+    fn test_management_center_config_defaults() {
+        let config = ManagementCenterConfigBuilder::new().build().unwrap();
+        assert!(!config.enabled());
+        assert!(!config.scripting_enabled());
+        assert!(config.url().is_none());
+    }
+
+    #[test]
+    fn test_management_center_config_enabled_without_url_fails() {
+        let result = ManagementCenterConfigBuilder::new()
+            .enabled(true)
+            .build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("URL is required when enabled"));
+    }
+
+    #[test]
+    fn test_management_center_config_enabled_with_url() {
+        let config = ManagementCenterConfigBuilder::new()
+            .enabled(true)
+            .url("http://localhost:8080/hazelcast-mancenter")
+            .build()
+            .unwrap();
+
+        assert!(config.enabled());
+        assert_eq!(
+            config.url(),
+            Some("http://localhost:8080/hazelcast-mancenter")
+        );
+    }
+
+    #[test]
+    fn test_management_center_config_scripting_enabled() {
+        let config = ManagementCenterConfigBuilder::new()
+            .enabled(true)
+            .url("http://localhost:8080")
+            .scripting_enabled(true)
+            .build()
+            .unwrap();
+
+        assert!(config.scripting_enabled());
+    }
+
+    #[test]
+    fn test_management_center_config_disabled_with_url() {
+        let config = ManagementCenterConfigBuilder::new()
+            .enabled(false)
+            .url("http://localhost:8080")
+            .build()
+            .unwrap();
+
+        assert!(!config.enabled());
+        assert_eq!(config.url(), Some("http://localhost:8080"));
+    }
+
+    #[test]
+    fn test_management_center_config_builder_method() {
+        let config = ManagementCenterConfig::builder()
+            .enabled(true)
+            .url("http://mc.example.com")
+            .build()
+            .unwrap();
+
+        assert!(config.enabled());
+    }
+
+    #[test]
+    fn test_management_center_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ManagementCenterConfig>();
+    }
+
+    #[test]
+    fn test_management_center_config_clone() {
+        let config = ManagementCenterConfigBuilder::new()
+            .enabled(true)
+            .url("http://localhost:8080")
+            .scripting_enabled(true)
+            .build()
+            .unwrap();
+
+        let cloned = config.clone();
+        assert_eq!(cloned.enabled(), config.enabled());
+        assert_eq!(cloned.url(), config.url());
+        assert_eq!(cloned.scripting_enabled(), config.scripting_enabled());
+    }
+
+    #[test]
+    fn test_client_config_with_management_center() {
+        let config = ClientConfig::builder()
+            .management_center(|mc| {
+                mc.enabled(true)
+                    .url("http://localhost:8080/mancenter")
+                    .scripting_enabled(true)
+            })
+            .build()
+            .unwrap();
+
+        assert!(config.management_center().enabled());
+        assert_eq!(
+            config.management_center().url(),
+            Some("http://localhost:8080/mancenter")
+        );
+        assert!(config.management_center().scripting_enabled());
+    }
+
+    #[test]
+    fn test_client_config_default_management_center() {
+        let config = ClientConfig::default();
+        assert!(!config.management_center().enabled());
+        assert!(config.management_center().url().is_none());
     }
 }
