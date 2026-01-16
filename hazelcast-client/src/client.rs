@@ -16,8 +16,9 @@ use crate::diagnostics::{ClientStatistics, StatisticsCollector};
 use crate::executor::ExecutorService;
 use crate::jet::JetService;
 use crate::listener::{
-    BoxedDistributedObjectListener, DistributedObjectEvent, DistributedObjectListener,
-    LifecycleEvent, ListenerId, ListenerRegistration, Member, MemberEvent,
+    BoxedDistributedObjectListener, ClientStateListener, DistributedObjectEvent,
+    DistributedObjectListener, LifecycleEvent, ListenerId, ListenerRegistration, Member,
+    MemberEvent,
 };
 use crate::proxy::{
     AtomicLong, AtomicReference, CardinalityEstimator, CountDownLatch, FencedLock, FlakeIdGenerator,
@@ -97,6 +98,19 @@ impl std::fmt::Debug for DistributedObjectListenerState {
     }
 }
 
+/// Internal state for managing client state listeners.
+struct ClientStateListenerState {
+    listeners: std::collections::HashMap<ListenerId, (Arc<dyn ClientStateListener>, ListenerRegistration)>,
+}
+
+impl std::fmt::Debug for ClientStateListenerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientStateListenerState")
+            .field("listener_count", &self.listeners.len())
+            .finish()
+    }
+}
+
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
 /// `HazelcastClient` manages connections to cluster members and provides
@@ -130,6 +144,7 @@ pub struct HazelcastClient {
     statistics_collector: Arc<StatisticsCollector>,
     client_uuid: Uuid,
     distributed_object_listeners: RwLock<DistributedObjectListenerState>,
+    client_state_listeners: RwLock<ClientStateListenerState>,
 }
 
 impl HazelcastClient {
@@ -161,6 +176,9 @@ impl HazelcastClient {
             statistics_collector: Arc::new(StatisticsCollector::new()),
             client_uuid,
             distributed_object_listeners: RwLock::new(DistributedObjectListenerState {
+                listeners: std::collections::HashMap::new(),
+            }),
+            client_state_listeners: RwLock::new(ClientStateListenerState {
                 listeners: std::collections::HashMap::new(),
             }),
         })
@@ -1096,6 +1114,142 @@ impl HazelcastClient {
         Ok(removed)
     }
 
+    /// Adds a client state listener.
+    ///
+    /// The listener will be notified when the client's connection state changes,
+    /// including connect, disconnect, start, and shutdown events.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener` - The listener to add
+    ///
+    /// # Returns
+    ///
+    /// A `ListenerId` that can be used to remove the listener later.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::listener::ClientStateListener;
+    ///
+    /// struct MyStateListener;
+    ///
+    /// impl ClientStateListener for MyStateListener {
+    ///     fn client_connected(&self) {
+    ///         println!("Connected to cluster!");
+    ///     }
+    ///
+    ///     fn client_disconnected(&self) {
+    ///         println!("Disconnected from cluster!");
+    ///     }
+    ///
+    ///     fn client_started(&self) {
+    ///         println!("Client started!");
+    ///     }
+    ///
+    ///     fn client_shutdown(&self) {
+    ///         println!("Client shutdown!");
+    ///     }
+    /// }
+    ///
+    /// let listener_id = client.add_client_state_listener(MyStateListener).await?;
+    /// ```
+    pub async fn add_client_state_listener<L>(&self, listener: L) -> Result<ListenerId>
+    where
+        L: ClientStateListener + 'static,
+    {
+        let listener_id = ListenerId::new();
+        let registration = ListenerRegistration::new(listener_id);
+        let listener_arc: Arc<dyn ClientStateListener> = Arc::new(listener);
+
+        let mut rx = self.connection_manager.subscribe_lifecycle();
+        let listener_clone = Arc::clone(&listener_arc);
+        let active_flag = registration.active_flag();
+
+        tokio::spawn(async move {
+            while active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                match rx.recv().await {
+                    Ok(event) => {
+                        if !active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                            break;
+                        }
+                        match event {
+                            LifecycleEvent::ClientConnected => {
+                                listener_clone.client_connected();
+                            }
+                            LifecycleEvent::ClientDisconnected => {
+                                listener_clone.client_disconnected();
+                            }
+                            LifecycleEvent::Started => {
+                                listener_clone.client_started();
+                            }
+                            LifecycleEvent::Shutdown => {
+                                listener_clone.client_shutdown();
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        {
+            let mut state = self
+                .client_state_listeners
+                .write()
+                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+            state.listeners.insert(listener_id, (listener_arc, registration));
+        }
+
+        tracing::debug!(listener_id = %listener_id, "added client state listener");
+        Ok(listener_id)
+    }
+
+    /// Removes a client state listener.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener_id` - The ID of the listener to remove
+    ///
+    /// # Returns
+    ///
+    /// `true` if the listener was found and removed, `false` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let listener_id = client.add_client_state_listener(MyStateListener).await?;
+    /// // ... later ...
+    /// let removed = client.remove_client_state_listener(listener_id).await?;
+    /// ```
+    pub async fn remove_client_state_listener(&self, listener_id: ListenerId) -> Result<bool> {
+        let removed = {
+            let mut state = self
+                .client_state_listeners
+                .write()
+                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+
+            if let Some((_, registration)) = state.listeners.remove(&listener_id) {
+                registration.deactivate();
+                true
+            } else {
+                false
+            }
+        };
+
+        if removed {
+            tracing::debug!(listener_id = %listener_id, "removed client state listener");
+        }
+
+        Ok(removed)
+    }
+
     /// Returns a snapshot of current client statistics.
     ///
     /// Statistics include connection counts, operation metrics, near cache
@@ -1165,5 +1319,15 @@ mod tests {
         let info = DistributedObjectInfo::new("service", "name");
         let cloned = info.clone();
         assert_eq!(info, cloned);
+    }
+
+    #[test]
+    fn test_client_state_listener_state_debug() {
+        let state = ClientStateListenerState {
+            listeners: std::collections::HashMap::new(),
+        };
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("ClientStateListenerState"));
+        assert!(debug_str.contains("listener_count"));
     }
 }

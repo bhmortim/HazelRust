@@ -2,6 +2,51 @@
 
 use std::fmt;
 
+/// Listener for client state transitions.
+///
+/// Implement this trait to receive notifications when the client's
+/// connection state changes. All methods have default empty implementations,
+/// so you only need to override the ones you're interested in.
+///
+/// # Example
+///
+/// ```ignore
+/// use hazelcast_client::listener::ClientStateListener;
+///
+/// struct MyStateListener;
+///
+/// impl ClientStateListener for MyStateListener {
+///     fn client_connected(&self) {
+///         println!("Connected to cluster!");
+///     }
+///
+///     fn client_disconnected(&self) {
+///         println!("Disconnected from cluster!");
+///     }
+/// }
+///
+/// let listener_id = client.add_client_state_listener(MyStateListener).await?;
+/// ```
+pub trait ClientStateListener: Send + Sync {
+    /// Called when the client has connected to the cluster.
+    fn client_connected(&self) {}
+
+    /// Called when the client has disconnected from the cluster.
+    fn client_disconnected(&self) {}
+
+    /// Called when the client has started and is ready to accept operations.
+    fn client_started(&self) {}
+
+    /// Called when the client has completed shutdown.
+    fn client_shutdown(&self) {}
+}
+
+impl std::fmt::Debug for dyn ClientStateListener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ClientStateListener")
+    }
+}
+
 /// Events emitted during client lifecycle transitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LifecycleEvent {
@@ -91,5 +136,23 @@ mod tests {
         let event = LifecycleEvent::Starting;
         let debug_str = format!("{:?}", event);
         assert!(debug_str.contains("Starting"));
+    }
+
+    #[test]
+    fn test_client_state_listener_trait_object_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync + ?Sized>() {}
+        assert_send_sync::<dyn ClientStateListener>();
+    }
+
+    #[test]
+    fn test_client_state_listener_default_implementations() {
+        struct EmptyListener;
+        impl ClientStateListener for EmptyListener {}
+
+        let listener = EmptyListener;
+        listener.client_connected();
+        listener.client_disconnected();
+        listener.client_started();
+        listener.client_shutdown();
     }
 }
