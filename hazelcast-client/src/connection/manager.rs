@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -68,6 +69,8 @@ pub struct ConnectionManager {
     discovery: Arc<dyn ClusterDiscovery>,
     connections: Arc<RwLock<HashMap<SocketAddr, Connection>>>,
     members: Arc<RwLock<HashMap<Uuid, Member>>>,
+    partition_table: Arc<RwLock<HashMap<i32, Uuid>>>,
+    partition_count: AtomicI32,
     event_sender: broadcast::Sender<ConnectionEvent>,
     membership_sender: broadcast::Sender<MemberEvent>,
     lifecycle_sender: broadcast::Sender<LifecycleEvent>,
@@ -87,6 +90,8 @@ impl ConnectionManager {
             discovery: Arc::new(discovery),
             connections: Arc::new(RwLock::new(HashMap::new())),
             members: Arc::new(RwLock::new(HashMap::new())),
+            partition_table: Arc::new(RwLock::new(HashMap::new())),
+            partition_count: AtomicI32::new(0),
             event_sender,
             membership_sender,
             lifecycle_sender,
@@ -464,6 +469,126 @@ impl ConnectionManager {
     /// Returns the quorum configuration for the given data structure, if any.
     pub fn find_quorum_config(&self, name: &str) -> Option<&crate::config::QuorumConfig> {
         self.config.find_quorum_config(name)
+    }
+
+    /// Returns the number of partitions in the cluster.
+    pub fn partition_count(&self) -> i32 {
+        self.partition_count.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Updates the partition table with a new mapping of partition IDs to owner member UUIDs.
+    /// Also updates the partition count.
+    pub async fn update_partition_table(&self, partitions: HashMap<i32, Uuid>) {
+        let count = partitions.len() as i32;
+        let mut table = self.partition_table.write().await;
+        *table = partitions;
+        self.partition_count.store(count, std::sync::atomic::Ordering::Release);
+        tracing::debug!(partition_count = count, "updated partition table");
+    }
+
+    /// Updates a single partition's owner.
+    pub async fn set_partition_owner(&self, partition_id: i32, owner: Uuid) {
+        let mut table = self.partition_table.write().await;
+        table.insert(partition_id, owner);
+        let count = table.len() as i32;
+        drop(table);
+        self.partition_count.store(count, std::sync::atomic::Ordering::Release);
+        tracing::trace!(partition_id = partition_id, owner = %owner, "updated partition owner");
+    }
+
+    /// Returns the UUID of the member that owns the specified partition.
+    pub async fn get_partition_owner(&self, partition_id: i32) -> Option<Uuid> {
+        self.partition_table.read().await.get(&partition_id).copied()
+    }
+
+    /// Returns the socket address of the member that owns the specified partition.
+    pub async fn get_partition_owner_address(&self, partition_id: i32) -> Option<SocketAddr> {
+        let owner_uuid = self.get_partition_owner(partition_id).await?;
+        let members = self.members.read().await;
+        members.get(&owner_uuid).map(|m| m.address())
+    }
+
+    /// Returns the address for the connection that should handle requests for the given partition.
+    ///
+    /// If the partition owner is known and connected, returns its address.
+    /// If the partition owner is known but not connected, attempts to connect.
+    /// If the partition is unknown or connection fails, falls back to any available connection.
+    ///
+    /// Returns an error only if no connections are available at all.
+    #[instrument(
+        name = "connection_manager.get_connection_for_partition",
+        skip(self),
+        fields(partition_id = partition_id),
+        level = "debug"
+    )]
+    pub async fn get_connection_for_partition(&self, partition_id: i32) -> Result<SocketAddr> {
+        if let Some(owner_address) = self.get_partition_owner_address(partition_id).await {
+            if self.is_connected(&owner_address).await {
+                tracing::trace!(address = %owner_address, "using partition owner connection");
+                return Ok(owner_address);
+            }
+
+            tracing::debug!(address = %owner_address, "partition owner not connected, attempting connection");
+            if self.connect_to(owner_address).await.is_ok() {
+                return Ok(owner_address);
+            }
+            tracing::warn!(address = %owner_address, "failed to connect to partition owner, falling back");
+        }
+
+        let addresses = self.connected_addresses().await;
+        addresses.into_iter().next().ok_or_else(|| {
+            HazelcastError::Connection("no connections available".to_string())
+        })
+    }
+
+    /// Sends a message to the owner of the specified partition.
+    ///
+    /// Routes the message to the partition owner if known and connected,
+    /// otherwise falls back to any available connection.
+    #[instrument(
+        name = "connection_manager.send_to_partition",
+        skip(self, message),
+        fields(partition_id = partition_id),
+        level = "debug"
+    )]
+    pub async fn send_to_partition(
+        &self,
+        partition_id: i32,
+        message: hazelcast_core::ClientMessage,
+    ) -> Result<()> {
+        let address = self.get_connection_for_partition(partition_id).await?;
+        self.send_to(address, message).await
+    }
+
+    /// Receives a message from the owner of the specified partition.
+    ///
+    /// Routes to the partition owner if known and connected,
+    /// otherwise falls back to any available connection.
+    #[instrument(
+        name = "connection_manager.receive_from_partition",
+        skip(self),
+        fields(partition_id = partition_id),
+        level = "debug"
+    )]
+    pub async fn receive_from_partition(
+        &self,
+        partition_id: i32,
+    ) -> Result<Option<hazelcast_core::ClientMessage>> {
+        let address = self.get_connection_for_partition(partition_id).await?;
+        self.receive_from(address).await
+    }
+
+    /// Clears the partition table. Called during reconnection or cluster state reset.
+    pub async fn clear_partition_table(&self) {
+        let mut table = self.partition_table.write().await;
+        table.clear();
+        self.partition_count.store(0, std::sync::atomic::Ordering::Release);
+        tracing::debug!("cleared partition table");
+    }
+
+    /// Returns a snapshot of the current partition table.
+    pub async fn partition_table(&self) -> HashMap<i32, Uuid> {
+        self.partition_table.read().await.clone()
     }
 
     /// Returns the configured permissions, if any.
@@ -1455,6 +1580,187 @@ mod tests {
         let found = manager.find_quorum_config("test-map");
         assert!(found.is_some());
         assert_eq!(found.unwrap().min_cluster_size(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_partition_table_operations() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        assert_eq!(manager.partition_count(), 0);
+        assert!(manager.get_partition_owner(0).await.is_none());
+
+        let member1_uuid = uuid::Uuid::new_v4();
+        let member2_uuid = uuid::Uuid::new_v4();
+
+        let mut partitions = HashMap::new();
+        partitions.insert(0, member1_uuid);
+        partitions.insert(1, member2_uuid);
+        partitions.insert(2, member1_uuid);
+
+        manager.update_partition_table(partitions).await;
+
+        assert_eq!(manager.partition_count(), 3);
+        assert_eq!(manager.get_partition_owner(0).await, Some(member1_uuid));
+        assert_eq!(manager.get_partition_owner(1).await, Some(member2_uuid));
+        assert_eq!(manager.get_partition_owner(2).await, Some(member1_uuid));
+        assert!(manager.get_partition_owner(99).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_set_partition_owner() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let member_uuid = uuid::Uuid::new_v4();
+
+        manager.set_partition_owner(5, member_uuid).await;
+
+        assert_eq!(manager.partition_count(), 1);
+        assert_eq!(manager.get_partition_owner(5).await, Some(member_uuid));
+    }
+
+    #[tokio::test]
+    async fn test_get_partition_owner_address() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let member_uuid = uuid::Uuid::new_v4();
+        let member_addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let member = crate::listener::Member::new(member_uuid, member_addr);
+
+        manager.handle_member_added(member).await;
+        manager.set_partition_owner(0, member_uuid).await;
+
+        let addr = manager.get_partition_owner_address(0).await;
+        assert_eq!(addr, Some(member_addr));
+
+        assert!(manager.get_partition_owner_address(99).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_connection_for_partition_fallback() {
+        let (listener, addr) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let config = ClientConfigBuilder::new()
+            .add_address(addr)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::from_config(config);
+        manager.connect_to(addr).await.unwrap();
+
+        let result = manager.get_connection_for_partition(0).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), addr);
+    }
+
+    #[tokio::test]
+    async fn test_get_connection_for_partition_with_owner() {
+        let (listener, addr) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let config = ClientConfigBuilder::new()
+            .add_address(addr)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::from_config(config);
+
+        let member_uuid = uuid::Uuid::new_v4();
+        let member = crate::listener::Member::new(member_uuid, addr);
+
+        manager.handle_member_added(member).await;
+        manager.set_partition_owner(0, member_uuid).await;
+        manager.connect_to(addr).await.unwrap();
+
+        let result = manager.get_connection_for_partition(0).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), addr);
+    }
+
+    #[tokio::test]
+    async fn test_get_connection_for_partition_no_connections() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let result = manager.get_connection_for_partition(0).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_clear_partition_table() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let mut partitions = HashMap::new();
+        partitions.insert(0, uuid::Uuid::new_v4());
+        partitions.insert(1, uuid::Uuid::new_v4());
+
+        manager.update_partition_table(partitions).await;
+        assert_eq!(manager.partition_count(), 2);
+
+        manager.clear_partition_table().await;
+        assert_eq!(manager.partition_count(), 0);
+        assert!(manager.get_partition_owner(0).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_partition_table_snapshot() {
+        let config = ClientConfigBuilder::new().build().unwrap();
+        let discovery = super::super::discovery::StaticAddressDiscovery::default();
+        let manager = ConnectionManager::new(config, discovery);
+
+        let uuid1 = uuid::Uuid::new_v4();
+        let uuid2 = uuid::Uuid::new_v4();
+
+        let mut partitions = HashMap::new();
+        partitions.insert(0, uuid1);
+        partitions.insert(1, uuid2);
+
+        manager.update_partition_table(partitions.clone()).await;
+
+        let snapshot = manager.partition_table().await;
+        assert_eq!(snapshot, partitions);
+    }
+
+    #[tokio::test]
+    async fn test_send_to_partition() {
+        let (listener, addr) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            accept_and_echo(listener).await;
+        });
+
+        let config = ClientConfigBuilder::new()
+            .add_address(addr)
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::from_config(config);
+
+        let member_uuid = uuid::Uuid::new_v4();
+        let member = crate::listener::Member::new(member_uuid, addr);
+
+        manager.handle_member_added(member).await;
+        manager.set_partition_owner(0, member_uuid).await;
+        manager.connect_to(addr).await.unwrap();
+
+        let msg = hazelcast_core::ClientMessage::new();
+        let result = manager.send_to_partition(0, msg).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
