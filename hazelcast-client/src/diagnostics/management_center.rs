@@ -3,7 +3,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::ManagementCenterConfig;
+use hazelcast_core::protocol::constants::CLIENT_STATISTICS;
+
+use crate::config::{ManagementCenterConfig, ManagementCenterConfigBuilder};
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};
 
 /// Service for publishing client statistics to Hazelcast Management Center.
@@ -70,6 +72,18 @@ impl ManagementCenterService {
     /// Returns the client instance name.
     pub fn instance_name(&self) -> Option<&str> {
         self.instance_name.as_deref()
+    }
+
+    /// Sets a custom publish interval (overrides config).
+    pub fn with_publish_interval(mut self, interval: Duration) -> Self {
+        self.config = ManagementCenterConfigBuilder::new()
+            .enabled(self.config.enabled())
+            .url(self.config.url().unwrap_or("").to_string())
+            .scripting_enabled(self.config.scripting_enabled())
+            .update_interval(interval)
+            .build()
+            .unwrap_or(self.config);
+        self
     }
 
     /// Starts the periodic publishing task.
@@ -173,16 +187,50 @@ async fn publish_statistics(
     }
 
     let payload = format_statistics_payload(stats, labels, instance_name);
+    let encoded = encode_statistics_message(stats, labels, instance_name);
 
     tracing::trace!(
         url = %url,
         payload_size = payload.len(),
+        encoded_size = encoded.len(),
         labels = ?labels,
         instance_name = ?instance_name,
+        client_statistics_message_type = CLIENT_STATISTICS,
         "publishing statistics to Management Center"
     );
 
     Ok(())
+}
+
+/// Encodes statistics into a CLIENT_STATISTICS protocol message payload.
+///
+/// The payload format is a key-value string where entries are separated by commas
+/// and keys/values are separated by equals signs.
+fn encode_statistics_message(
+    stats: &ClientStatistics,
+    labels: &[String],
+    instance_name: Option<&str>,
+) -> Vec<u8> {
+    let payload = format_statistics_payload(stats, labels, instance_name);
+
+    // The CLIENT_STATISTICS message format:
+    // - Timestamp (i64): when stats were collected
+    // - Stats string (UTF-8 encoded)
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    let mut buffer = Vec::new();
+    // Write timestamp as little-endian i64
+    buffer.extend_from_slice(&timestamp.to_le_bytes());
+    // Write stats string length as little-endian i32
+    let payload_bytes = payload.as_bytes();
+    buffer.extend_from_slice(&(payload_bytes.len() as i32).to_le_bytes());
+    // Write stats string bytes
+    buffer.extend_from_slice(payload_bytes);
+
+    buffer
 }
 
 /// Formats statistics into a payload suitable for Management Center.
@@ -225,6 +273,10 @@ fn format_statistics_payload(
 
     for (op_type, count) in stats.operation_counts() {
         parts.push(format!("operations.{}={}", op_type.name(), count));
+    }
+
+    for (op_type, latency_ms) in stats.operation_latencies() {
+        parts.push(format!("latency.{}={:.2}", op_type.name(), latency_ms));
     }
 
     for (map_name, nc_stats) in stats.near_cache_stats() {
@@ -540,6 +592,43 @@ mod tests {
             Some("test-instance"),
         ).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_encode_statistics_message() {
+        let collector = Arc::new(StatisticsCollector::new());
+        collector.record_connection_opened();
+        collector.record_bytes_sent(500);
+
+        let stats = collector.collect(1).await;
+        let encoded = encode_statistics_message(&stats, &["test:label".to_string()], Some("test-instance"));
+
+        // Should have timestamp (8 bytes) + length (4 bytes) + payload
+        assert!(encoded.len() > 12);
+
+        // First 8 bytes should be timestamp
+        let timestamp = i64::from_le_bytes(encoded[0..8].try_into().unwrap());
+        assert!(timestamp > 0);
+
+        // Next 4 bytes should be payload length
+        let payload_len = i32::from_le_bytes(encoded[8..12].try_into().unwrap()) as usize;
+        assert_eq!(encoded.len(), 12 + payload_len);
+    }
+
+    #[tokio::test]
+    async fn test_format_statistics_payload_with_latencies() {
+        let collector = Arc::new(StatisticsCollector::new());
+        collector
+            .record_operation_with_latency(
+                crate::diagnostics::OperationType::MapGet,
+                std::time::Duration::from_millis(25),
+            )
+            .await;
+
+        let stats = collector.collect(0).await;
+        let payload = format_statistics_payload(&stats, &[], None);
+
+        assert!(payload.contains("latency.map.get="));
     }
 
     #[test]

@@ -184,6 +184,7 @@ impl MemoryStats {
 pub struct ClientStatistics {
     connection_stats: ConnectionStats,
     operation_counts: HashMap<OperationType, u64>,
+    operation_latencies: HashMap<OperationType, f64>,
     near_cache_stats: HashMap<String, NearCacheRatioStats>,
     memory_stats: MemoryStats,
     collected_at: Instant,
@@ -209,6 +210,16 @@ impl ClientStatistics {
     /// Returns the total number of operations performed.
     pub fn total_operations(&self) -> u64 {
         self.operation_counts.values().sum()
+    }
+
+    /// Returns average operation latencies by type (in milliseconds).
+    pub fn operation_latencies(&self) -> &HashMap<OperationType, f64> {
+        &self.operation_latencies
+    }
+
+    /// Returns the average latency for a specific operation type in milliseconds.
+    pub fn operation_latency(&self, op_type: OperationType) -> Option<f64> {
+        self.operation_latencies.get(&op_type).copied()
     }
 
     /// Returns near cache statistics by map name.
@@ -266,6 +277,7 @@ pub struct StatisticsCollector {
     bytes_sent: AtomicU64,
     bytes_received: AtomicU64,
     operation_counts: RwLock<HashMap<OperationType, u64>>,
+    operation_latencies: RwLock<HashMap<OperationType, Vec<Duration>>>,
     near_cache_stats: RwLock<HashMap<String, NearCacheStats>>,
     near_cache_entry_count: RwLock<HashMap<String, u64>>,
 }
@@ -280,6 +292,7 @@ impl StatisticsCollector {
             bytes_sent: AtomicU64::new(0),
             bytes_received: AtomicU64::new(0),
             operation_counts: RwLock::new(HashMap::new()),
+            operation_latencies: RwLock::new(HashMap::new()),
             near_cache_stats: RwLock::new(HashMap::new()),
             near_cache_entry_count: RwLock::new(HashMap::new()),
         }
@@ -318,6 +331,51 @@ impl StatisticsCollector {
         }
     }
 
+    /// Records an operation with its latency duration.
+    pub async fn record_operation_with_latency(&self, op_type: OperationType, latency: Duration) {
+        let mut counts = self.operation_counts.write().await;
+        *counts.entry(op_type).or_insert(0) += 1;
+        drop(counts);
+
+        let mut latencies = self.operation_latencies.write().await;
+        let entry = latencies.entry(op_type).or_insert_with(Vec::new);
+        // Keep last 1000 samples to limit memory
+        if entry.len() >= 1000 {
+            entry.remove(0);
+        }
+        entry.push(latency);
+    }
+
+    /// Returns average latency for an operation type in milliseconds.
+    pub async fn average_latency(&self, op_type: OperationType) -> Option<f64> {
+        let latencies = self.operation_latencies.read().await;
+        latencies.get(&op_type).and_then(|samples| {
+            if samples.is_empty() {
+                None
+            } else {
+                let total: Duration = samples.iter().sum();
+                Some(total.as_secs_f64() * 1000.0 / samples.len() as f64)
+            }
+        })
+    }
+
+    /// Returns all operation latencies as a map of operation type to average latency in milliseconds.
+    pub async fn all_average_latencies(&self) -> HashMap<OperationType, f64> {
+        let latencies = self.operation_latencies.read().await;
+        latencies
+            .iter()
+            .filter_map(|(op_type, samples)| {
+                if samples.is_empty() {
+                    None
+                } else {
+                    let total: Duration = samples.iter().sum();
+                    let avg = total.as_secs_f64() * 1000.0 / samples.len() as f64;
+                    Some((*op_type, avg))
+                }
+            })
+            .collect()
+    }
+
     /// Updates near cache statistics for a map.
     pub async fn update_near_cache_stats(&self, map_name: &str, stats: NearCacheStats) {
         let mut near_cache_stats = self.near_cache_stats.write().await;
@@ -343,6 +401,7 @@ impl StatisticsCollector {
         };
 
         let operation_counts = self.operation_counts.read().await.clone();
+        let operation_latencies = self.all_average_latencies().await;
 
         let near_cache_raw = self.near_cache_stats.read().await;
         let near_cache_stats: HashMap<String, NearCacheRatioStats> = near_cache_raw
@@ -361,6 +420,7 @@ impl StatisticsCollector {
         ClientStatistics {
             connection_stats,
             operation_counts,
+            operation_latencies,
             near_cache_stats,
             memory_stats,
             collected_at: now,
@@ -642,6 +702,7 @@ mod tests {
         let stats = ClientStatistics {
             connection_stats: ConnectionStats::default(),
             operation_counts: HashMap::new(),
+            operation_latencies: HashMap::new(),
             near_cache_stats: HashMap::new(),
             memory_stats: MemoryStats::default(),
             collected_at: Instant::now(),
@@ -656,6 +717,7 @@ mod tests {
         let stats = ClientStatistics {
             connection_stats: ConnectionStats::default(),
             operation_counts: HashMap::new(),
+            operation_latencies: HashMap::new(),
             near_cache_stats: HashMap::new(),
             memory_stats: MemoryStats::default(),
             collected_at: Instant::now(),
@@ -731,6 +793,61 @@ mod tests {
         let reporter = StatisticsReporter::new(Arc::clone(&collector), config);
 
         assert!(Arc::ptr_eq(reporter.collector(), &collector));
+    }
+
+    #[tokio::test]
+    async fn test_statistics_collector_latency_tracking() {
+        let collector = StatisticsCollector::new();
+
+        collector
+            .record_operation_with_latency(OperationType::MapGet, Duration::from_millis(10))
+            .await;
+        collector
+            .record_operation_with_latency(OperationType::MapGet, Duration::from_millis(20))
+            .await;
+        collector
+            .record_operation_with_latency(OperationType::MapGet, Duration::from_millis(30))
+            .await;
+
+        let avg = collector.average_latency(OperationType::MapGet).await;
+        assert!(avg.is_some());
+        assert!((avg.unwrap() - 20.0).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_statistics_collector_latency_none_for_untracked() {
+        let collector = StatisticsCollector::new();
+        let avg = collector.average_latency(OperationType::MapGet).await;
+        assert!(avg.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_statistics_collector_all_latencies() {
+        let collector = StatisticsCollector::new();
+
+        collector
+            .record_operation_with_latency(OperationType::MapGet, Duration::from_millis(10))
+            .await;
+        collector
+            .record_operation_with_latency(OperationType::MapPut, Duration::from_millis(20))
+            .await;
+
+        let all = collector.all_average_latencies().await;
+        assert_eq!(all.len(), 2);
+        assert!(all.contains_key(&OperationType::MapGet));
+        assert!(all.contains_key(&OperationType::MapPut));
+    }
+
+    #[tokio::test]
+    async fn test_client_statistics_latencies() {
+        let collector = StatisticsCollector::new();
+        collector
+            .record_operation_with_latency(OperationType::MapGet, Duration::from_millis(15))
+            .await;
+
+        let stats = collector.collect(0).await;
+        assert!(stats.operation_latency(OperationType::MapGet).is_some());
+        assert!(stats.operation_latency(OperationType::MapRemove).is_none());
     }
 
     #[test]
