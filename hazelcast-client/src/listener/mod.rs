@@ -21,12 +21,87 @@ pub use item_listener::{
 pub use lifecycle::LifecycleEvent;
 pub use membership::{Member, MemberEvent, MemberEventType, MembershipListener};
 
-use std::collections::HashMap;
+pub use self::{
+    BoxedMapPartitionLostListener, FnMapPartitionLostListener, MapPartitionLostEvent,
+    MapPartitionLostListener,
+};
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tokio::sync::watch;
 use uuid::Uuid;
+
+/// An event fired when a map partition is lost.
+///
+/// This event is specific to a particular map and indicates that data
+/// in the specified partition may have been lost due to member failures.
+#[derive(Debug, Clone)]
+pub struct MapPartitionLostEvent {
+    /// The ID of the lost partition.
+    pub partition_id: i32,
+    /// UUID of the member that detected the partition loss.
+    pub member_uuid: Uuid,
+}
+
+impl MapPartitionLostEvent {
+    /// Creates a new map partition lost event.
+    pub fn new(partition_id: i32, member_uuid: Uuid) -> Self {
+        Self {
+            partition_id,
+            member_uuid,
+        }
+    }
+
+    /// Returns the ID of the lost partition.
+    pub fn partition_id(&self) -> i32 {
+        self.partition_id
+    }
+
+    /// Returns the UUID of the member that detected the loss.
+    pub fn member_uuid(&self) -> Uuid {
+        self.member_uuid
+    }
+}
+
+/// A listener for map partition lost events.
+///
+/// Implement this trait to receive notifications when partitions
+/// containing data for a specific map are lost.
+pub trait MapPartitionLostListener: Send + Sync {
+    /// Called when a partition is lost for the map.
+    fn map_partition_lost(&self, event: MapPartitionLostEvent);
+}
+
+/// A boxed map partition lost listener.
+pub type BoxedMapPartitionLostListener = Arc<dyn MapPartitionLostListener>;
+
+/// A function-based map partition lost listener.
+pub struct FnMapPartitionLostListener<F>
+where
+    F: Fn(MapPartitionLostEvent) + Send + Sync,
+{
+    handler: F,
+}
+
+impl<F> FnMapPartitionLostListener<F>
+where
+    F: Fn(MapPartitionLostEvent) + Send + Sync,
+{
+    /// Creates a new function-based map partition lost listener.
+    pub fn new(handler: F) -> Self {
+        Self { handler }
+    }
+}
+
+impl<F> MapPartitionLostListener for FnMapPartitionLostListener<F>
+where
+    F: Fn(MapPartitionLostEvent) + Send + Sync,
+{
+    fn map_partition_lost(&self, event: MapPartitionLostEvent) {
+        (self.handler)(event);
+    }
+}
 
 /// Type of distributed object event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -485,6 +560,47 @@ impl ListenerStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_map_partition_lost_event_creation() {
+        let member = Uuid::new_v4();
+        let event = MapPartitionLostEvent::new(5, member);
+
+        assert_eq!(event.partition_id(), 5);
+        assert_eq!(event.member_uuid(), member);
+    }
+
+    #[test]
+    fn test_map_partition_lost_event_clone() {
+        let event = MapPartitionLostEvent::new(10, Uuid::new_v4());
+        let cloned = event.clone();
+
+        assert_eq!(event.partition_id, cloned.partition_id);
+        assert_eq!(event.member_uuid, cloned.member_uuid);
+    }
+
+    #[test]
+    fn test_fn_map_partition_lost_listener() {
+        use std::sync::atomic::{AtomicI32, Ordering};
+
+        let partition_id = Arc::new(AtomicI32::new(-1));
+        let partition_id_clone = Arc::clone(&partition_id);
+
+        let listener = FnMapPartitionLostListener::new(move |event: MapPartitionLostEvent| {
+            partition_id_clone.store(event.partition_id, Ordering::Relaxed);
+        });
+
+        let event = MapPartitionLostEvent::new(42, Uuid::new_v4());
+        listener.map_partition_lost(event);
+
+        assert_eq!(partition_id.load(Ordering::Relaxed), 42);
+    }
+
+    #[test]
+    fn test_map_partition_lost_event_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<MapPartitionLostEvent>();
+    }
 
     #[test]
     fn test_distributed_object_event_type_values() {

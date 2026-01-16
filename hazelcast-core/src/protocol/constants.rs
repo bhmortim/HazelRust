@@ -764,6 +764,12 @@ pub const MAP_LOAD_ALL: i32 = 0x012000;
 /// Map load given keys request.
 pub const MAP_LOAD_GIVEN_KEYS: i32 = 0x012100;
 
+/// Map add partition lost listener request.
+pub const MAP_ADD_PARTITION_LOST_LISTENER: i32 = 0x012200;
+
+/// Map remove partition lost listener request.
+pub const MAP_REMOVE_PARTITION_LOST_LISTENER: i32 = 0x012300;
+
 /// Cache get request.
 pub const CACHE_GET: i32 = 0x130100;
 

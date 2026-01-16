@@ -14,15 +14,15 @@ use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
     END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER,
     MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_ADD_INTERCEPTOR, MAP_AGGREGATE,
-    MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PAGING_PREDICATE,
-    MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL, MAP_EXECUTE_ON_ALL_KEYS,
-    MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE, MAP_FLUSH,
-    MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED,
+    MAP_AGGREGATE_WITH_PREDICATE, MAP_ADD_PARTITION_LOST_LISTENER, MAP_CLEAR, MAP_CONTAINS_KEY,
+    MAP_ENTRIES_WITH_PAGING_PREDICATE, MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL,
+    MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE,
+    MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED,
     MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOAD_ALL, MAP_LOAD_GIVEN_KEYS,
     MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT,
     MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
-    MAP_REMOVE_INTERCEPTOR, MAP_REPLACE, MAP_REPLACE_IF_SAME, MAP_SET_TTL, MAP_SIZE,
-    MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK, MAP_VALUES_WITH_PAGING_PREDICATE,
+    MAP_REMOVE_INTERCEPTOR, MAP_REMOVE_PARTITION_LOST_LISTENER, MAP_REPLACE, MAP_REPLACE_IF_SAME,
+    MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK, MAP_VALUES_WITH_PAGING_PREDICATE,
     MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
@@ -295,8 +295,9 @@ static INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 use crate::listener::{
-    dispatch_entry_event, BoxedEntryListener, EntryEvent, EntryEventType, EntryListener,
-    EntryListenerConfig, ListenerId, ListenerRegistration, ListenerStats,
+    dispatch_entry_event, BoxedEntryListener, BoxedMapPartitionLostListener, EntryEvent,
+    EntryEventType, EntryListener, EntryListenerConfig, ListenerId, ListenerRegistration,
+    ListenerStats, MapPartitionLostEvent, MapPartitionLostListener,
 };
 use crate::proxy::entry_processor::{EntryProcessor, EntryProcessorResult};
 use crate::proxy::interceptor::MapInterceptor;
@@ -3193,6 +3194,270 @@ where
         Ok(registration)
     }
 
+    /// Adds a partition lost listener to this map.
+    ///
+    /// The listener will be notified when a partition containing data for this map
+    /// is lost due to member failures. This can happen when all replicas of a
+    /// partition become unavailable.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let registration = map.add_partition_lost_listener(|event| {
+    ///     println!("Partition {} lost!", event.partition_id());
+    /// }).await?;
+    /// ```
+    pub async fn add_partition_lost_listener<F>(
+        &self,
+        handler: F,
+    ) -> Result<ListenerRegistration>
+    where
+        F: Fn(MapPartitionLostEvent) + Send + Sync + 'static,
+        K: 'static,
+        V: 'static,
+    {
+        self.check_permission(PermissionAction::Listen)?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_ADD_PARTITION_LOST_LISTENER, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::bool_frame(false)); // local only = false
+
+        let response = self.invoke(message).await?;
+        let listener_uuid = Self::decode_uuid_response(&response)?;
+
+        let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
+        let active_flag = registration.active_flag();
+        let shutdown_rx = registration.shutdown_receiver();
+
+        let connection_manager = Arc::clone(&self.connection_manager);
+        let listener_stats = Arc::clone(&self.listener_stats);
+        let handler = Arc::new(handler);
+        let map_name = self.name.clone();
+
+        spawn(async move {
+            let mut shutdown_rx = match shutdown_rx {
+                Some(rx) => rx,
+                None => return,
+            };
+
+            loop {
+                if !active_flag.load(Ordering::Acquire) {
+                    break;
+                }
+
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        let addresses = connection_manager.connected_addresses().await;
+                        for address in addresses {
+                            if !active_flag.load(Ordering::Acquire) {
+                                break;
+                            }
+
+                            match connection_manager.receive_from(address).await {
+                                Ok(Some(msg)) => {
+                                    if Self::is_partition_lost_event(&msg, &map_name) {
+                                        listener_stats.record_message();
+                                        if let Ok(event) = Self::decode_partition_lost_event(&msg) {
+                                            handler(event);
+                                        } else {
+                                            listener_stats.record_error();
+                                        }
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(_) => {
+                                    listener_stats.record_error();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(registration)
+    }
+
+    /// Adds a partition lost listener using the [`MapPartitionLostListener`] trait.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::sync::Arc;
+    ///
+    /// struct MyListener;
+    /// impl MapPartitionLostListener for MyListener {
+    ///     fn map_partition_lost(&self, event: MapPartitionLostEvent) {
+    ///         println!("Partition {} lost!", event.partition_id());
+    ///     }
+    /// }
+    ///
+    /// let listener = Arc::new(MyListener);
+    /// let registration = map.add_partition_lost_listener_obj(listener).await?;
+    /// ```
+    pub async fn add_partition_lost_listener_obj(
+        &self,
+        listener: BoxedMapPartitionLostListener,
+    ) -> Result<ListenerRegistration>
+    where
+        K: 'static,
+        V: 'static,
+    {
+        self.check_permission(PermissionAction::Listen)?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_ADD_PARTITION_LOST_LISTENER, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::bool_frame(false)); // local only = false
+
+        let response = self.invoke(message).await?;
+        let listener_uuid = Self::decode_uuid_response(&response)?;
+
+        let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
+        let active_flag = registration.active_flag();
+        let shutdown_rx = registration.shutdown_receiver();
+
+        let connection_manager = Arc::clone(&self.connection_manager);
+        let listener_stats = Arc::clone(&self.listener_stats);
+        let map_name = self.name.clone();
+
+        spawn(async move {
+            let mut shutdown_rx = match shutdown_rx {
+                Some(rx) => rx,
+                None => return,
+            };
+
+            loop {
+                if !active_flag.load(Ordering::Acquire) {
+                    break;
+                }
+
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        let addresses = connection_manager.connected_addresses().await;
+                        for address in addresses {
+                            if !active_flag.load(Ordering::Acquire) {
+                                break;
+                            }
+
+                            match connection_manager.receive_from(address).await {
+                                Ok(Some(msg)) => {
+                                    if Self::is_partition_lost_event(&msg, &map_name) {
+                                        listener_stats.record_message();
+                                        match Self::decode_partition_lost_event(&msg) {
+                                            Ok(event) => {
+                                                listener.map_partition_lost(event);
+                                            }
+                                            Err(_) => {
+                                                listener_stats.record_error();
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(_) => {
+                                    listener_stats.record_error();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(registration)
+    }
+
+    /// Removes a partition lost listener from this map.
+    ///
+    /// Returns `true` if the listener was successfully removed, `false` if it was not found.
+    pub async fn remove_partition_lost_listener(
+        &self,
+        registration: &ListenerRegistration,
+    ) -> Result<bool> {
+        registration.deactivate();
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_REMOVE_PARTITION_LOST_LISTENER, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::uuid_frame(registration.id().as_uuid()));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    fn is_partition_lost_event(message: &ClientMessage, map_name: &str) -> bool {
+        let frames = message.frames();
+        if frames.is_empty() {
+            return false;
+        }
+
+        let initial_frame = &frames[0];
+        if initial_frame.flags & IS_EVENT_FLAG == 0 {
+            return false;
+        }
+
+        if frames.len() > 1 {
+            let name_frame = &frames[1];
+            if let Ok(name) = std::str::from_utf8(&name_frame.content) {
+                return name == map_name;
+            }
+        }
+
+        true
+    }
+
+    fn decode_partition_lost_event(message: &ClientMessage) -> Result<MapPartitionLostEvent> {
+        let frames = message.frames();
+        if frames.is_empty() {
+            return Err(HazelcastError::Serialization(
+                "empty partition lost event".to_string(),
+            ));
+        }
+
+        let initial_frame = &frames[0];
+        let mut offset = RESPONSE_HEADER_SIZE;
+
+        let partition_id = if initial_frame.content.len() >= offset + 4 {
+            let id = i32::from_le_bytes([
+                initial_frame.content[offset],
+                initial_frame.content[offset + 1],
+                initial_frame.content[offset + 2],
+                initial_frame.content[offset + 3],
+            ]);
+            offset += 4;
+            id
+        } else {
+            return Err(HazelcastError::Serialization(
+                "missing partition_id in event".to_string(),
+            ));
+        };
+
+        let member_uuid = if initial_frame.content.len() >= offset + 16 {
+            let uuid_bytes: [u8; 16] = initial_frame.content[offset..offset + 16]
+                .try_into()
+                .map_err(|_| {
+                    HazelcastError::Serialization("invalid UUID bytes".to_string())
+                })?;
+            Uuid::from_bytes(uuid_bytes)
+        } else {
+            Uuid::nil()
+        };
+
+        Ok(MapPartitionLostEvent::new(partition_id, member_uuid))
+    }
+
     /// Adds an interceptor to this map.
     ///
     /// The interceptor will be invoked on the cluster members for all map operations.
@@ -4855,6 +5120,41 @@ mod tests {
 
         let data = IMap::<String, String>::serialize_value(&interceptor).unwrap();
         assert!(!data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_add_partition_lost_listener_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.add_partition_lost_listener(|_event| {}).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[test]
+    fn test_decode_partition_lost_event_empty_frames() {
+        let message = ClientMessage::create_for_encode(0, -1);
+        let result = IMap::<String, String>::decode_partition_lost_event(&message);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_is_partition_lost_event_checks_name() {
+        let message = ClientMessage::create_for_encode(0, -1);
+        let result = IMap::<String, String>::is_partition_lost_event(&message, "test-map");
+        assert!(!result);
     }
 
     #[test]
