@@ -1866,6 +1866,9 @@ impl LoggingConfigBuilder {
     }
 }
 
+/// Default update interval for Management Center statistics (5 seconds).
+const DEFAULT_MC_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
+
 /// Configuration for Management Center integration.
 ///
 /// Management Center provides real-time monitoring and management of
@@ -1876,6 +1879,7 @@ pub struct ManagementCenterConfig {
     enabled: bool,
     scripting_enabled: bool,
     url: Option<String>,
+    update_interval: Duration,
 }
 
 impl ManagementCenterConfig {
@@ -1901,6 +1905,11 @@ impl ManagementCenterConfig {
     pub fn url(&self) -> Option<&str> {
         self.url.as_deref()
     }
+
+    /// Returns the interval at which statistics are sent to Management Center.
+    pub fn update_interval(&self) -> Duration {
+        self.update_interval
+    }
 }
 
 impl Default for ManagementCenterConfig {
@@ -1909,6 +1918,7 @@ impl Default for ManagementCenterConfig {
             enabled: false,
             scripting_enabled: false,
             url: None,
+            update_interval: DEFAULT_MC_UPDATE_INTERVAL,
         }
     }
 }
@@ -1919,6 +1929,7 @@ pub struct ManagementCenterConfigBuilder {
     enabled: Option<bool>,
     scripting_enabled: Option<bool>,
     url: Option<String>,
+    update_interval: Option<Duration>,
 }
 
 impl ManagementCenterConfigBuilder {
@@ -1952,12 +1963,21 @@ impl ManagementCenterConfigBuilder {
         self
     }
 
+    /// Sets the interval at which statistics are sent to Management Center.
+    ///
+    /// Defaults to 5 seconds if not specified.
+    pub fn update_interval(mut self, interval: Duration) -> Self {
+        self.update_interval = Some(interval);
+        self
+    }
+
     /// Builds the Management Center configuration.
     ///
     /// # Errors
     ///
     /// Returns `ConfigError` if:
     /// - Management Center is enabled but no URL is provided
+    /// - `update_interval` is zero
     pub fn build(self) -> Result<ManagementCenterConfig, ConfigError> {
         let enabled = self.enabled.unwrap_or(false);
 
@@ -1967,10 +1987,18 @@ impl ManagementCenterConfigBuilder {
             ));
         }
 
+        let update_interval = self.update_interval.unwrap_or(DEFAULT_MC_UPDATE_INTERVAL);
+        if update_interval.is_zero() {
+            return Err(ConfigError::new(
+                "update_interval must be greater than zero",
+            ));
+        }
+
         Ok(ManagementCenterConfig {
             enabled,
             scripting_enabled: self.scripting_enabled.unwrap_or(false),
             url: self.url,
+            update_interval,
         })
     }
 }
@@ -2055,6 +2083,8 @@ impl DiagnosticsConfigBuilder {
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
     cluster_name: String,
+    instance_name: Option<String>,
+    labels: Vec<String>,
     network: NetworkConfig,
     retry: RetryConfig,
     security: SecurityConfig,
@@ -2075,6 +2105,16 @@ impl ClientConfig {
     /// Returns the cluster name.
     pub fn cluster_name(&self) -> &str {
         &self.cluster_name
+    }
+
+    /// Returns the client instance name, if set.
+    pub fn instance_name(&self) -> Option<&str> {
+        self.instance_name.as_deref()
+    }
+
+    /// Returns the client labels for identification in Management Center.
+    pub fn labels(&self) -> &[String] {
+        &self.labels
     }
 
     /// Returns the network configuration.
@@ -2143,6 +2183,8 @@ impl Default for ClientConfig {
 #[derive(Debug, Clone, Default)]
 pub struct ClientConfigBuilder {
     cluster_name: Option<String>,
+    instance_name: Option<String>,
+    labels: Vec<String>,
     network: NetworkConfigBuilder,
     retry: RetryConfigBuilder,
     security: SecurityConfigBuilder,
@@ -2163,6 +2205,42 @@ impl ClientConfigBuilder {
     /// Sets the cluster name.
     pub fn cluster_name(mut self, name: impl Into<String>) -> Self {
         self.cluster_name = Some(name.into());
+        self
+    }
+
+    /// Sets the client instance name for identification.
+    ///
+    /// The instance name appears in Management Center and logs to help
+    /// identify this specific client instance.
+    pub fn instance_name(mut self, name: impl Into<String>) -> Self {
+        self.instance_name = Some(name.into());
+        self
+    }
+
+    /// Adds a label to identify this client in Management Center.
+    ///
+    /// Labels are arbitrary strings that help categorize and filter
+    /// clients in the Management Center dashboard.
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.labels.push(label.into());
+        self
+    }
+
+    /// Sets the labels for this client, replacing any previously added.
+    ///
+    /// Labels are arbitrary strings that help categorize and filter
+    /// clients in the Management Center dashboard.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = ClientConfigBuilder::new()
+    ///     .with_labels(vec!["env:production".to_string(), "region:us-west".to_string()])
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn with_labels(mut self, labels: Vec<String>) -> Self {
+        self.labels = labels;
         self
     }
 
@@ -2372,6 +2450,8 @@ impl ClientConfigBuilder {
 
         Ok(ClientConfig {
             cluster_name,
+            instance_name: self.instance_name,
+            labels: self.labels,
             network,
             retry,
             security,
@@ -4397,6 +4477,37 @@ mod tests {
     }
 
     #[test]
+    fn test_management_center_config_update_interval() {
+        let config = ManagementCenterConfigBuilder::new()
+            .enabled(true)
+            .url("http://localhost:8080")
+            .update_interval(Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        assert_eq!(config.update_interval(), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_management_center_config_default_update_interval() {
+        let config = ManagementCenterConfig::default();
+        assert_eq!(config.update_interval(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_management_center_config_zero_update_interval_fails() {
+        let result = ManagementCenterConfigBuilder::new()
+            .update_interval(Duration::ZERO)
+            .build();
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("update_interval must be greater than zero"));
+    }
+
+    #[test]
     fn test_client_config_with_management_center() {
         let config = ClientConfig::builder()
             .management_center(|mc| {
@@ -4420,5 +4531,89 @@ mod tests {
         let config = ClientConfig::default();
         assert!(!config.management_center().enabled());
         assert!(config.management_center().url().is_none());
+    }
+
+    #[test]
+    fn test_client_config_with_labels() {
+        let config = ClientConfig::builder()
+            .with_labels(vec!["env:production".to_string(), "region:us-west".to_string()])
+            .build()
+            .unwrap();
+
+        assert_eq!(config.labels().len(), 2);
+        assert!(config.labels().contains(&"env:production".to_string()));
+        assert!(config.labels().contains(&"region:us-west".to_string()));
+    }
+
+    #[test]
+    fn test_client_config_with_label_incremental() {
+        let config = ClientConfig::builder()
+            .with_label("app:myapp")
+            .with_label("version:1.0")
+            .build()
+            .unwrap();
+
+        assert_eq!(config.labels().len(), 2);
+        assert!(config.labels().contains(&"app:myapp".to_string()));
+        assert!(config.labels().contains(&"version:1.0".to_string()));
+    }
+
+    #[test]
+    fn test_client_config_with_labels_replaces() {
+        let config = ClientConfig::builder()
+            .with_label("initial:label")
+            .with_labels(vec!["final:label".to_string()])
+            .build()
+            .unwrap();
+
+        assert_eq!(config.labels().len(), 1);
+        assert!(config.labels().contains(&"final:label".to_string()));
+    }
+
+    #[test]
+    fn test_client_config_default_no_labels() {
+        let config = ClientConfig::default();
+        assert!(config.labels().is_empty());
+    }
+
+    #[test]
+    fn test_client_config_with_instance_name() {
+        let config = ClientConfig::builder()
+            .instance_name("my-client-instance")
+            .build()
+            .unwrap();
+
+        assert_eq!(config.instance_name(), Some("my-client-instance"));
+    }
+
+    #[test]
+    fn test_client_config_default_no_instance_name() {
+        let config = ClientConfig::default();
+        assert!(config.instance_name().is_none());
+    }
+
+    #[test]
+    fn test_client_config_labels_are_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ClientConfig>();
+    }
+
+    #[test]
+    fn test_client_config_with_labels_and_management_center() {
+        let config = ClientConfig::builder()
+            .with_labels(vec!["team:platform".to_string()])
+            .instance_name("platform-client-1")
+            .management_center(|mc| {
+                mc.enabled(true)
+                    .url("http://mc.example.com:8080")
+                    .update_interval(Duration::from_secs(15))
+            })
+            .build()
+            .unwrap();
+
+        assert_eq!(config.labels().len(), 1);
+        assert_eq!(config.instance_name(), Some("platform-client-1"));
+        assert!(config.management_center().enabled());
+        assert_eq!(config.management_center().update_interval(), Duration::from_secs(15));
     }
 }

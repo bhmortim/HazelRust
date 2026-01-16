@@ -13,27 +13,32 @@ use crate::diagnostics::{ClientStatistics, StatisticsCollector};
 pub struct ManagementCenterService {
     collector: Arc<StatisticsCollector>,
     config: ManagementCenterConfig,
-    publish_interval: Duration,
+    client_labels: Vec<String>,
+    instance_name: Option<String>,
     shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 impl ManagementCenterService {
-    /// Default publish interval (5 seconds).
-    const DEFAULT_PUBLISH_INTERVAL: Duration = Duration::from_secs(5);
-
     /// Creates a new Management Center service.
     pub fn new(collector: Arc<StatisticsCollector>, config: ManagementCenterConfig) -> Self {
         Self {
             collector,
             config,
-            publish_interval: Self::DEFAULT_PUBLISH_INTERVAL,
+            client_labels: Vec::new(),
+            instance_name: None,
             shutdown_tx: None,
         }
     }
 
-    /// Sets the publish interval for statistics reporting.
-    pub fn with_publish_interval(mut self, interval: Duration) -> Self {
-        self.publish_interval = interval;
+    /// Sets the client labels for identification in Management Center.
+    pub fn with_labels(mut self, labels: Vec<String>) -> Self {
+        self.client_labels = labels;
+        self
+    }
+
+    /// Sets the client instance name for identification.
+    pub fn with_instance_name(mut self, name: impl Into<String>) -> Self {
+        self.instance_name = Some(name.into());
         self
     }
 
@@ -52,9 +57,19 @@ impl ManagementCenterService {
         self.config.scripting_enabled()
     }
 
-    /// Returns the publish interval.
-    pub fn publish_interval(&self) -> Duration {
-        self.publish_interval
+    /// Returns the publish/update interval from the configuration.
+    pub fn update_interval(&self) -> Duration {
+        self.config.update_interval()
+    }
+
+    /// Returns the client labels.
+    pub fn labels(&self) -> &[String] {
+        &self.client_labels
+    }
+
+    /// Returns the client instance name.
+    pub fn instance_name(&self) -> Option<&str> {
+        self.instance_name.as_deref()
     }
 
     /// Starts the periodic publishing task.
@@ -76,8 +91,10 @@ impl ManagementCenterService {
         self.shutdown_tx = Some(shutdown_tx);
 
         let collector = Arc::clone(&self.collector);
-        let interval = self.publish_interval;
+        let interval = self.config.update_interval();
         let scripting_enabled = self.config.scripting_enabled();
+        let labels = self.client_labels.clone();
+        let instance_name = self.instance_name.clone();
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -93,7 +110,13 @@ impl ManagementCenterService {
                     }
                     _ = ticker.tick() => {
                         let stats = collector.collect(0).await;
-                        if let Err(e) = publish_statistics(&url, &stats, scripting_enabled).await {
+                        if let Err(e) = publish_statistics(
+                            &url,
+                            &stats,
+                            scripting_enabled,
+                            &labels,
+                            instance_name.as_deref(),
+                        ).await {
                             tracing::warn!(
                                 error = %e,
                                 "failed to publish statistics to Management Center"
@@ -142,16 +165,20 @@ async fn publish_statistics(
     url: &str,
     stats: &ClientStatistics,
     _scripting_enabled: bool,
+    labels: &[String],
+    instance_name: Option<&str>,
 ) -> Result<(), ManagementCenterError> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(ManagementCenterError::InvalidUrl(url.to_string()));
     }
 
-    let payload = format_statistics_payload(stats);
+    let payload = format_statistics_payload(stats, labels, instance_name);
 
     tracing::trace!(
         url = %url,
         payload_size = payload.len(),
+        labels = ?labels,
+        instance_name = ?instance_name,
         "publishing statistics to Management Center"
     );
 
@@ -159,11 +186,23 @@ async fn publish_statistics(
 }
 
 /// Formats statistics into a payload suitable for Management Center.
-fn format_statistics_payload(stats: &ClientStatistics) -> String {
+fn format_statistics_payload(
+    stats: &ClientStatistics,
+    labels: &[String],
+    instance_name: Option<&str>,
+) -> String {
     let conn_stats = stats.connection_stats();
     let mem_stats = stats.memory_stats();
 
     let mut parts = Vec::new();
+
+    if let Some(name) = instance_name {
+        parts.push(format!("instanceName={}", name));
+    }
+
+    if !labels.is_empty() {
+        parts.push(format!("labels={}", labels.join(";")));
+    }
 
     parts.push(format!("uptime={}", stats.uptime().as_millis()));
     parts.push(format!(
@@ -244,6 +283,8 @@ mod tests {
         assert!(!service.is_enabled());
         assert!(!service.is_running());
         assert!(service.url().is_none());
+        assert!(service.labels().is_empty());
+        assert!(service.instance_name().is_none());
     }
 
     #[test]
@@ -258,13 +299,37 @@ mod tests {
     }
 
     #[test]
-    fn test_management_center_service_with_interval() {
+    fn test_management_center_service_with_labels() {
         let collector = Arc::new(StatisticsCollector::new());
         let config = ManagementCenterConfig::default();
         let service = ManagementCenterService::new(collector, config)
-            .with_publish_interval(Duration::from_secs(10));
+            .with_labels(vec!["env:prod".to_string(), "region:us-west".to_string()]);
 
-        assert_eq!(service.publish_interval(), Duration::from_secs(10));
+        assert_eq!(service.labels().len(), 2);
+        assert!(service.labels().contains(&"env:prod".to_string()));
+        assert!(service.labels().contains(&"region:us-west".to_string()));
+    }
+
+    #[test]
+    fn test_management_center_service_with_instance_name() {
+        let collector = Arc::new(StatisticsCollector::new());
+        let config = ManagementCenterConfig::default();
+        let service = ManagementCenterService::new(collector, config)
+            .with_instance_name("client-1");
+
+        assert_eq!(service.instance_name(), Some("client-1"));
+    }
+
+    #[test]
+    fn test_management_center_service_update_interval_from_config() {
+        let collector = Arc::new(StatisticsCollector::new());
+        let config = ManagementCenterConfigBuilder::new()
+            .update_interval(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let service = ManagementCenterService::new(collector, config);
+
+        assert_eq!(service.update_interval(), Duration::from_secs(10));
     }
 
     #[test]
@@ -273,10 +338,7 @@ mod tests {
         let config = ManagementCenterConfig::default();
         let service = ManagementCenterService::new(collector, config);
 
-        assert_eq!(
-            service.publish_interval(),
-            ManagementCenterService::DEFAULT_PUBLISH_INTERVAL
-        );
+        assert_eq!(service.update_interval(), Duration::from_secs(5));
     }
 
     #[tokio::test]
@@ -339,7 +401,7 @@ mod tests {
         collector.record_bytes_received(2000);
 
         let stats = collector.collect(1).await;
-        let payload = format_statistics_payload(&stats);
+        let payload = format_statistics_payload(&stats, &[], None);
 
         assert!(payload.contains("connections.active=1"));
         assert!(payload.contains("connections.opened=1"));
@@ -359,11 +421,41 @@ mod tests {
             .await;
 
         let stats = collector.collect(0).await;
-        let payload = format_statistics_payload(&stats);
+        let payload = format_statistics_payload(&stats, &[], None);
 
         assert!(payload.contains("operations.total=2"));
         assert!(payload.contains("operations.map.get=1"));
         assert!(payload.contains("operations.map.put=1"));
+    }
+
+    #[tokio::test]
+    async fn test_format_statistics_payload_with_labels() {
+        let collector = Arc::new(StatisticsCollector::new());
+        let stats = collector.collect(0).await;
+        let labels = vec!["env:prod".to_string(), "app:web".to_string()];
+        let payload = format_statistics_payload(&stats, &labels, None);
+
+        assert!(payload.contains("labels=env:prod;app:web"));
+    }
+
+    #[tokio::test]
+    async fn test_format_statistics_payload_with_instance_name() {
+        let collector = Arc::new(StatisticsCollector::new());
+        let stats = collector.collect(0).await;
+        let payload = format_statistics_payload(&stats, &[], Some("my-client-instance"));
+
+        assert!(payload.contains("instanceName=my-client-instance"));
+    }
+
+    #[tokio::test]
+    async fn test_format_statistics_payload_with_labels_and_instance_name() {
+        let collector = Arc::new(StatisticsCollector::new());
+        let stats = collector.collect(0).await;
+        let labels = vec!["region:us-east".to_string()];
+        let payload = format_statistics_payload(&stats, &labels, Some("client-42"));
+
+        assert!(payload.contains("instanceName=client-42"));
+        assert!(payload.contains("labels=region:us-east"));
     }
 
     #[test]
@@ -408,7 +500,7 @@ mod tests {
         let collector = Arc::new(StatisticsCollector::new());
         let stats = collector.collect(0).await;
 
-        let result = publish_statistics("invalid-url", &stats, false).await;
+        let result = publish_statistics("invalid-url", &stats, false, &[], None).await;
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -421,7 +513,7 @@ mod tests {
         let collector = Arc::new(StatisticsCollector::new());
         let stats = collector.collect(0).await;
 
-        let result = publish_statistics("http://localhost:8080/stats", &stats, false).await;
+        let result = publish_statistics("http://localhost:8080/stats", &stats, false, &[], None).await;
         assert!(result.is_ok());
     }
 
@@ -430,7 +522,23 @@ mod tests {
         let collector = Arc::new(StatisticsCollector::new());
         let stats = collector.collect(0).await;
 
-        let result = publish_statistics("https://mc.example.com/stats", &stats, true).await;
+        let result = publish_statistics("https://mc.example.com/stats", &stats, true, &[], None).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_publish_statistics_with_labels() {
+        let collector = Arc::new(StatisticsCollector::new());
+        let stats = collector.collect(0).await;
+        let labels = vec!["test:label".to_string()];
+
+        let result = publish_statistics(
+            "http://localhost:8080/stats",
+            &stats,
+            false,
+            &labels,
+            Some("test-instance"),
+        ).await;
         assert!(result.is_ok());
     }
 
