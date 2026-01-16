@@ -38,6 +38,7 @@ use hazelcast_core::{
 };
 
 use crate::cache::{NearCache, NearCacheConfig, NearCacheStats};
+use crate::proxy::map_stats::{LocalMapStats, MapStatsTracker};
 
 /// Event types for Event Journal map events.
 ///
@@ -470,6 +471,7 @@ pub struct IMap<K, V> {
     name: String,
     connection_manager: Arc<ConnectionManager>,
     listener_stats: Arc<ListenerStats>,
+    stats_tracker: Arc<MapStatsTracker>,
     near_cache: Option<Arc<Mutex<NearCache<Vec<u8>, Vec<u8>>>>>,
     invalidation_registration: Arc<Mutex<Option<ListenerRegistration>>>,
     thread_id: i64,
@@ -483,6 +485,7 @@ impl<K, V> IMap<K, V> {
             name,
             connection_manager,
             listener_stats: Arc::new(ListenerStats::new()),
+            stats_tracker: Arc::new(MapStatsTracker::new()),
             near_cache: None,
             invalidation_registration: Arc::new(Mutex::new(None)),
             thread_id: std::process::id() as i64,
@@ -500,6 +503,7 @@ impl<K, V> IMap<K, V> {
             name,
             connection_manager,
             listener_stats: Arc::new(ListenerStats::new()),
+            stats_tracker: Arc::new(MapStatsTracker::new()),
             near_cache: Some(Arc::new(Mutex::new(NearCache::new(config)))),
             invalidation_registration: Arc::new(Mutex::new(None)),
             thread_id: std::process::id() as i64,
@@ -547,17 +551,20 @@ where
     pub async fn get(&self, key: &K) -> Result<Option<V>> {
         self.check_permission(PermissionAction::Read)?;
         self.check_quorum(true).await?;
+        self.stats_tracker.record_get();
         let key_data = Self::serialize_value(key)?;
 
         // Check near-cache first
         if let Some(ref cache) = self.near_cache {
             let mut cache_guard = cache.lock().unwrap();
             if let Some(value_data) = cache_guard.get(&key_data) {
+                self.stats_tracker.record_hit();
                 let mut input = ObjectDataInput::new(&value_data);
                 return V::deserialize(&mut input).map(Some);
             }
         }
 
+        self.stats_tracker.record_miss();
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_GET, partition_id);
@@ -588,6 +595,7 @@ where
     pub async fn put(&self, key: K, value: V) -> Result<Option<V>> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
+        self.stats_tracker.record_put();
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
 
@@ -741,6 +749,7 @@ where
     pub async fn remove(&self, key: &K) -> Result<Option<V>> {
         self.check_permission(PermissionAction::Remove)?;
         self.check_quorum(false).await?;
+        self.stats_tracker.record_remove();
         let key_data = Self::serialize_value(key)?;
 
         // Invalidate near-cache before remote operation
@@ -2214,6 +2223,33 @@ where
         self.near_cache
             .as_ref()
             .map(|cache| cache.lock().unwrap().stats())
+    }
+
+    /// Returns accumulated client-side statistics for this map.
+    ///
+    /// These statistics reflect operations performed through this client instance,
+    /// including get/put/remove counts, hit/miss ratios, and timing information.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let stats = map.local_stats();
+    /// println!("Gets: {}, Puts: {}, Removes: {}",
+    ///     stats.get_count(), stats.put_count(), stats.remove_count());
+    /// println!("Hit ratio: {:.2}%", stats.hit_ratio() * 100.0);
+    /// ```
+    pub fn local_stats(&self) -> LocalMapStats {
+        let (owned_entry_count, heap_cost) = self.near_cache
+            .as_ref()
+            .map(|cache| {
+                let guard = cache.lock().unwrap();
+                let count = guard.size() as u64;
+                let cost = count * 64;
+                (count, cost)
+            })
+            .unwrap_or((0, 0));
+
+        self.stats_tracker.snapshot(owned_entry_count, heap_cost)
     }
 
     /// Invalidates a specific entry in the near-cache.
@@ -4656,6 +4692,7 @@ impl<K, V> Clone for IMap<K, V> {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
             listener_stats: Arc::clone(&self.listener_stats),
+            stats_tracker: Arc::clone(&self.stats_tracker),
             near_cache: self.near_cache.as_ref().map(Arc::clone),
             invalidation_registration: Arc::clone(&self.invalidation_registration),
             thread_id: self.thread_id,
@@ -4866,6 +4903,54 @@ mod tests {
         assert_eq!(stats.misses(), 0);
         assert_eq!(stats.evictions(), 0);
         assert_eq!(stats.expirations(), 0);
+    }
+
+    #[test]
+    fn test_local_stats_initial() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let stats = map.local_stats();
+        assert_eq!(stats.hits(), 0);
+        assert_eq!(stats.misses(), 0);
+        assert_eq!(stats.get_count(), 0);
+        assert_eq!(stats.put_count(), 0);
+        assert_eq!(stats.remove_count(), 0);
+        assert_eq!(stats.owned_entry_count(), 0);
+        assert_eq!(stats.backup_entry_count(), 0);
+        assert_eq!(stats.heap_cost(), 0);
+    }
+
+    #[test]
+    fn test_local_stats_with_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        let stats = map.local_stats();
+        assert_eq!(stats.owned_entry_count(), 0);
+    }
+
+    #[test]
+    fn test_local_stats_shared_on_clone() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let map1: IMap<String, String> = IMap::new("test".to_string(), cm);
+        let map2 = map1.clone();
+
+        assert!(Arc::ptr_eq(&map1.stats_tracker, &map2.stats_tracker));
     }
 
     #[test]
