@@ -1,9 +1,13 @@
 //! Compact serialization framework for schema-based serialization.
 
+mod generic_record;
+
 use crate::error::{HazelcastError, Result};
 use crate::serialization::{DataInput, DataOutput, ObjectDataInput, ObjectDataOutput};
 use std::collections::HashMap;
 use std::hash::Hash;
+
+pub use generic_record::{GenericRecord, GenericRecordBuilder};
 
 /// Type identifier for Compact serialization.
 pub const COMPACT_TYPE_ID: i32 = -2;

@@ -14,7 +14,8 @@ mod serde;
 pub use compact::{
     rabin_fingerprint_64, Compact, CompactReader, CompactSerializer, CompactWriter,
     DefaultCompactReader, DefaultCompactWriter, DefaultFieldValue, FieldDescriptor, FieldKind,
-    Schema, SchemaEvolutionResult, SchemaEvolutionValidator, SchemaRegistry, COMPACT_TYPE_ID,
+    GenericRecord, GenericRecordBuilder, Schema, SchemaEvolutionResult, SchemaEvolutionValidator,
+    SchemaRegistry, COMPACT_TYPE_ID,
 };
 pub use data_input::{DataInput, ObjectDataInput};
 pub use data_output::{DataOutput, ObjectDataOutput};

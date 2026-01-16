@@ -12,8 +12,9 @@ pub use serialization::{
     ClassDefinition, Compact, CompactReader, CompactSerializer, CompactWriter, DataInput,
     DataOutput, DefaultCompactReader, DefaultCompactWriter, DefaultPortableReader,
     DefaultPortableWriter, Deserializable, FieldDefinition, FieldDescriptor, FieldKind, FieldType,
-    ObjectDataInput, ObjectDataOutput, Portable, PortableFactory, PortableReader,
-    PortableSerializer, PortableWriter, Schema, Serializable, COMPACT_TYPE_ID, PORTABLE_TYPE_ID,
+    GenericRecord, GenericRecordBuilder, ObjectDataInput, ObjectDataOutput, Portable,
+    PortableFactory, PortableReader, PortableSerializer, PortableWriter, Schema, Serializable,
+    COMPACT_TYPE_ID, PORTABLE_TYPE_ID,
 };
 
 #[cfg(feature = "serde")]
