@@ -15,11 +15,12 @@ use hazelcast_core::protocol::constants::{
     END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER,
     MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PREDICATE,
-    MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_FORCE_UNLOCK, MAP_GET,
-    MAP_GET_ALL, MAP_IS_LOCKED, MAP_KEYS_WITH_PREDICATE, MAP_LOCK, MAP_PROJECT,
-    MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT, MAP_REMOVE,
-    MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME, MAP_REPLACE, MAP_REPLACE_IF_SAME, MAP_SIZE,
-    MAP_TRY_LOCK, MAP_UNLOCK, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    MAP_EVICT, MAP_EVICT_ALL, MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS,
+    MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED,
+    MAP_KEYS_WITH_PREDICATE, MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT,
+    MAP_PUT_ALL, MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER,
+    MAP_REMOVE_IF_SAME, MAP_REPLACE, MAP_REPLACE_IF_SAME, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK,
+    MAP_TRY_PUT, MAP_UNLOCK, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -28,6 +29,105 @@ use hazelcast_core::{
 };
 
 use crate::cache::{NearCache, NearCacheConfig, NearCacheStats};
+
+/// Metadata view of a map entry.
+///
+/// Contains information about the entry's lifecycle, access patterns, and configuration.
+#[derive(Debug, Clone)]
+pub struct EntryView<K, V> {
+    /// The key of the entry.
+    pub key: K,
+    /// The value of the entry.
+    pub value: V,
+    /// The cost (memory) of the entry in bytes.
+    pub cost: i64,
+    /// The creation time of the entry in milliseconds since epoch.
+    pub creation_time: i64,
+    /// The expiration time of the entry in milliseconds since epoch.
+    pub expiration_time: i64,
+    /// The number of hits (accesses) of the entry.
+    pub hits: i64,
+    /// The last access time of the entry in milliseconds since epoch.
+    pub last_access_time: i64,
+    /// The last time the entry was stored to the map store in milliseconds since epoch.
+    pub last_stored_time: i64,
+    /// The last update time of the entry in milliseconds since epoch.
+    pub last_update_time: i64,
+    /// The version of the entry.
+    pub version: i64,
+    /// The time-to-live of the entry in milliseconds.
+    pub ttl: i64,
+    /// The max idle time of the entry in milliseconds.
+    pub max_idle: i64,
+}
+
+impl<K, V> EntryView<K, V> {
+    /// Returns the key of this entry.
+    pub fn key(&self) -> &K {
+        &self.key
+    }
+
+    /// Returns the value of this entry.
+    pub fn value(&self) -> &V {
+        &self.value
+    }
+
+    /// Returns the cost (memory usage) of this entry in bytes.
+    pub fn cost(&self) -> i64 {
+        self.cost
+    }
+
+    /// Returns the creation time of this entry in milliseconds since epoch.
+    pub fn creation_time(&self) -> i64 {
+        self.creation_time
+    }
+
+    /// Returns the expiration time of this entry in milliseconds since epoch.
+    ///
+    /// Returns 0 if the entry never expires.
+    pub fn expiration_time(&self) -> i64 {
+        self.expiration_time
+    }
+
+    /// Returns the number of times this entry has been accessed.
+    pub fn hits(&self) -> i64 {
+        self.hits
+    }
+
+    /// Returns the last access time of this entry in milliseconds since epoch.
+    pub fn last_access_time(&self) -> i64 {
+        self.last_access_time
+    }
+
+    /// Returns the last time this entry was stored to the map store in milliseconds since epoch.
+    pub fn last_stored_time(&self) -> i64 {
+        self.last_stored_time
+    }
+
+    /// Returns the last update time of this entry in milliseconds since epoch.
+    pub fn last_update_time(&self) -> i64 {
+        self.last_update_time
+    }
+
+    /// Returns the version of this entry.
+    pub fn version(&self) -> i64 {
+        self.version
+    }
+
+    /// Returns the time-to-live of this entry in milliseconds.
+    ///
+    /// Returns 0 if the entry uses the map's default TTL.
+    pub fn ttl(&self) -> i64 {
+        self.ttl
+    }
+
+    /// Returns the max idle time of this entry in milliseconds.
+    ///
+    /// Returns 0 if the entry uses the map's default max idle time.
+    pub fn max_idle(&self) -> i64 {
+        self.max_idle
+    }
+}
 
 /// The type of index to create on a map attribute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -892,6 +992,282 @@ where
         Ok(())
     }
 
+    /// Evicts the entry for the specified key from the map.
+    ///
+    /// Unlike `remove`, eviction only removes the entry from memory without
+    /// triggering map store delete. If the map has a map store configured,
+    /// the entry will be loaded again on the next access.
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the entry was evicted, `false` if the key was not found.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Evict a cached entry to free memory
+    /// let evicted = map.evict(&"large-data-key".to_string()).await?;
+    /// if evicted {
+    ///     println!("Entry evicted from memory");
+    /// }
+    /// ```
+    pub async fn evict(&self, key: &K) -> Result<bool> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(key)?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_EVICT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::long_frame(self.thread_id));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Evicts all entries from this map.
+    ///
+    /// Unlike `clear`, eviction only removes entries from memory without
+    /// triggering map store deletes. If the map has a map store configured,
+    /// entries will be loaded again on access.
+    ///
+    /// If near-cache is enabled, clears the local cache as well.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Free memory by evicting all cached entries
+    /// map.evict_all().await?;
+    /// ```
+    pub async fn evict_all(&self) -> Result<()> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.clear();
+        }
+
+        let mut message = ClientMessage::create_for_encode(MAP_EVICT_ALL, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
+    /// Flushes all pending map store operations for this map.
+    ///
+    /// If the map has a map store configured with write-behind mode,
+    /// this method forces all pending writes to be persisted immediately.
+    ///
+    /// This is a no-op if:
+    /// - No map store is configured
+    /// - The map store is in write-through mode
+    /// - There are no pending writes
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Ensure all data is persisted before shutdown
+    /// map.flush().await?;
+    /// ```
+    pub async fn flush(&self) -> Result<()> {
+        self.check_permission(PermissionAction::Put)?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_FLUSH, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
+    /// Returns the entry view for the specified key.
+    ///
+    /// The entry view contains metadata about the entry including creation time,
+    /// expiration time, hit count, version, and other lifecycle information.
+    ///
+    /// Returns `None` if the key does not exist in the map.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// if let Some(view) = map.get_entry_view(&"user:123".to_string()).await? {
+    ///     println!("Entry created at: {}", view.creation_time());
+    ///     println!("Hit count: {}", view.hits());
+    ///     println!("Version: {}", view.version());
+    /// }
+    /// ```
+    pub async fn get_entry_view(&self, key: &K) -> Result<Option<EntryView<K, V>>> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+        let key_data = Self::serialize_value(key)?;
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_GET_ENTRY_VIEW, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::long_frame(self.thread_id));
+
+        let response = self.invoke(message).await?;
+        Self::decode_entry_view_response(&response)
+    }
+
+    /// Sets the time-to-live for an existing entry.
+    ///
+    /// Updates the TTL of the entry without modifying its value. The entry
+    /// will be automatically evicted after the TTL expires.
+    ///
+    /// Returns `true` if the TTL was successfully set, `false` if the key
+    /// was not found.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key of the entry
+    /// * `ttl` - The new time-to-live duration
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Extend the TTL of an entry
+    /// let updated = map.set_ttl(&"session:abc".to_string(), Duration::from_secs(3600)).await?;
+    /// if updated {
+    ///     println!("Session TTL extended by 1 hour");
+    /// }
+    /// ```
+    pub async fn set_ttl(&self, key: &K, ttl: Duration) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(key)?;
+        let partition_id = compute_partition_hash(&key_data);
+        let ttl_ms = ttl.as_millis() as i64;
+
+        let mut message = ClientMessage::create_for_encode(MAP_SET_TTL, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::long_frame(ttl_ms));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Tries to put the specified key-value pair within the given timeout.
+    ///
+    /// Unlike `put`, this method will not block indefinitely. If the entry
+    /// cannot be written within the timeout (e.g., due to a lock held by
+    /// another thread), it returns `false`.
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// the operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to associate the value with
+    /// * `value` - The value to store
+    /// * `timeout` - The maximum time to wait
+    ///
+    /// # Returns
+    ///
+    /// `true` if the entry was successfully put, `false` if the timeout expired.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Try to update with a short timeout
+    /// let success = map.try_put(
+    ///     "contested-key".to_string(),
+    ///     "new-value".to_string(),
+    ///     Duration::from_millis(100),
+    /// ).await?;
+    /// if !success {
+    ///     println!("Could not acquire lock in time");
+    /// }
+    /// ```
+    pub async fn try_put(&self, key: K, value: V, timeout: Duration) -> Result<bool> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+        let timeout_ms = timeout.as_millis() as i64;
+
+        let mut message = ClientMessage::create_for_encode(MAP_TRY_PUT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(Self::long_frame(timeout_ms));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Puts an entry into this map without triggering map store write.
+    ///
+    /// This is similar to `put`, but the entry will not be written to the
+    /// map store (if configured). The entry will only exist in memory and
+    /// will be lost if evicted or if the cluster is restarted.
+    ///
+    /// Useful for caching data that doesn't need to be persisted.
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// the operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to associate the value with
+    /// * `value` - The value to store
+    /// * `ttl` - The time-to-live for the entry (use `Duration::ZERO` for no expiry)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Cache computed data without persisting
+    /// map.put_transient(
+    ///     "cache:computed-result".to_string(),
+    ///     expensive_computation(),
+    ///     Duration::from_secs(300), // 5 minute cache
+    /// ).await?;
+    /// ```
+    pub async fn put_transient(&self, key: K, value: V, ttl: Duration) -> Result<()> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+        let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
+
+        let mut message = ClientMessage::create_for_encode(MAP_PUT_TRANSIENT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(Self::long_frame(ttl_ms));
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
         value.serialize(&mut output)?;
@@ -985,6 +1361,83 @@ where
         } else {
             Ok(0)
         }
+    }
+
+    fn decode_entry_view_response(response: &ClientMessage) -> Result<Option<EntryView<K, V>>> {
+        let frames = response.frames();
+        if frames.len() < 2 {
+            return Ok(None);
+        }
+
+        let initial_frame = &frames[0];
+
+        // Check if null response
+        if initial_frame.flags & IS_NULL_FLAG != 0 {
+            return Ok(None);
+        }
+
+        // Decode fixed-size fields from initial frame
+        let mut offset = RESPONSE_HEADER_SIZE;
+        let content = &initial_frame.content;
+
+        if content.len() < offset + 88 {
+            return Ok(None);
+        }
+
+        let cost = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let creation_time = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let expiration_time = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let hits = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let last_access_time = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let last_stored_time = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let last_update_time = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let version = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let ttl = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let max_idle = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+
+        // Decode key from frame 1
+        if frames.len() < 3 {
+            return Ok(None);
+        }
+
+        let key_frame = &frames[1];
+        if key_frame.content.is_empty() || key_frame.flags & IS_NULL_FLAG != 0 {
+            return Ok(None);
+        }
+        let mut key_input = ObjectDataInput::new(&key_frame.content);
+        let key = K::deserialize(&mut key_input)?;
+
+        // Decode value from frame 2
+        let value_frame = &frames[2];
+        if value_frame.content.is_empty() || value_frame.flags & IS_NULL_FLAG != 0 {
+            return Ok(None);
+        }
+        let mut value_input = ObjectDataInput::new(&value_frame.content);
+        let value = V::deserialize(&mut value_input)?;
+
+        Ok(Some(EntryView {
+            key,
+            value,
+            cost,
+            creation_time,
+            expiration_time,
+            hits,
+            last_access_time,
+            last_stored_time,
+            last_update_time,
+            version,
+            ttl,
+            max_idle,
+        }))
     }
 
     fn bool_frame(value: bool) -> Frame {
@@ -3132,6 +3585,440 @@ mod tests {
             .add_attribute("userId")
             .build();
         assert_eq!(equality_query_index.index_type(), IndexType::Hash);
+    }
+
+    #[test]
+    fn test_entry_view_accessors() {
+        let view: EntryView<String, i32> = EntryView {
+            key: "test-key".to_string(),
+            value: 42,
+            cost: 100,
+            creation_time: 1000,
+            expiration_time: 2000,
+            hits: 5,
+            last_access_time: 1500,
+            last_stored_time: 1200,
+            last_update_time: 1400,
+            version: 3,
+            ttl: 60000,
+            max_idle: 30000,
+        };
+
+        assert_eq!(view.key(), "test-key");
+        assert_eq!(*view.value(), 42);
+        assert_eq!(view.cost(), 100);
+        assert_eq!(view.creation_time(), 1000);
+        assert_eq!(view.expiration_time(), 2000);
+        assert_eq!(view.hits(), 5);
+        assert_eq!(view.last_access_time(), 1500);
+        assert_eq!(view.last_stored_time(), 1200);
+        assert_eq!(view.last_update_time(), 1400);
+        assert_eq!(view.version(), 3);
+        assert_eq!(view.ttl(), 60000);
+        assert_eq!(view.max_idle(), 30000);
+    }
+
+    #[test]
+    fn test_entry_view_clone() {
+        let view: EntryView<String, i32> = EntryView {
+            key: "key".to_string(),
+            value: 123,
+            cost: 50,
+            creation_time: 1000,
+            expiration_time: 0,
+            hits: 10,
+            last_access_time: 1500,
+            last_stored_time: 0,
+            last_update_time: 1200,
+            version: 1,
+            ttl: 0,
+            max_idle: 0,
+        };
+
+        let cloned = view.clone();
+        assert_eq!(view.key, cloned.key);
+        assert_eq!(view.value, cloned.value);
+        assert_eq!(view.version, cloned.version);
+    }
+
+    #[test]
+    fn test_entry_view_debug() {
+        let view: EntryView<String, i32> = EntryView {
+            key: "k".to_string(),
+            value: 1,
+            cost: 0,
+            creation_time: 0,
+            expiration_time: 0,
+            hits: 0,
+            last_access_time: 0,
+            last_stored_time: 0,
+            last_update_time: 0,
+            version: 0,
+            ttl: 0,
+            max_idle: 0,
+        };
+
+        let debug_str = format!("{:?}", view);
+        assert!(debug_str.contains("EntryView"));
+        assert!(debug_str.contains("key"));
+        assert!(debug_str.contains("value"));
+    }
+
+    #[tokio::test]
+    async fn test_evict_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.evict(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_evict_all_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.evict_all().await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_flush_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.flush().await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_view_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.get_entry_view(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_set_ttl_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.set_ttl(&"key".to_string(), Duration::from_secs(60)).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_try_put_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.try_put(
+            "key".to_string(),
+            "value".to_string(),
+            Duration::from_millis(100),
+        ).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_put_transient_permission_denied() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.put_transient(
+            "key".to_string(),
+            "value".to_string(),
+            Duration::from_secs(60),
+        ).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_evict_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.evict(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
+    async fn test_evict_all_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.evict_all().await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_view_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Read)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.get_entry_view(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
+    async fn test_set_ttl_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.set_ttl(&"key".to_string(), Duration::from_secs(60)).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
+    async fn test_try_put_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.try_put(
+            "key".to_string(),
+            "value".to_string(),
+            Duration::from_millis(100),
+        ).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[tokio::test]
+    async fn test_put_transient_quorum_not_present() {
+        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
+        use crate::connection::ConnectionManager;
+
+        let quorum = QuorumConfig::builder("protected-*")
+            .min_cluster_size(3)
+            .quorum_type(QuorumType::Write)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .add_quorum_config(quorum)
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
+
+        let result = map.put_transient(
+            "key".to_string(),
+            "value".to_string(),
+            Duration::from_secs(60),
+        ).await;
+        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
+    }
+
+    #[test]
+    fn test_evict_invalidates_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(map.has_near_cache());
+    }
+
+    #[test]
+    fn test_try_put_invalidates_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(map.has_near_cache());
+    }
+
+    #[test]
+    fn test_put_transient_invalidates_near_cache() {
+        use crate::connection::ConnectionManager;
+        use std::net::SocketAddr;
+
+        let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
+        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = NearCacheConfig::builder("test").build().unwrap();
+        let map: IMap<String, String> =
+            IMap::new_with_near_cache("test".to_string(), cm, config);
+
+        assert!(map.has_near_cache());
+    }
+
+    #[test]
+    fn test_entry_view_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<EntryView<String, i32>>();
+    }
+
+    #[test]
+    fn test_put_transient_zero_ttl_uses_no_expiry() {
+        let ttl = Duration::ZERO;
+        let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
+        assert_eq!(ttl_ms, -1);
+    }
+
+    #[test]
+    fn test_put_transient_nonzero_ttl_converts_correctly() {
+        let ttl = Duration::from_secs(60);
+        let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
+        assert_eq!(ttl_ms, 60000);
     }
 
     #[test]

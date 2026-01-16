@@ -49,7 +49,7 @@ pub use listener::{
     FnItemListener, ItemEvent, ItemEventType, ItemListener, ItemListenerConfig, LifecycleEvent,
     ListenerId, ListenerRegistration, ListenerStats,
 };
-pub use proxy::{IList, IMap, IQueue, ISet, ITopic, MultiMap, TopicMessage};
+pub use proxy::{EntryView, IList, IMap, IQueue, ISet, ITopic, MultiMap, TopicMessage};
 pub use query::{
     AndPredicate, BetweenPredicate, EqualPredicate, FalsePredicate, GreaterThanPredicate,
     InPredicate, LessThanPredicate, LikePredicate, MultiAttributeProjection, NotEqualPredicate,

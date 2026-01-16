@@ -518,6 +518,27 @@ pub const MAP_PROJECT: i32 = 0x013B00;
 /// Map project with predicate request.
 pub const MAP_PROJECT_WITH_PREDICATE: i32 = 0x013C00;
 
+/// Map try put request.
+pub const MAP_TRY_PUT: i32 = 0x010600;
+
+/// Map put transient request.
+pub const MAP_PUT_TRANSIENT: i32 = 0x010800;
+
+/// Map evict request.
+pub const MAP_EVICT: i32 = 0x011A00;
+
+/// Map evict all request.
+pub const MAP_EVICT_ALL: i32 = 0x011B00;
+
+/// Map get entry view request.
+pub const MAP_GET_ENTRY_VIEW: i32 = 0x011E00;
+
+/// Map flush request.
+pub const MAP_FLUSH: i32 = 0x013200;
+
+/// Map set TTL request.
+pub const MAP_SET_TTL: i32 = 0x013500;
+
 /// Executor submit to partition request.
 pub const EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x0E0100;
 
