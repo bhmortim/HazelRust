@@ -19,7 +19,10 @@ pub use item_listener::{
     BoxedItemListener, FnItemListener, ItemEvent, ItemEventType, ItemListener, ItemListenerConfig,
 };
 pub use lifecycle::LifecycleEvent;
-pub use membership::{Member, MemberEvent, MemberEventType, MembershipListener};
+pub use membership::{
+    InitialMembershipEvent, InitialMembershipListener, Member, MemberEvent, MemberEventType,
+    MembershipListener,
+};
 
 pub use self::{
     BoxedMapPartitionLostListener, FnMapPartitionLostListener, MapPartitionLostEvent,

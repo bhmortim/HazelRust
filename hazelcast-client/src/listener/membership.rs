@@ -106,6 +106,34 @@ impl std::fmt::Display for Member {
     }
 }
 
+/// An event fired when an initial membership listener is registered.
+///
+/// This event contains the current snapshot of cluster members at the time
+/// of listener registration.
+#[derive(Debug, Clone)]
+pub struct InitialMembershipEvent {
+    /// The current members of the cluster at registration time.
+    pub members: Vec<Member>,
+}
+
+impl InitialMembershipEvent {
+    /// Creates a new initial membership event.
+    pub fn new(members: Vec<Member>) -> Self {
+        Self { members }
+    }
+
+    /// Returns the current cluster members.
+    pub fn members(&self) -> &[Member] {
+        &self.members
+    }
+}
+
+impl std::fmt::Display for InitialMembershipEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "InitialMembershipEvent[members={}]", self.members.len())
+    }
+}
+
 /// An event fired when a cluster member joins or leaves.
 #[derive(Debug, Clone)]
 pub struct MemberEvent {
@@ -145,6 +173,20 @@ pub trait MembershipListener: Send + Sync {
 
     /// Called when a member leaves the cluster.
     fn member_removed(&self, event: &MemberEvent);
+}
+
+/// Trait for listening to cluster membership changes with initial state.
+///
+/// This listener extends [`MembershipListener`] to receive the current
+/// cluster membership state when first registered, before receiving
+/// subsequent membership change events.
+pub trait InitialMembershipListener: MembershipListener {
+    /// Called when the listener is registered with the current cluster members.
+    ///
+    /// This method is invoked once immediately after registration with a
+    /// snapshot of the current cluster membership. Subsequent membership
+    /// changes are delivered through the [`MembershipListener`] methods.
+    fn init(&self, event: &InitialMembershipEvent);
 }
 
 #[cfg(test)]
@@ -292,5 +334,91 @@ mod tests {
     fn test_member_event_type_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<MemberEventType>();
+    }
+
+    #[test]
+    fn test_initial_membership_event_creation() {
+        let members = vec![
+            Member::new(Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
+            Member::new(Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap()),
+        ];
+        let event = InitialMembershipEvent::new(members.clone());
+
+        assert_eq!(event.members().len(), 2);
+        assert_eq!(event.members()[0].address(), members[0].address());
+    }
+
+    #[test]
+    fn test_initial_membership_event_empty() {
+        let event = InitialMembershipEvent::new(vec![]);
+        assert!(event.members().is_empty());
+    }
+
+    #[test]
+    fn test_initial_membership_event_display() {
+        let members = vec![
+            Member::new(Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
+        ];
+        let event = InitialMembershipEvent::new(members);
+
+        let display = event.to_string();
+        assert!(display.contains("InitialMembershipEvent["));
+        assert!(display.contains("members=1"));
+    }
+
+    #[test]
+    fn test_initial_membership_event_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<InitialMembershipEvent>();
+    }
+
+    struct TestInitialListener {
+        init_count: AtomicU32,
+        added_count: AtomicU32,
+        removed_count: AtomicU32,
+    }
+
+    impl MembershipListener for TestInitialListener {
+        fn member_added(&self, _event: &MemberEvent) {
+            self.added_count.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn member_removed(&self, _event: &MemberEvent) {
+            self.removed_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    impl InitialMembershipListener for TestInitialListener {
+        fn init(&self, _event: &InitialMembershipEvent) {
+            self.init_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn test_initial_membership_listener_trait() {
+        let listener = Arc::new(TestInitialListener {
+            init_count: AtomicU32::new(0),
+            added_count: AtomicU32::new(0),
+            removed_count: AtomicU32::new(0),
+        });
+
+        let members = vec![
+            Member::new(Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
+            Member::new(Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap()),
+        ];
+        let init_event = InitialMembershipEvent::new(members);
+
+        listener.init(&init_event);
+        assert_eq!(listener.init_count.load(Ordering::Relaxed), 1);
+
+        let member = Member::new(Uuid::new_v4(), "127.0.0.1:5703".parse().unwrap());
+        let added_event = MemberEvent::member_added(member.clone());
+        let removed_event = MemberEvent::member_removed(member);
+
+        listener.member_added(&added_event);
+        listener.member_removed(&removed_event);
+
+        assert_eq!(listener.added_count.load(Ordering::Relaxed), 1);
+        assert_eq!(listener.removed_count.load(Ordering::Relaxed), 1);
     }
 }
