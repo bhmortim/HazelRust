@@ -18,7 +18,8 @@ use crate::jet::JetService;
 use crate::listener::{
     BoxedDistributedObjectListener, ClientStateListener, DistributedObjectEvent,
     DistributedObjectListener, LifecycleEvent, ListenerId, ListenerRegistration, Member,
-    MemberEvent,
+    MemberEvent, MigrationEvent, MigrationListener, MigrationState, PartitionLostEvent,
+    PartitionLostListener,
 };
 use crate::proxy::{
     AtomicLong, AtomicReference, CPMap, CardinalityEstimator, CountDownLatch, FencedLock,
@@ -111,6 +112,32 @@ impl std::fmt::Debug for ClientStateListenerState {
     }
 }
 
+/// Internal state for managing partition lost listeners.
+struct PartitionLostListenerState {
+    listeners: std::collections::HashMap<ListenerId, (Arc<dyn PartitionLostListener>, ListenerRegistration)>,
+}
+
+impl std::fmt::Debug for PartitionLostListenerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PartitionLostListenerState")
+            .field("listener_count", &self.listeners.len())
+            .finish()
+    }
+}
+
+/// Internal state for managing migration listeners.
+struct MigrationListenerState {
+    listeners: std::collections::HashMap<ListenerId, (Arc<dyn MigrationListener>, ListenerRegistration)>,
+}
+
+impl std::fmt::Debug for MigrationListenerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MigrationListenerState")
+            .field("listener_count", &self.listeners.len())
+            .finish()
+    }
+}
+
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
 /// `HazelcastClient` manages connections to cluster members and provides
@@ -145,6 +172,8 @@ pub struct HazelcastClient {
     client_uuid: Uuid,
     distributed_object_listeners: RwLock<DistributedObjectListenerState>,
     client_state_listeners: RwLock<ClientStateListenerState>,
+    partition_lost_listeners: RwLock<PartitionLostListenerState>,
+    migration_listeners: RwLock<MigrationListenerState>,
 }
 
 impl HazelcastClient {
@@ -179,6 +208,12 @@ impl HazelcastClient {
                 listeners: std::collections::HashMap::new(),
             }),
             client_state_listeners: RwLock::new(ClientStateListenerState {
+                listeners: std::collections::HashMap::new(),
+            }),
+            partition_lost_listeners: RwLock::new(PartitionLostListenerState {
+                listeners: std::collections::HashMap::new(),
+            }),
+            migration_listeners: RwLock::new(MigrationListenerState {
                 listeners: std::collections::HashMap::new(),
             }),
         })
@@ -1290,6 +1325,228 @@ impl HazelcastClient {
         Ok(removed)
     }
 
+    /// Adds a partition lost listener.
+    ///
+    /// The listener will be notified when partitions are lost (all replicas
+    /// become unavailable) in the cluster.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener` - The listener to add
+    ///
+    /// # Returns
+    ///
+    /// A `ListenerId` that can be used to remove the listener later.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::listener::{PartitionLostListener, PartitionLostEvent};
+    ///
+    /// struct MyPartitionLostListener;
+    ///
+    /// impl PartitionLostListener for MyPartitionLostListener {
+    ///     fn partition_lost(&self, event: &PartitionLostEvent) {
+    ///         println!("Partition {} lost!", event.partition_id);
+    ///     }
+    /// }
+    ///
+    /// let listener_id = client.add_partition_lost_listener(MyPartitionLostListener).await?;
+    /// ```
+    pub async fn add_partition_lost_listener<L>(&self, listener: L) -> Result<ListenerId>
+    where
+        L: PartitionLostListener + 'static,
+    {
+        let listener_id = ListenerId::new();
+        let registration = ListenerRegistration::new(listener_id);
+        let listener_arc: Arc<dyn PartitionLostListener> = Arc::new(listener);
+
+        let mut rx = self.connection_manager.subscribe_partition_lost();
+        let listener_clone = Arc::clone(&listener_arc);
+        let active_flag = registration.active_flag();
+
+        tokio::spawn(async move {
+            while active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                match rx.recv().await {
+                    Ok(event) => {
+                        if !active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                            break;
+                        }
+                        listener_clone.partition_lost(&event);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        {
+            let mut state = self
+                .partition_lost_listeners
+                .write()
+                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+            state.listeners.insert(listener_id, (listener_arc, registration));
+        }
+
+        tracing::debug!(listener_id = %listener_id, "added partition lost listener");
+        Ok(listener_id)
+    }
+
+    /// Removes a partition lost listener.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener_id` - The ID of the listener to remove
+    ///
+    /// # Returns
+    ///
+    /// `true` if the listener was found and removed, `false` otherwise.
+    pub async fn remove_partition_lost_listener(&self, listener_id: ListenerId) -> Result<bool> {
+        let removed = {
+            let mut state = self
+                .partition_lost_listeners
+                .write()
+                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+
+            if let Some((_, registration)) = state.listeners.remove(&listener_id) {
+                registration.deactivate();
+                true
+            } else {
+                false
+            }
+        };
+
+        if removed {
+            tracing::debug!(listener_id = %listener_id, "removed partition lost listener");
+        }
+
+        Ok(removed)
+    }
+
+    /// Adds a migration listener.
+    ///
+    /// The listener will be notified when partition migrations occur between
+    /// cluster members.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener` - The listener to add
+    ///
+    /// # Returns
+    ///
+    /// A `ListenerId` that can be used to remove the listener later.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::listener::{MigrationListener, MigrationEvent};
+    ///
+    /// struct MyMigrationListener;
+    ///
+    /// impl MigrationListener for MyMigrationListener {
+    ///     fn migration_started(&self, event: &MigrationEvent) {
+    ///         println!("Migration started for partition {}", event.partition_id);
+    ///     }
+    ///
+    ///     fn migration_completed(&self, event: &MigrationEvent) {
+    ///         println!("Migration completed for partition {}", event.partition_id);
+    ///     }
+    ///
+    ///     fn migration_failed(&self, event: &MigrationEvent) {
+    ///         println!("Migration failed for partition {}", event.partition_id);
+    ///     }
+    /// }
+    ///
+    /// let listener_id = client.add_migration_listener(MyMigrationListener).await?;
+    /// ```
+    pub async fn add_migration_listener<L>(&self, listener: L) -> Result<ListenerId>
+    where
+        L: MigrationListener + 'static,
+    {
+        let listener_id = ListenerId::new();
+        let registration = ListenerRegistration::new(listener_id);
+        let listener_arc: Arc<dyn MigrationListener> = Arc::new(listener);
+
+        let mut rx = self.connection_manager.subscribe_migration();
+        let listener_clone = Arc::clone(&listener_arc);
+        let active_flag = registration.active_flag();
+
+        tokio::spawn(async move {
+            while active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                match rx.recv().await {
+                    Ok(event) => {
+                        if !active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                            break;
+                        }
+                        match event.state {
+                            MigrationState::Started => {
+                                listener_clone.migration_started(&event);
+                            }
+                            MigrationState::Completed => {
+                                listener_clone.migration_completed(&event);
+                            }
+                            MigrationState::Failed => {
+                                listener_clone.migration_failed(&event);
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        {
+            let mut state = self
+                .migration_listeners
+                .write()
+                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+            state.listeners.insert(listener_id, (listener_arc, registration));
+        }
+
+        tracing::debug!(listener_id = %listener_id, "added migration listener");
+        Ok(listener_id)
+    }
+
+    /// Removes a migration listener.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener_id` - The ID of the listener to remove
+    ///
+    /// # Returns
+    ///
+    /// `true` if the listener was found and removed, `false` otherwise.
+    pub async fn remove_migration_listener(&self, listener_id: ListenerId) -> Result<bool> {
+        let removed = {
+            let mut state = self
+                .migration_listeners
+                .write()
+                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+
+            if let Some((_, registration)) = state.listeners.remove(&listener_id) {
+                registration.deactivate();
+                true
+            } else {
+                false
+            }
+        };
+
+        if removed {
+            tracing::debug!(listener_id = %listener_id, "removed migration listener");
+        }
+
+        Ok(removed)
+    }
+
     /// Returns a snapshot of current client statistics.
     ///
     /// Statistics include connection counts, operation metrics, near cache
@@ -1368,6 +1625,26 @@ mod tests {
         };
         let debug_str = format!("{:?}", state);
         assert!(debug_str.contains("ClientStateListenerState"));
+        assert!(debug_str.contains("listener_count"));
+    }
+
+    #[test]
+    fn test_partition_lost_listener_state_debug() {
+        let state = PartitionLostListenerState {
+            listeners: std::collections::HashMap::new(),
+        };
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("PartitionLostListenerState"));
+        assert!(debug_str.contains("listener_count"));
+    }
+
+    #[test]
+    fn test_migration_listener_state_debug() {
+        let state = MigrationListenerState {
+            listeners: std::collections::HashMap::new(),
+        };
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("MigrationListenerState"));
         assert!(debug_str.contains("listener_count"));
     }
 }

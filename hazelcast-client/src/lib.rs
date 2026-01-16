@@ -79,8 +79,9 @@ pub use jet::{
     KafkaSourceConfigBuilder,
 };
 pub use cluster::{
-    ClientInfo, ClusterService, MigrationEvent, MigrationListener, MigrationState, Partition,
-    PartitionService,
+    BoxedMigrationListener, BoxedPartitionLostListener, ClientInfo, ClusterService,
+    FnMigrationListener, FnPartitionLostListener, MigrationEvent, MigrationListener,
+    MigrationState, Partition, PartitionLostEvent, PartitionLostListener, PartitionService,
 };
 pub use deployment::{
     ClassDefinition, ClassDefinitionBuilder, ClassProviderMode, ResourceEntry,

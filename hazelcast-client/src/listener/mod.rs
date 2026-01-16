@@ -24,10 +24,26 @@ pub use membership::{
     MembershipListener,
 };
 
-pub use self::{
-    BoxedMapPartitionLostListener, FnMapPartitionLostListener, MapPartitionLostEvent,
-    MapPartitionLostListener,
+pub use crate::cluster::{
+    BoxedMigrationListener, BoxedPartitionLostListener, FnMigrationListener,
+    FnPartitionLostListener, MigrationEvent, MigrationListener, MigrationState,
+    PartitionLostEvent, PartitionLostListener,
 };
+
+/// A listener for client state changes (connection, disconnection, etc.).
+pub trait ClientStateListener: Send + Sync {
+    /// Called when the client connects to the cluster.
+    fn client_connected(&self);
+
+    /// Called when the client disconnects from the cluster.
+    fn client_disconnected(&self);
+
+    /// Called when the client starts.
+    fn client_started(&self);
+
+    /// Called when the client shuts down.
+    fn client_shutdown(&self);
+}
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
