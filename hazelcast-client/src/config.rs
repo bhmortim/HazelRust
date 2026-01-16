@@ -403,6 +403,8 @@ const DEFAULT_MAX_BACKOFF: Duration = Duration::from_secs(30);
 const DEFAULT_RETRY_MULTIPLIER: f64 = 2.0;
 /// Default maximum retry attempts.
 const DEFAULT_MAX_RETRIES: u32 = 10;
+/// Default jitter factor for retry backoff (±10%).
+const DEFAULT_RETRY_JITTER: f64 = 0.1;
 
 /// Configuration error returned when validation fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -863,6 +865,7 @@ pub struct RetryConfig {
     max_backoff: Duration,
     multiplier: f64,
     max_retries: u32,
+    jitter: f64,
 }
 
 impl RetryConfig {
@@ -885,6 +888,11 @@ impl RetryConfig {
     pub fn max_retries(&self) -> u32 {
         self.max_retries
     }
+
+    /// Returns the jitter factor for randomizing backoff.
+    pub fn jitter(&self) -> f64 {
+        self.jitter
+    }
 }
 
 impl Default for RetryConfig {
@@ -894,6 +902,7 @@ impl Default for RetryConfig {
             max_backoff: DEFAULT_MAX_BACKOFF,
             multiplier: DEFAULT_RETRY_MULTIPLIER,
             max_retries: DEFAULT_MAX_RETRIES,
+            jitter: DEFAULT_RETRY_JITTER,
         }
     }
 }
@@ -905,6 +914,7 @@ impl From<RetryConfig> for RetryConfigBuilder {
             max_backoff: Some(config.max_backoff),
             multiplier: Some(config.multiplier),
             max_retries: Some(config.max_retries),
+            jitter: Some(config.jitter),
         }
     }
 }
@@ -916,6 +926,7 @@ pub struct RetryConfigBuilder {
     max_backoff: Option<Duration>,
     multiplier: Option<f64>,
     max_retries: Option<u32>,
+    jitter: Option<f64>,
 }
 
 impl RetryConfigBuilder {
@@ -948,6 +959,15 @@ impl RetryConfigBuilder {
         self
     }
 
+    /// Sets the jitter factor for randomizing backoff (0.0 to 1.0).
+    ///
+    /// A value of 0.1 means ±10% randomization of the backoff duration.
+    /// Set to 0.0 to disable jitter.
+    pub fn jitter(mut self, jitter: f64) -> Self {
+        self.jitter = Some(jitter);
+        self
+    }
+
     /// Builds the retry configuration, returning an error if validation fails.
     ///
     /// # Errors
@@ -955,11 +975,13 @@ impl RetryConfigBuilder {
     /// Returns `ConfigError` if:
     /// - `initial_backoff` exceeds `max_backoff`
     /// - `multiplier` is less than 1.0
+    /// - `jitter` is not between 0.0 and 1.0
     pub fn build(self) -> Result<RetryConfig, ConfigError> {
         let initial_backoff = self.initial_backoff.unwrap_or(DEFAULT_INITIAL_BACKOFF);
         let max_backoff = self.max_backoff.unwrap_or(DEFAULT_MAX_BACKOFF);
         let multiplier = self.multiplier.unwrap_or(DEFAULT_RETRY_MULTIPLIER);
         let max_retries = self.max_retries.unwrap_or(DEFAULT_MAX_RETRIES);
+        let jitter = self.jitter.unwrap_or(DEFAULT_RETRY_JITTER);
 
         if initial_backoff > max_backoff {
             return Err(ConfigError::new(
@@ -971,11 +993,16 @@ impl RetryConfigBuilder {
             return Err(ConfigError::new("multiplier must be at least 1.0"));
         }
 
+        if !(0.0..=1.0).contains(&jitter) {
+            return Err(ConfigError::new("jitter must be between 0.0 and 1.0"));
+        }
+
         Ok(RetryConfig {
             initial_backoff,
             max_backoff,
             multiplier,
             max_retries,
+            jitter,
         })
     }
 }
@@ -2236,6 +2263,12 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the retry configuration directly.
+    pub fn retry_config(mut self, config: RetryConfig) -> Self {
+        self.retry = config.into();
+        self
+    }
+
     /// Configures security settings using a builder function.
     pub fn security<F>(mut self, f: F) -> Self
     where
@@ -2605,6 +2638,83 @@ mod tests {
         assert_eq!(config.max_backoff(), DEFAULT_MAX_BACKOFF);
         assert_eq!(config.multiplier(), DEFAULT_RETRY_MULTIPLIER);
         assert_eq!(config.max_retries(), DEFAULT_MAX_RETRIES);
+        assert_eq!(config.jitter(), DEFAULT_RETRY_JITTER);
+    }
+
+    #[test]
+    fn test_retry_config_with_jitter() {
+        let config = RetryConfigBuilder::new()
+            .jitter(0.25)
+            .build()
+            .unwrap();
+        assert_eq!(config.jitter(), 0.25);
+    }
+
+    #[test]
+    fn test_retry_jitter_default() {
+        let config = RetryConfigBuilder::new().build().unwrap();
+        assert_eq!(config.jitter(), 0.1);
+    }
+
+    #[test]
+    fn test_retry_jitter_validation_too_low() {
+        let result = RetryConfigBuilder::new().jitter(-0.1).build();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("jitter must be between 0.0 and 1.0"));
+    }
+
+    #[test]
+    fn test_retry_jitter_validation_too_high() {
+        let result = RetryConfigBuilder::new().jitter(1.5).build();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("jitter must be between 0.0 and 1.0"));
+    }
+
+    #[test]
+    fn test_retry_jitter_boundary_values() {
+        let config_zero = RetryConfigBuilder::new().jitter(0.0).build().unwrap();
+        assert_eq!(config_zero.jitter(), 0.0);
+
+        let config_one = RetryConfigBuilder::new().jitter(1.0).build().unwrap();
+        assert_eq!(config_one.jitter(), 1.0);
+    }
+
+    #[test]
+    fn test_retry_config_from_includes_jitter() {
+        let config = RetryConfigBuilder::new()
+            .initial_backoff(Duration::from_millis(50))
+            .jitter(0.3)
+            .build()
+            .unwrap();
+
+        let builder: RetryConfigBuilder = config.into();
+        let rebuilt = builder.build().unwrap();
+
+        assert_eq!(rebuilt.jitter(), 0.3);
+        assert_eq!(rebuilt.initial_backoff(), Duration::from_millis(50));
+    }
+
+    #[test]
+    fn test_client_config_retry_config_method() {
+        let retry = RetryConfigBuilder::new()
+            .max_retries(5)
+            .jitter(0.2)
+            .build()
+            .unwrap();
+
+        let config = ClientConfigBuilder::new()
+            .retry_config(retry)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.retry().max_retries(), 5);
+        assert_eq!(config.retry().jitter(), 0.2);
     }
 
     #[test]

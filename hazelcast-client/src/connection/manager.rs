@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicI32, AtomicUsize};
 use std::sync::Arc;
 use std::time::Duration;
 
+use rand::Rng;
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::{interval, timeout};
 use tracing::{instrument, Span};
@@ -84,6 +85,30 @@ pub struct ConnectionManager {
     failover_config: Option<ClientFailoverConfig>,
     current_cluster_index: AtomicUsize,
     current_try_count: AtomicUsize,
+}
+
+/// Calculates the next backoff duration with jitter applied.
+fn calculate_backoff_with_jitter(
+    current_backoff: Duration,
+    multiplier: f64,
+    max_backoff: Duration,
+    jitter: f64,
+) -> Duration {
+    let base_backoff = current_backoff.as_secs_f64() * multiplier;
+
+    let jitter_factor = if jitter > 0.0 {
+        let mut rng = rand::thread_rng();
+        1.0 + rng.gen_range(-jitter..=jitter)
+    } else {
+        1.0
+    };
+
+    let jittered_backoff = base_backoff * jitter_factor;
+
+    std::cmp::min(
+        Duration::from_secs_f64(jittered_backoff),
+        max_backoff,
+    )
 }
 
 impl ConnectionManager {
@@ -413,11 +438,11 @@ impl ConnectionManager {
                 }
             }
 
-            current_backoff = std::cmp::min(
-                Duration::from_secs_f64(
-                    current_backoff.as_secs_f64() * retry_config.multiplier(),
-                ),
+            current_backoff = calculate_backoff_with_jitter(
+                current_backoff,
+                retry_config.multiplier(),
                 retry_config.max_backoff(),
+                retry_config.jitter(),
             );
         }
     }
@@ -1071,11 +1096,11 @@ impl ConnectionManager {
                 }
             }
 
-            current_backoff = std::cmp::min(
-                Duration::from_secs_f64(
-                    current_backoff.as_secs_f64() * retry_config.multiplier(),
-                ),
+            current_backoff = calculate_backoff_with_jitter(
+                current_backoff,
+                retry_config.multiplier(),
                 retry_config.max_backoff(),
+                retry_config.jitter(),
             );
         }
     }
@@ -1371,6 +1396,53 @@ mod tests {
     fn test_connection_manager_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<ConnectionManager>();
+    }
+
+    #[test]
+    fn test_calculate_backoff_with_jitter_no_jitter() {
+        let backoff = calculate_backoff_with_jitter(
+            Duration::from_millis(100),
+            2.0,
+            Duration::from_secs(30),
+            0.0,
+        );
+        assert_eq!(backoff, Duration::from_millis(200));
+    }
+
+    #[test]
+    fn test_calculate_backoff_with_jitter_respects_max() {
+        let backoff = calculate_backoff_with_jitter(
+            Duration::from_secs(20),
+            2.0,
+            Duration::from_secs(30),
+            0.0,
+        );
+        assert_eq!(backoff, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_calculate_backoff_with_jitter_applies_jitter() {
+        let mut results = std::collections::HashSet::new();
+        for _ in 0..20 {
+            let backoff = calculate_backoff_with_jitter(
+                Duration::from_millis(100),
+                2.0,
+                Duration::from_secs(30),
+                0.25,
+            );
+            results.insert(backoff.as_millis());
+        }
+        assert!(results.len() > 1, "jitter should produce varied results");
+    }
+
+    #[test]
+    fn test_retry_config_jitter_used_in_manager() {
+        let config = ClientConfigBuilder::new()
+            .retry(|r| r.jitter(0.2))
+            .build()
+            .unwrap();
+
+        assert_eq!(config.retry().jitter(), 0.2);
     }
 
     #[test]
