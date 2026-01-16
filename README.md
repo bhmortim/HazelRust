@@ -1,10 +1,13 @@
 # Hazelcast Rust Client
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![CI](https://github.com/hazelcast/hazelcast-rust-client/actions/workflows/ci.yml/badge.svg)](https://github.com/hazelcast/hazelcast-rust-client/actions)
+
+<!-- Uncomment these badges after publishing to crates.io:
 [![Crates.io](https://img.shields.io/crates/v/hazelcast-client.svg)](https://crates.io/crates/hazelcast-client)
 [![Documentation](https://docs.rs/hazelcast-client/badge.svg)](https://docs.rs/hazelcast-client)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![CI](https://github.com/hazelcast/hazelcast-rust-client/actions/workflows/ci.yml/badge.svg)](https://github.com/hazelcast/hazelcast-rust-client/actions)
 [![Coverage](https://codecov.io/gh/hazelcast/hazelcast-rust-client/branch/main/graph/badge.svg)](https://codecov.io/gh/hazelcast/hazelcast-rust-client)
+-->
 
 A Rust client library for [Hazelcast](https://hazelcast.com/) — the real-time data platform for consistent, low-latency access to data at any scale.
 

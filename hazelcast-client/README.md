@@ -2,9 +2,12 @@
 
 Rust client library for [Hazelcast](https://hazelcast.com/) — the real-time data platform.
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
+<!-- Uncomment these badges after publishing to crates.io:
 [![Crates.io](https://img.shields.io/crates/v/hazelcast-client.svg)](https://crates.io/crates/hazelcast-client)
 [![Documentation](https://docs.rs/hazelcast-client/badge.svg)](https://docs.rs/hazelcast-client)
-[![License](https://img.shields.io/crates/l/hazelcast-client.svg)](LICENSE)
+-->
 
 ## Quick Start
 
