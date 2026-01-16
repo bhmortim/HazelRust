@@ -162,6 +162,225 @@ impl Sink for ListSink {
     }
 }
 
+/// A source that reads from files matching a glob pattern.
+#[derive(Debug, Clone)]
+pub struct FileSource {
+    directory: String,
+    glob_pattern: String,
+}
+
+impl FileSource {
+    /// Creates a new file source with the given directory and glob pattern.
+    pub fn new(directory: impl Into<String>, glob_pattern: impl Into<String>) -> Self {
+        Self {
+            directory: directory.into(),
+            glob_pattern: glob_pattern.into(),
+        }
+    }
+
+    /// Returns the directory path.
+    pub fn directory(&self) -> &str {
+        &self.directory
+    }
+
+    /// Returns the glob pattern.
+    pub fn glob_pattern(&self) -> &str {
+        &self.glob_pattern
+    }
+}
+
+impl Source for FileSource {
+    fn source_type(&self) -> &str {
+        "files"
+    }
+
+    fn name(&self) -> &str {
+        &self.directory
+    }
+
+    fn vertex_name(&self) -> String {
+        format!("source:files:{}:{}", self.directory, self.glob_pattern)
+    }
+}
+
+/// A source that reads from a database via JDBC.
+#[derive(Debug, Clone)]
+pub struct JdbcSource {
+    connection_string: String,
+    query: String,
+}
+
+impl JdbcSource {
+    /// Creates a new JDBC source with the given connection string and query.
+    pub fn new(connection_string: impl Into<String>, query: impl Into<String>) -> Self {
+        Self {
+            connection_string: connection_string.into(),
+            query: query.into(),
+        }
+    }
+
+    /// Returns the JDBC connection string.
+    pub fn connection_string(&self) -> &str {
+        &self.connection_string
+    }
+
+    /// Returns the SQL query.
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+}
+
+impl Source for JdbcSource {
+    fn source_type(&self) -> &str {
+        "jdbc"
+    }
+
+    fn name(&self) -> &str {
+        &self.connection_string
+    }
+
+    fn vertex_name(&self) -> String {
+        format!("source:jdbc:{}", self.connection_string)
+    }
+}
+
+/// File format for file sinks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FileFormat {
+    /// Plain text format, one item per line.
+    #[default]
+    Text,
+    /// JSON format.
+    Json,
+    /// CSV format.
+    Csv,
+}
+
+impl FileFormat {
+    /// Returns the format name as a string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FileFormat::Text => "text",
+            FileFormat::Json => "json",
+            FileFormat::Csv => "csv",
+        }
+    }
+}
+
+/// A sink that writes to files in a directory.
+#[derive(Debug, Clone)]
+pub struct FileSink {
+    directory: String,
+    format: FileFormat,
+}
+
+impl FileSink {
+    /// Creates a new file sink with the given directory and format.
+    pub fn new(directory: impl Into<String>, format: FileFormat) -> Self {
+        Self {
+            directory: directory.into(),
+            format,
+        }
+    }
+
+    /// Returns the directory path.
+    pub fn directory(&self) -> &str {
+        &self.directory
+    }
+
+    /// Returns the file format.
+    pub fn format(&self) -> FileFormat {
+        self.format
+    }
+}
+
+impl Sink for FileSink {
+    fn sink_type(&self) -> &str {
+        "files"
+    }
+
+    fn name(&self) -> &str {
+        &self.directory
+    }
+
+    fn vertex_name(&self) -> String {
+        format!("sink:files:{}:{}", self.directory, self.format.as_str())
+    }
+}
+
+/// A sink that collects results in-memory for observation.
+#[derive(Debug, Clone)]
+pub struct ObservableSink {
+    name: String,
+}
+
+impl ObservableSink {
+    /// Creates a new observable sink with the given name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+}
+
+impl Sink for ObservableSink {
+    fn sink_type(&self) -> &str {
+        "observable"
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Factory for creating pipeline sources.
+pub struct Sources;
+
+impl Sources {
+    /// Creates a source that reads from an IMap.
+    pub fn map(name: impl Into<String>) -> MapSource {
+        MapSource::new(name)
+    }
+
+    /// Creates a source that reads from an IList.
+    pub fn list(name: impl Into<String>) -> ListSource {
+        ListSource::new(name)
+    }
+
+    /// Creates a source that reads from files matching a glob pattern.
+    pub fn files(directory: impl Into<String>, glob_pattern: impl Into<String>) -> FileSource {
+        FileSource::new(directory, glob_pattern)
+    }
+
+    /// Creates a source that reads from a database via JDBC.
+    pub fn jdbc(connection_string: impl Into<String>, query: impl Into<String>) -> JdbcSource {
+        JdbcSource::new(connection_string, query)
+    }
+}
+
+/// Factory for creating pipeline sinks.
+pub struct Sinks;
+
+impl Sinks {
+    /// Creates a sink that writes to an IMap.
+    pub fn map(name: impl Into<String>) -> MapSink {
+        MapSink::new(name)
+    }
+
+    /// Creates a sink that writes to an IList.
+    pub fn list(name: impl Into<String>) -> ListSink {
+        ListSink::new(name)
+    }
+
+    /// Creates a sink that writes to files in a directory.
+    pub fn files(directory: impl Into<String>, format: FileFormat) -> FileSink {
+        FileSink::new(directory, format)
+    }
+
+    /// Creates an observable sink for in-memory result collection.
+    pub fn observable(name: impl Into<String>) -> ObservableSink {
+        ObservableSink::new(name)
+    }
+}
+
 /// Creates a source that reads from an IMap with the given name.
 pub fn map_source(name: impl Into<String>) -> MapSource {
     MapSource::new(name)
@@ -180,6 +399,26 @@ pub fn map_sink(name: impl Into<String>) -> MapSink {
 /// Creates a sink that writes to an IList with the given name.
 pub fn list_sink(name: impl Into<String>) -> ListSink {
     ListSink::new(name)
+}
+
+/// Creates a source that reads from files matching a glob pattern.
+pub fn file_source(directory: impl Into<String>, glob_pattern: impl Into<String>) -> FileSource {
+    FileSource::new(directory, glob_pattern)
+}
+
+/// Creates a source that reads from a database via JDBC.
+pub fn jdbc_source(connection_string: impl Into<String>, query: impl Into<String>) -> JdbcSource {
+    JdbcSource::new(connection_string, query)
+}
+
+/// Creates a sink that writes to files in a directory.
+pub fn file_sink(directory: impl Into<String>, format: FileFormat) -> FileSink {
+    FileSink::new(directory, format)
+}
+
+/// Creates an observable sink for in-memory result collection.
+pub fn observable_sink(name: impl Into<String>) -> ObservableSink {
+    ObservableSink::new(name)
 }
 
 /// A Jet pipeline definition.
@@ -582,5 +821,145 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<MapSink>();
         assert_send_sync::<ListSink>();
+    }
+
+    #[test]
+    fn test_file_source() {
+        let source = file_source("/data/input", "*.csv");
+        assert_eq!(source.source_type(), "files");
+        assert_eq!(source.directory(), "/data/input");
+        assert_eq!(source.glob_pattern(), "*.csv");
+        assert_eq!(source.vertex_name(), "source:files:/data/input:*.csv");
+    }
+
+    #[test]
+    fn test_jdbc_source() {
+        let source = jdbc_source("jdbc:postgresql://localhost/db", "SELECT * FROM users");
+        assert_eq!(source.source_type(), "jdbc");
+        assert_eq!(source.connection_string(), "jdbc:postgresql://localhost/db");
+        assert_eq!(source.query(), "SELECT * FROM users");
+        assert_eq!(
+            source.vertex_name(),
+            "source:jdbc:jdbc:postgresql://localhost/db"
+        );
+    }
+
+    #[test]
+    fn test_file_sink() {
+        let sink = file_sink("/data/output", FileFormat::Json);
+        assert_eq!(sink.sink_type(), "files");
+        assert_eq!(sink.directory(), "/data/output");
+        assert_eq!(sink.format(), FileFormat::Json);
+        assert_eq!(sink.vertex_name(), "sink:files:/data/output:json");
+    }
+
+    #[test]
+    fn test_file_format() {
+        assert_eq!(FileFormat::Text.as_str(), "text");
+        assert_eq!(FileFormat::Json.as_str(), "json");
+        assert_eq!(FileFormat::Csv.as_str(), "csv");
+        assert_eq!(FileFormat::default(), FileFormat::Text);
+    }
+
+    #[test]
+    fn test_observable_sink() {
+        let sink = observable_sink("results");
+        assert_eq!(sink.sink_type(), "observable");
+        assert_eq!(sink.name(), "results");
+        assert_eq!(sink.vertex_name(), "sink:observable:results");
+    }
+
+    #[test]
+    fn test_sources_factory() {
+        let map = Sources::map("my-map");
+        assert_eq!(map.source_type(), "map");
+
+        let list = Sources::list("my-list");
+        assert_eq!(list.source_type(), "list");
+
+        let files = Sources::files("/data", "*.txt");
+        assert_eq!(files.source_type(), "files");
+
+        let jdbc = Sources::jdbc("jdbc:mysql://host/db", "SELECT 1");
+        assert_eq!(jdbc.source_type(), "jdbc");
+    }
+
+    #[test]
+    fn test_sinks_factory() {
+        let map = Sinks::map("my-map");
+        assert_eq!(map.sink_type(), "map");
+
+        let list = Sinks::list("my-list");
+        assert_eq!(list.sink_type(), "list");
+
+        let files = Sinks::files("/output", FileFormat::Csv);
+        assert_eq!(files.sink_type(), "files");
+
+        let observable = Sinks::observable("results");
+        assert_eq!(observable.sink_type(), "observable");
+    }
+
+    #[test]
+    fn test_pipeline_with_file_connectors() {
+        let pipeline = Pipeline::builder()
+            .read_from(Sources::files("/input", "*.json"))
+            .map("parse")
+            .filter("validate")
+            .write_to(Sinks::files("/output", FileFormat::Json))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 4);
+        assert_eq!(pipeline.sources().len(), 1);
+        assert_eq!(pipeline.sinks().len(), 1);
+        assert_eq!(
+            pipeline.vertices()[0].name(),
+            "source:files:/input:*.json"
+        );
+        assert_eq!(
+            pipeline.vertices()[3].name(),
+            "sink:files:/output:json"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_with_jdbc_source() {
+        let pipeline = Pipeline::builder()
+            .read_from(Sources::jdbc(
+                "jdbc:postgresql://localhost:5432/mydb",
+                "SELECT id, name FROM customers",
+            ))
+            .map("transform")
+            .write_to(Sinks::map("customer-cache"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 3);
+        assert_eq!(pipeline.sources().len(), 1);
+        assert_eq!(pipeline.sources()[0].source_type(), "jdbc");
+    }
+
+    #[test]
+    fn test_pipeline_with_observable_sink() {
+        let pipeline = Pipeline::builder()
+            .read_from(Sources::map("input"))
+            .aggregate("count")
+            .write_to(Sinks::observable("query-results"))
+            .build();
+
+        assert_eq!(pipeline.vertex_count(), 3);
+        assert_eq!(pipeline.sinks().len(), 1);
+        assert_eq!(pipeline.sinks()[0].sink_type(), "observable");
+        assert_eq!(
+            pipeline.vertices()[2].name(),
+            "sink:observable:query-results"
+        );
+    }
+
+    #[test]
+    fn test_new_connectors_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<FileSource>();
+        assert_send_sync::<JdbcSource>();
+        assert_send_sync::<FileSink>();
+        assert_send_sync::<ObservableSink>();
     }
 }
