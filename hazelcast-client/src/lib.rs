@@ -45,8 +45,9 @@ pub use connection::{
 };
 pub use hazelcast_core as core;
 pub use listener::{
-    BoxedItemListener, FnItemListener, ItemEvent, ItemEventType, ItemListener, ItemListenerConfig,
-    LifecycleEvent, ListenerId, ListenerRegistration, ListenerStats,
+    BoxedEntryListener, BoxedItemListener, EntryListener, FnEntryListener, FnEntryListenerBuilder,
+    FnItemListener, ItemEvent, ItemEventType, ItemListener, ItemListenerConfig, LifecycleEvent,
+    ListenerId, ListenerRegistration, ListenerStats,
 };
 pub use proxy::{IList, IMap, IQueue, ISet, ITopic, MultiMap, TopicMessage};
 pub use query::{

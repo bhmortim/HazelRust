@@ -278,6 +278,15 @@ pub const MULTI_MAP_IS_LOCKED: i32 = 0x021100;
 /// MultiMap force unlock request.
 pub const MULTI_MAP_FORCE_UNLOCK: i32 = 0x021200;
 
+/// MultiMap add entry listener request.
+pub const MULTI_MAP_ADD_ENTRY_LISTENER: i32 = 0x021300;
+
+/// MultiMap remove entry listener request.
+pub const MULTI_MAP_REMOVE_ENTRY_LISTENER: i32 = 0x021400;
+
+/// MultiMap add entry listener with predicate request.
+pub const MULTI_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x021500;
+
 /// Topic publish request.
 pub const TOPIC_PUBLISH: i32 = 0x040100;
 
@@ -326,6 +335,9 @@ pub const MAP_UNLOCK: i32 = 0x011700;
 /// Map is locked request.
 pub const MAP_IS_LOCKED: i32 = 0x011800;
 
+/// Map add entry listener with predicate request.
+pub const MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x011900;
+
 /// Client add membership listener request.
 pub const CLIENT_ADD_MEMBERSHIP_LISTENER: i32 = 0x000300;
 
@@ -364,6 +376,15 @@ pub const REPLICATED_MAP_VALUES: i32 = 0x0D0A00;
 
 /// ReplicatedMap entry set request.
 pub const REPLICATED_MAP_ENTRY_SET: i32 = 0x0D0B00;
+
+/// ReplicatedMap add entry listener request.
+pub const REPLICATED_MAP_ADD_ENTRY_LISTENER: i32 = 0x0D0C00;
+
+/// ReplicatedMap remove entry listener request.
+pub const REPLICATED_MAP_REMOVE_ENTRY_LISTENER: i32 = 0x0D0D00;
+
+/// ReplicatedMap add entry listener with predicate request.
+pub const REPLICATED_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x0D0E00;
 
 /// Ringbuffer size request.
 pub const RINGBUFFER_SIZE: i32 = 0x190100;

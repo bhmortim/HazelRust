@@ -1,9 +1,14 @@
 //! Event listener infrastructure for Hazelcast distributed data structures.
 
+mod entry_listener;
 mod item_listener;
 mod lifecycle;
 mod membership;
 
+pub use entry_listener::{
+    dispatch_entry_event, BoxedEntryListener, EntryListener, FnEntryListener,
+    FnEntryListenerBuilder,
+};
 pub use item_listener::{
     BoxedItemListener, FnItemListener, ItemEvent, ItemEventType, ItemListener, ItemListenerConfig,
 };

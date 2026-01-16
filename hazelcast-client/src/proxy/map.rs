@@ -12,7 +12,8 @@ use bytes::BytesMut;
 use tokio::spawn;
 use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
-    END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER, MAP_ADD_INDEX, MAP_AGGREGATE,
+    END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER,
+    MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_ENTRIES_WITH_PREDICATE,
     MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_FORCE_UNLOCK, MAP_GET,
     MAP_GET_ALL, MAP_IS_LOCKED, MAP_KEYS_WITH_PREDICATE, MAP_LOCK, MAP_PROJECT,
@@ -191,8 +192,8 @@ static INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 use crate::listener::{
-    EntryEvent, EntryEventType, EntryListenerConfig, ListenerId, ListenerRegistration,
-    ListenerStats,
+    dispatch_entry_event, BoxedEntryListener, EntryEvent, EntryEventType, EntryListener,
+    EntryListenerConfig, ListenerId, ListenerRegistration, ListenerStats,
 };
 use crate::proxy::entry_processor::{EntryProcessor, EntryProcessorResult};
 use crate::query::{Aggregator, Predicate, Projection};
@@ -1980,6 +1981,317 @@ where
     /// ```
     pub fn is_near_cache_invalidation_active(&self) -> bool {
         self.invalidation_registration.lock().unwrap().is_some()
+    }
+
+    /// Adds an entry listener to this map using the [`EntryListener`] trait.
+    ///
+    /// Events are dispatched to the appropriate trait method based on event type.
+    /// Returns a registration that can be used to remove the listener.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::sync::Arc;
+    ///
+    /// struct MyListener;
+    /// impl EntryListener<String, i32> for MyListener {
+    ///     fn entry_added(&self, event: EntryEvent<String, i32>) {
+    ///         println!("Added: {}", event.key);
+    ///     }
+    /// }
+    ///
+    /// let listener = Arc::new(MyListener);
+    /// let registration = map.add_entry_listener_obj(
+    ///     EntryListenerConfig::all(),
+    ///     listener,
+    /// ).await?;
+    /// ```
+    pub async fn add_entry_listener_obj(
+        &self,
+        config: EntryListenerConfig,
+        listener: BoxedEntryListener<K, V>,
+    ) -> Result<ListenerRegistration>
+    where
+        K: 'static,
+        V: 'static,
+    {
+        self.check_permission(PermissionAction::Listen)?;
+        let mut message =
+            ClientMessage::create_for_encode(MAP_ADD_ENTRY_LISTENER, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::bool_frame(config.include_value));
+        message.add_frame(Self::int_frame(config.event_flags()));
+        message.add_frame(Self::bool_frame(false));
+
+        let response = self.invoke(message).await?;
+        let listener_uuid = Self::decode_uuid_response(&response)?;
+
+        let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
+        let active_flag = registration.active_flag();
+        let shutdown_rx = registration.shutdown_receiver();
+
+        let connection_manager = Arc::clone(&self.connection_manager);
+        let listener_stats = Arc::clone(&self.listener_stats);
+        let map_name = self.name.clone();
+        let include_value = config.include_value;
+
+        spawn(async move {
+            let mut shutdown_rx = match shutdown_rx {
+                Some(rx) => rx,
+                None => return,
+            };
+
+            loop {
+                if !active_flag.load(Ordering::Acquire) {
+                    break;
+                }
+
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        let addresses = connection_manager.connected_addresses().await;
+                        for address in addresses {
+                            if !active_flag.load(Ordering::Acquire) {
+                                break;
+                            }
+
+                            match connection_manager.receive_from(address).await {
+                                Ok(Some(msg)) => {
+                                    if Self::is_entry_event(&msg, &map_name) {
+                                        listener_stats.record_message();
+                                        match Self::decode_entry_event(&msg, include_value) {
+                                            Ok(event) => {
+                                                dispatch_entry_event(listener.as_ref(), event);
+                                            }
+                                            Err(_) => {
+                                                listener_stats.record_error();
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(_) => {
+                                    listener_stats.record_error();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(registration)
+    }
+
+    /// Adds an entry listener with a predicate filter.
+    ///
+    /// Only entries matching the predicate will trigger events.
+    /// Returns a registration that can be used to remove the listener.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::query::Predicates;
+    ///
+    /// let predicate = Predicates::greater_than("age", &18i32)?;
+    /// let registration = map.add_entry_listener_with_predicate(
+    ///     EntryListenerConfig::all(),
+    ///     &predicate,
+    ///     |event| println!("Adult entry changed: {}", event.key),
+    /// ).await?;
+    /// ```
+    pub async fn add_entry_listener_with_predicate<F>(
+        &self,
+        config: EntryListenerConfig,
+        predicate: &dyn Predicate,
+        handler: F,
+    ) -> Result<ListenerRegistration>
+    where
+        F: Fn(EntryEvent<K, V>) + Send + Sync + 'static,
+        K: 'static,
+        V: 'static,
+    {
+        self.check_permission(PermissionAction::Listen)?;
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::bool_frame(config.include_value));
+        message.add_frame(Self::int_frame(config.event_flags()));
+        message.add_frame(Self::bool_frame(false));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        let listener_uuid = Self::decode_uuid_response(&response)?;
+
+        let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
+        let active_flag = registration.active_flag();
+        let shutdown_rx = registration.shutdown_receiver();
+
+        let connection_manager = Arc::clone(&self.connection_manager);
+        let listener_stats = Arc::clone(&self.listener_stats);
+        let handler = Arc::new(handler);
+        let map_name = self.name.clone();
+        let include_value = config.include_value;
+
+        spawn(async move {
+            let mut shutdown_rx = match shutdown_rx {
+                Some(rx) => rx,
+                None => return,
+            };
+
+            loop {
+                if !active_flag.load(Ordering::Acquire) {
+                    break;
+                }
+
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        let addresses = connection_manager.connected_addresses().await;
+                        for address in addresses {
+                            if !active_flag.load(Ordering::Acquire) {
+                                break;
+                            }
+
+                            match connection_manager.receive_from(address).await {
+                                Ok(Some(msg)) => {
+                                    if Self::is_entry_event(&msg, &map_name) {
+                                        listener_stats.record_message();
+                                        if let Ok(event) =
+                                            Self::decode_entry_event(&msg, include_value)
+                                        {
+                                            handler(event);
+                                        } else {
+                                            listener_stats.record_error();
+                                        }
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(_) => {
+                                    listener_stats.record_error();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(registration)
+    }
+
+    /// Adds an entry listener with a predicate filter using the [`EntryListener`] trait.
+    ///
+    /// Only entries matching the predicate will trigger events.
+    /// Events are dispatched to the appropriate trait method based on event type.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::sync::Arc;
+    /// use hazelcast_client::query::Predicates;
+    ///
+    /// let predicate = Predicates::greater_than("age", &18i32)?;
+    /// let listener = Arc::new(MyListener);
+    /// let registration = map.add_entry_listener_with_predicate_obj(
+    ///     EntryListenerConfig::all(),
+    ///     &predicate,
+    ///     listener,
+    /// ).await?;
+    /// ```
+    pub async fn add_entry_listener_with_predicate_obj(
+        &self,
+        config: EntryListenerConfig,
+        predicate: &dyn Predicate,
+        listener: BoxedEntryListener<K, V>,
+    ) -> Result<ListenerRegistration>
+    where
+        K: 'static,
+        V: 'static,
+    {
+        self.check_permission(PermissionAction::Listen)?;
+        let predicate_data = predicate.to_predicate_data()?;
+
+        let mut message =
+            ClientMessage::create_for_encode(MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::bool_frame(config.include_value));
+        message.add_frame(Self::int_frame(config.event_flags()));
+        message.add_frame(Self::bool_frame(false));
+        message.add_frame(Self::data_frame(&predicate_data));
+
+        let response = self.invoke(message).await?;
+        let listener_uuid = Self::decode_uuid_response(&response)?;
+
+        let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
+        let active_flag = registration.active_flag();
+        let shutdown_rx = registration.shutdown_receiver();
+
+        let connection_manager = Arc::clone(&self.connection_manager);
+        let listener_stats = Arc::clone(&self.listener_stats);
+        let map_name = self.name.clone();
+        let include_value = config.include_value;
+
+        spawn(async move {
+            let mut shutdown_rx = match shutdown_rx {
+                Some(rx) => rx,
+                None => return,
+            };
+
+            loop {
+                if !active_flag.load(Ordering::Acquire) {
+                    break;
+                }
+
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        let addresses = connection_manager.connected_addresses().await;
+                        for address in addresses {
+                            if !active_flag.load(Ordering::Acquire) {
+                                break;
+                            }
+
+                            match connection_manager.receive_from(address).await {
+                                Ok(Some(msg)) => {
+                                    if Self::is_entry_event(&msg, &map_name) {
+                                        listener_stats.record_message();
+                                        match Self::decode_entry_event(&msg, include_value) {
+                                            Ok(event) => {
+                                                dispatch_entry_event(listener.as_ref(), event);
+                                            }
+                                            Err(_) => {
+                                                listener_stats.record_error();
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(_) => {
+                                    listener_stats.record_error();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(registration)
     }
 
     fn decode_entry_processor_results<R>(
