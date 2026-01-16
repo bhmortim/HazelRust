@@ -446,6 +446,12 @@ pub const REPLICATED_MAP_REMOVE_ENTRY_LISTENER: i32 = 0x0D0D00;
 /// ReplicatedMap add entry listener with predicate request.
 pub const REPLICATED_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x0D0E00;
 
+/// ReplicatedMap put all request.
+pub const REPLICATED_MAP_PUT_ALL: i32 = 0x0D0F00;
+
+/// ReplicatedMap put with TTL request.
+pub const REPLICATED_MAP_PUT_WITH_TTL: i32 = 0x0D1000;
+
 /// Ringbuffer size request.
 pub const RINGBUFFER_SIZE: i32 = 0x190100;
 

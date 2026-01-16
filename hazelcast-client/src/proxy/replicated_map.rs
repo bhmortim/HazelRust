@@ -1,10 +1,11 @@
 //! Distributed ReplicatedMap implementation.
 
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::BytesMut;
 use tokio::spawn;
@@ -14,8 +15,9 @@ use hazelcast_core::protocol::constants::{
     REPLICATED_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, REPLICATED_MAP_CLEAR,
     REPLICATED_MAP_CONTAINS_KEY, REPLICATED_MAP_CONTAINS_VALUE, REPLICATED_MAP_ENTRY_SET,
     REPLICATED_MAP_GET, REPLICATED_MAP_IS_EMPTY, REPLICATED_MAP_KEY_SET, REPLICATED_MAP_PUT,
-    REPLICATED_MAP_REMOVE, REPLICATED_MAP_REMOVE_ENTRY_LISTENER, REPLICATED_MAP_SIZE,
-    REPLICATED_MAP_VALUES, RESPONSE_HEADER_SIZE,
+    REPLICATED_MAP_PUT_ALL, REPLICATED_MAP_PUT_WITH_TTL, REPLICATED_MAP_REMOVE,
+    REPLICATED_MAP_REMOVE_ENTRY_LISTENER, REPLICATED_MAP_SIZE, REPLICATED_MAP_VALUES,
+    RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -28,6 +30,86 @@ use crate::listener::{
 };
 
 static REPLICATED_MAP_INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Statistics for a replicated map instance.
+#[derive(Debug, Clone)]
+pub struct ReplicatedMapStats {
+    put_operation_count: Arc<AtomicI64>,
+    get_operation_count: Arc<AtomicI64>,
+    remove_operation_count: Arc<AtomicI64>,
+    hits: Arc<AtomicI64>,
+    misses: Arc<AtomicI64>,
+    creation_time: i64,
+}
+
+impl ReplicatedMapStats {
+    fn new() -> Self {
+        Self {
+            put_operation_count: Arc::new(AtomicI64::new(0)),
+            get_operation_count: Arc::new(AtomicI64::new(0)),
+            remove_operation_count: Arc::new(AtomicI64::new(0)),
+            hits: Arc::new(AtomicI64::new(0)),
+            misses: Arc::new(AtomicI64::new(0)),
+            creation_time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0),
+        }
+    }
+
+    /// Returns the number of put operations.
+    pub fn put_operation_count(&self) -> i64 {
+        self.put_operation_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of get operations.
+    pub fn get_operation_count(&self) -> i64 {
+        self.get_operation_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of remove operations.
+    pub fn remove_operation_count(&self) -> i64 {
+        self.remove_operation_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of cache hits.
+    pub fn hits(&self) -> i64 {
+        self.hits.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of cache misses.
+    pub fn misses(&self) -> i64 {
+        self.misses.load(Ordering::Relaxed)
+    }
+
+    /// Returns the creation time in milliseconds since epoch.
+    pub fn creation_time(&self) -> i64 {
+        self.creation_time
+    }
+
+    fn record_put(&self) {
+        self.put_operation_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_get(&self, hit: bool) {
+        self.get_operation_count.fetch_add(1, Ordering::Relaxed);
+        if hit {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.misses.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn record_remove(&self) {
+        self.remove_operation_count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl Default for ReplicatedMapStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// A distributed, eventually-consistent map with full replication to all members.
 ///
@@ -51,6 +133,7 @@ pub struct ReplicatedMap<K, V> {
     name: String,
     connection_manager: Arc<ConnectionManager>,
     listener_stats: Arc<ListenerStats>,
+    stats: Arc<ReplicatedMapStats>,
     _marker: PhantomData<(K, V)>,
 }
 
@@ -65,6 +148,7 @@ where
             name,
             connection_manager,
             listener_stats: Arc::new(ListenerStats::new()),
+            stats: Arc::new(ReplicatedMapStats::new()),
             _marker: PhantomData,
         }
     }
@@ -78,22 +162,57 @@ where
     ///
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn put(&self, key: K, value: V) -> Result<Option<V>> {
+        self.stats.record_put();
         self.connection_manager
             .invoke_on_random(REPLICATED_MAP_PUT, &self.name, &(key, value))
             .await
     }
 
+    /// Associates the specified value with the specified key in this map with a TTL.
+    ///
+    /// The entry will automatically expire after the specified duration.
+    /// Returns the previous value associated with the key, or `None` if there was no mapping.
+    pub async fn put_with_ttl(&self, key: K, value: V, ttl: Duration) -> Result<Option<V>> {
+        self.stats.record_put();
+        let ttl_millis = ttl.as_millis() as i64;
+        self.connection_manager
+            .invoke_on_random(REPLICATED_MAP_PUT_WITH_TTL, &self.name, &(key, value, ttl_millis))
+            .await
+    }
+
+    /// Copies all of the mappings from the specified map to this map.
+    ///
+    /// The effect of this call is equivalent to calling `put(k, v)` on this map
+    /// for each mapping from key `k` to value `v` in the specified map.
+    pub async fn put_all(&self, entries: HashMap<K, V>) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let entry_vec: Vec<(K, V)> = entries.into_iter().collect();
+        for _ in &entry_vec {
+            self.stats.record_put();
+        }
+        self.connection_manager
+            .invoke_on_random(REPLICATED_MAP_PUT_ALL, &self.name, &entry_vec)
+            .await
+    }
+
     /// Returns the value associated with the specified key, or `None` if no mapping exists.
     pub async fn get(&self, key: &K) -> Result<Option<V>> {
-        self.connection_manager
+        let result: Result<Option<V>> = self.connection_manager
             .invoke_on_random(REPLICATED_MAP_GET, &self.name, key)
-            .await
+            .await;
+        if let Ok(ref opt) = result {
+            self.stats.record_get(opt.is_some());
+        }
+        result
     }
 
     /// Removes the mapping for a key from this map if present.
     ///
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn remove(&self, key: &K) -> Result<Option<V>> {
+        self.stats.record_remove();
         self.connection_manager
             .invoke_on_random(REPLICATED_MAP_REMOVE, &self.name, key)
             .await
@@ -431,6 +550,14 @@ where
         &self.listener_stats
     }
 
+    /// Returns the local statistics for this replicated map.
+    ///
+    /// These statistics are tracked locally and reflect operations performed
+    /// through this client instance only.
+    pub fn get_local_replicated_map_stats(&self) -> ReplicatedMapStats {
+        (*self.stats).clone()
+    }
+
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
         value.serialize(&mut output)?;
@@ -639,6 +766,7 @@ impl<K, V> Clone for ReplicatedMap<K, V> {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
             listener_stats: Arc::clone(&self.listener_stats),
+            stats: Arc::clone(&self.stats),
             _marker: PhantomData,
         }
     }
