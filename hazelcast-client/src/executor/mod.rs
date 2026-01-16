@@ -2,11 +2,13 @@
 //!
 //! This module provides types for submitting tasks to Hazelcast cluster members
 //! for remote execution, including scheduled execution with delays and periodic
-//! repetition.
+//! repetition, as well as durable execution with result persistence.
 
+mod durable;
 mod scheduled;
 mod service;
 
+pub use durable::{DurableExecutorService, DurableFuture};
 pub use scheduled::{ScheduledExecutorService, ScheduledFuture, ScheduleType, TimeUnit};
 pub use service::ExecutorFuture;
 

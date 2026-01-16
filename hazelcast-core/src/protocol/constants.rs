@@ -655,3 +655,21 @@ pub const XA_TXN_COLLECT_TRANSACTIONS: i32 = 0x150900;
 
 /// XA transaction finalize request.
 pub const XA_TXN_FINALIZE: i32 = 0x150A00;
+
+/// Durable executor submit to partition request.
+pub const DURABLE_EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x180100;
+
+/// Durable executor retrieve result request.
+pub const DURABLE_EXECUTOR_RETRIEVE_RESULT: i32 = 0x180200;
+
+/// Durable executor dispose result request.
+pub const DURABLE_EXECUTOR_DISPOSE_RESULT: i32 = 0x180300;
+
+/// Durable executor retrieve and dispose result request.
+pub const DURABLE_EXECUTOR_RETRIEVE_AND_DISPOSE_RESULT: i32 = 0x180400;
+
+/// Durable executor shutdown request.
+pub const DURABLE_EXECUTOR_SHUTDOWN: i32 = 0x180500;
+
+/// Durable executor is shutdown request.
+pub const DURABLE_EXECUTOR_IS_SHUTDOWN: i32 = 0x180600;
