@@ -6,7 +6,10 @@ use bytes::BytesMut;
 use hazelcast_core::{Deserializable, Result, Serializable};
 use uuid::Uuid;
 
-use crate::cluster::{CPSubsystemManagementService, ClusterService, LifecycleService, PartitionService};
+use crate::cluster::{
+    CPSessionManagementService, CPSubsystemManagementService, ClusterService, LifecycleService,
+    PartitionService,
+};
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};
@@ -793,6 +796,39 @@ impl HazelcastClient {
     /// ```
     pub fn cp_subsystem(&self) -> CPSubsystemManagementService {
         CPSubsystemManagementService::new(Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns the CP Session management service.
+    ///
+    /// The CP Session management service provides operations to:
+    /// - Query active CP sessions for a group
+    /// - Force close stuck CP sessions (use with caution)
+    ///
+    /// CP sessions are used internally by the CP Subsystem to track client
+    /// and server endpoints that hold resources like locks and semaphores.
+    ///
+    /// Note: These operations require the CP Subsystem to be enabled on the
+    /// Hazelcast cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let session_mgmt = client.cp_session_management();
+    ///
+    /// // List all sessions for a CP group
+    /// let sessions = session_mgmt.get_sessions("default").await?;
+    /// for session in &sessions {
+    ///     println!("Session {} owned by {}", session.id().session_id(), session.endpoint_name());
+    ///     println!("  Created: {}, Expires: {}", session.creation_time(), session.expiration_time());
+    /// }
+    ///
+    /// // Force close a stuck session (dangerous!)
+    /// if let Some(session) = sessions.first() {
+    ///     session_mgmt.force_close_session("default", session.id().session_id()).await?;
+    /// }
+    /// ```
+    pub fn cp_session_management(&self) -> CPSessionManagementService {
+        CPSessionManagementService::new(Arc::clone(&self.connection_manager))
     }
 
     /// Subscribes to cluster membership events.
