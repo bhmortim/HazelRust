@@ -163,9 +163,17 @@ where
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn put(&self, key: K, value: V) -> Result<Option<V>> {
         self.stats.record_put();
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_PUT, &self.name, &(key, value))
-            .await
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_PUT, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_nullable_response(&response)
     }
 
     /// Associates the specified value with the specified key in this map with a TTL.
@@ -174,10 +182,18 @@ where
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn put_with_ttl(&self, key: K, value: V, ttl: Duration) -> Result<Option<V>> {
         self.stats.record_put();
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
         let ttl_millis = ttl.as_millis() as i64;
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_PUT_WITH_TTL, &self.name, &(key, value, ttl_millis))
-            .await
+
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_PUT_WITH_TTL, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Self::long_frame(ttl_millis));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_nullable_response(&response)
     }
 
     /// Copies all of the mappings from the specified map to this map.
@@ -188,24 +204,40 @@ where
         if entries.is_empty() {
             return Ok(());
         }
-        let entry_vec: Vec<(K, V)> = entries.into_iter().collect();
-        for _ in &entry_vec {
+
+        let mut serialized_entries = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
             self.stats.record_put();
+            let key_data = Self::serialize_value(&key)?;
+            let value_data = Self::serialize_value(&value)?;
+            serialized_entries.push((key_data, value_data));
         }
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_PUT_ALL, &self.name, &entry_vec)
-            .await
+
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_PUT_ALL, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::int_frame(serialized_entries.len() as i32));
+
+        for (key_data, value_data) in serialized_entries {
+            message.add_frame(Self::data_frame(&key_data));
+            message.add_frame(Self::data_frame(&value_data));
+        }
+
+        self.invoke_on_random(message).await?;
+        Ok(())
     }
 
     /// Returns the value associated with the specified key, or `None` if no mapping exists.
     pub async fn get(&self, key: &K) -> Result<Option<V>> {
-        let result: Result<Option<V>> = self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_GET, &self.name, key)
-            .await;
-        if let Ok(ref opt) = result {
-            self.stats.record_get(opt.is_some());
-        }
-        result
+        let key_data = Self::serialize_value(key)?;
+
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_GET, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+
+        let response = self.invoke_on_random(message).await?;
+        let result: Option<V> = Self::decode_nullable_response(&response)?;
+        self.stats.record_get(result.is_some());
+        Ok(result)
     }
 
     /// Removes the mapping for a key from this map if present.
@@ -213,65 +245,92 @@ where
     /// Returns the previous value associated with the key, or `None` if there was no mapping.
     pub async fn remove(&self, key: &K) -> Result<Option<V>> {
         self.stats.record_remove();
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_REMOVE, &self.name, key)
-            .await
+        let key_data = Self::serialize_value(key)?;
+
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_REMOVE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_nullable_response(&response)
     }
 
     /// Returns `true` if this map contains a mapping for the specified key.
     pub async fn contains_key(&self, key: &K) -> Result<bool> {
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_CONTAINS_KEY, &self.name, key)
-            .await
+        let key_data = Self::serialize_value(key)?;
+
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_CONTAINS_KEY, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_bool_response(&response)
     }
 
     /// Returns `true` if this map contains one or more mappings to the specified value.
     pub async fn contains_value(&self, value: &V) -> Result<bool> {
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_CONTAINS_VALUE, &self.name, value)
-            .await
+        let value_data = Self::serialize_value(value)?;
+
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_CONTAINS_VALUE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&value_data));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_bool_response(&response)
     }
 
     /// Returns the number of key-value mappings in this map.
     pub async fn size(&self) -> Result<i32> {
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_SIZE, &self.name, &())
-            .await
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_SIZE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_int_response(&response)
     }
 
     /// Returns `true` if this map contains no key-value mappings.
     pub async fn is_empty(&self) -> Result<bool> {
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_IS_EMPTY, &self.name, &())
-            .await
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_IS_EMPTY, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_bool_response(&response)
     }
 
     /// Removes all key-value mappings from this map.
     pub async fn clear(&self) -> Result<()> {
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_CLEAR, &self.name, &())
-            .await
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_CLEAR, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        self.invoke_on_random(message).await?;
+        Ok(())
     }
 
     /// Returns a collection view of the keys contained in this map.
     pub async fn key_set(&self) -> Result<Vec<K>> {
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_KEY_SET, &self.name, &())
-            .await
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_KEY_SET, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_collection_response(&response)
     }
 
     /// Returns a collection view of the values contained in this map.
     pub async fn values(&self) -> Result<Vec<V>> {
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_VALUES, &self.name, &())
-            .await
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_VALUES, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_collection_response(&response)
     }
 
     /// Returns a collection view of the mappings contained in this map.
     pub async fn entry_set(&self) -> Result<Vec<(K, V)>> {
-        self.connection_manager
-            .invoke_on_random(REPLICATED_MAP_ENTRY_SET, &self.name, &())
-            .await
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_ENTRY_SET, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_entries_response(&response)
     }
 
     /// Adds an entry listener to this replicated map.
@@ -590,20 +649,103 @@ where
         Frame::with_content(buf)
     }
 
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
-        self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+    async fn invoke_on_random(&self, message: ClientMessage) -> Result<ClientMessage> {
+        self.connection_manager.invoke_on_random(message).await
     }
 
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+    fn long_frame(value: i64) -> Frame {
+        let mut buf = BytesMut::with_capacity(8);
+        buf.extend_from_slice(&value.to_le_bytes());
+        Frame::with_content(buf)
+    }
+
+    fn decode_nullable_response<T: Deserializable>(response: &ClientMessage) -> Result<Option<T>> {
+        let frames = response.frames();
+        if frames.len() < 2 {
+            return Ok(None);
+        }
+
+        let data_frame = &frames[1];
+
+        if data_frame.flags & IS_NULL_FLAG != 0 {
+            return Ok(None);
+        }
+
+        if data_frame.content.is_empty() {
+            return Ok(None);
+        }
+
+        let mut input = ObjectDataInput::new(&data_frame.content);
+        T::deserialize(&mut input).map(Some)
+    }
+
+    fn decode_int_response(response: &ClientMessage) -> Result<i32> {
+        let frames = response.frames();
+        if frames.is_empty() {
+            return Err(HazelcastError::Serialization("empty response".to_string()));
+        }
+
+        let initial_frame = &frames[0];
+        if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 4 {
+            let offset = RESPONSE_HEADER_SIZE;
+            Ok(i32::from_le_bytes([
+                initial_frame.content[offset],
+                initial_frame.content[offset + 1],
+                initial_frame.content[offset + 2],
+                initial_frame.content[offset + 3],
+            ]))
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn decode_collection_response<T: Deserializable>(response: &ClientMessage) -> Result<Vec<T>> {
+        let frames = response.frames();
+        let mut result = Vec::new();
+
+        for frame in frames.iter().skip(1) {
+            if frame.flags & IS_NULL_FLAG != 0 {
+                continue;
+            }
+            if frame.content.is_empty() {
+                continue;
+            }
+
+            let mut input = ObjectDataInput::new(&frame.content);
+            if let Ok(value) = T::deserialize(&mut input) {
+                result.push(value);
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn decode_entries_response(response: &ClientMessage) -> Result<Vec<(K, V)>> {
+        let frames = response.frames();
+        let mut entries = Vec::new();
+
+        let data_frames: Vec<_> = frames
+            .iter()
+            .skip(1)
+            .filter(|f| f.flags & IS_NULL_FLAG == 0 && !f.content.is_empty())
+            .collect();
+
+        let mut i = 0;
+        while i + 1 < data_frames.len() {
+            let key_frame = data_frames[i];
+            let value_frame = data_frames[i + 1];
+
+            let mut key_input = ObjectDataInput::new(&key_frame.content);
+            let mut value_input = ObjectDataInput::new(&value_frame.content);
+
+            if let (Ok(key), Ok(value)) = (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
+                entries.push((key, value));
+            }
+
+            i += 2;
+        }
+
+        Ok(entries)
     }
 
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {

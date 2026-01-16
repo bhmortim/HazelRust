@@ -822,6 +822,51 @@ impl ConnectionManager {
         self.receive_from(address).await
     }
 
+    /// Invokes a request on the owner of the specified partition and returns the response.
+    ///
+    /// This method sends the message to the partition owner if smart routing is enabled
+    /// and the owner is known, otherwise falls back to any available connection.
+    #[instrument(
+        name = "connection_manager.invoke_on_partition",
+        skip(self, message),
+        fields(partition_id = partition_id),
+        level = "debug"
+    )]
+    pub async fn invoke_on_partition(
+        &self,
+        partition_id: i32,
+        message: hazelcast_core::ClientMessage,
+    ) -> Result<hazelcast_core::ClientMessage> {
+        let address = self.get_connection_for_partition(partition_id).await?;
+        self.send_to(address, message).await?;
+        self.receive_from(address)
+            .await?
+            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+    }
+
+    /// Invokes a request on any available connection and returns the response.
+    ///
+    /// This is used for operations that are not partition-specific, such as
+    /// cluster-wide queries or operations on replicated data structures.
+    #[instrument(
+        name = "connection_manager.invoke_on_random",
+        skip(self, message),
+        level = "debug"
+    )]
+    pub async fn invoke_on_random(
+        &self,
+        message: hazelcast_core::ClientMessage,
+    ) -> Result<hazelcast_core::ClientMessage> {
+        let addresses = self.connected_addresses().await;
+        let address = addresses.into_iter().next().ok_or_else(|| {
+            HazelcastError::Connection("no connections available".to_string())
+        })?;
+        self.send_to(address, message).await?;
+        self.receive_from(address)
+            .await?
+            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+    }
+
     /// Clears the partition table. Called during reconnection or cluster state reset.
     pub async fn clear_partition_table(&self) {
         let mut table = self.partition_table.write().await;

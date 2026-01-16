@@ -626,7 +626,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         let result: Option<V> = Self::decode_nullable_response(&response)?;
 
         // Populate near-cache on successful remote fetch
@@ -669,7 +669,7 @@ where
         message.add_frame(Self::long_frame(-1)); // TTL: no expiry
         message.add_frame(Self::long_frame(-1)); // Max idle: no expiry
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -710,7 +710,7 @@ where
         message.add_frame(Self::data_frame(&value_data));
         message.add_frame(Self::long_frame(-1)); // TTL: no expiry
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -749,7 +749,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -791,7 +791,7 @@ where
         message.add_frame(Self::data_frame(&old_value_data));
         message.add_frame(Self::data_frame(&new_value_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -819,7 +819,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -859,7 +859,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -874,7 +874,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -882,11 +882,10 @@ where
     pub async fn size(&self) -> Result<usize> {
         self.check_permission(PermissionAction::Read)?;
         self.check_quorum(true).await?;
-        let message = ClientMessage::create_for_encode(MAP_SIZE, PARTITION_ID_ANY);
-        let mut msg = message;
-        msg.add_frame(Self::string_frame(&self.name));
+        let mut message = ClientMessage::create_for_encode(MAP_SIZE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
 
-        let response = self.invoke(msg).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_int_response(&response).map(|v| v as usize)
     }
 
@@ -1050,7 +1049,7 @@ where
             message.add_frame(Self::data_frame(&value_data));
         }
 
-        self.invoke(message).await?;
+        self.invoke_on_random(message).await?;
         Ok(())
     }
 
@@ -1114,7 +1113,7 @@ where
             message.add_frame(Self::data_frame(key_data));
         }
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let fetched_entries: Vec<(K, V)> = Self::decode_entries_response(&response)?;
 
         for (key, value) in fetched_entries {
@@ -1167,7 +1166,7 @@ where
             message.add_frame(Self::string_frame(&self.name));
             message.add_frame(Self::data_frame(&key_data));
 
-            self.invoke(message).await?;
+            self.invoke_on_partition(partition_id, message).await?;
         }
 
         Ok(())
@@ -1212,7 +1211,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        self.invoke(message).await?;
+        self.invoke_on_random(message).await?;
         Ok(())
     }
 
@@ -1228,11 +1227,10 @@ where
             cache_guard.clear();
         }
 
-        let message = ClientMessage::create_for_encode(MAP_CLEAR, PARTITION_ID_ANY);
-        let mut msg = message;
-        msg.add_frame(Self::string_frame(&self.name));
+        let mut message = ClientMessage::create_for_encode(MAP_CLEAR, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
 
-        self.invoke(msg).await?;
+        self.invoke_on_random(message).await?;
         Ok(())
     }
 
@@ -1264,7 +1262,7 @@ where
         message.add_frame(Self::long_frame(-1)); // TTL: indefinite
         message.add_frame(Self::invocation_uid_frame());
 
-        self.invoke(message).await?;
+        self.invoke_on_partition(partition_id, message).await?;
         Ok(())
     }
 
@@ -1299,7 +1297,7 @@ where
         message.add_frame(Self::long_frame(timeout_ms));
         message.add_frame(Self::invocation_uid_frame());
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1324,7 +1322,7 @@ where
         message.add_frame(Self::long_frame(self.thread_id));
         message.add_frame(Self::invocation_uid_frame());
 
-        self.invoke(message).await?;
+        self.invoke_on_partition(partition_id, message).await?;
         Ok(())
     }
 
@@ -1346,7 +1344,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1371,7 +1369,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::invocation_uid_frame());
 
-        self.invoke(message).await?;
+        self.invoke_on_partition(partition_id, message).await?;
         Ok(())
     }
 
@@ -1413,7 +1411,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::long_frame(self.thread_id));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1443,7 +1441,7 @@ where
         let mut message = ClientMessage::create_for_encode(MAP_EVICT_ALL, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
-        self.invoke(message).await?;
+        self.invoke_on_random(message).await?;
         Ok(())
     }
 
@@ -1469,7 +1467,7 @@ where
         let mut message = ClientMessage::create_for_encode(MAP_FLUSH, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
-        self.invoke(message).await?;
+        self.invoke_on_random(message).await?;
         Ok(())
     }
 
@@ -1500,7 +1498,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::long_frame(self.thread_id));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_entry_view_response(&response)
     }
 
@@ -1538,7 +1536,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::long_frame(ttl_ms));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1595,7 +1593,7 @@ where
         message.add_frame(Self::long_frame(self.thread_id));
         message.add_frame(Self::long_frame(timeout_ms));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1644,7 +1642,7 @@ where
         message.add_frame(Self::long_frame(-1)); // TTL: no expiry
         message.add_frame(Self::long_frame(max_idle_ms));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -1705,7 +1703,7 @@ where
         message.add_frame(Self::long_frame(ttl_ms));
         message.add_frame(Self::long_frame(max_idle_ms));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -1767,7 +1765,7 @@ where
         message.add_frame(Self::long_frame(ttl_ms));
         message.add_frame(Self::long_frame(max_idle_ms));
 
-        self.invoke(message).await?;
+        self.invoke_on_partition(partition_id, message).await?;
         Ok(())
     }
 
@@ -1819,7 +1817,7 @@ where
         message.add_frame(Self::long_frame(self.thread_id));
         message.add_frame(Self::long_frame(ttl_ms));
 
-        self.invoke(message).await?;
+        self.invoke_on_partition(partition_id, message).await?;
         Ok(())
     }
 
@@ -1843,21 +1841,12 @@ where
         Frame::with_content(buf)
     }
 
-    async fn invoke(&self, mut message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
-
-        self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+    async fn invoke_on_partition(&self, partition_id: i32, message: ClientMessage) -> Result<ClientMessage> {
+        self.connection_manager.invoke_on_partition(partition_id, message).await
     }
 
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+    async fn invoke_on_random(&self, message: ClientMessage) -> Result<ClientMessage> {
+        self.connection_manager.invoke_on_random(message).await
     }
 
     fn decode_nullable_response<T: Deserializable>(response: &ClientMessage) -> Result<Option<T>> {
@@ -2187,7 +2176,7 @@ where
         message.add_frame(Self::int_frame(config.event_flags()));
         message.add_frame(Self::bool_frame(false)); // local only = false
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
 
         let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
@@ -2262,7 +2251,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::uuid_frame(registration.id().as_uuid()));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -2347,7 +2336,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_values_response(&response)
     }
 
@@ -2370,7 +2359,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_keys_response(&response)
     }
 
@@ -2396,7 +2385,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_entries_response(&response)
     }
 
@@ -2630,7 +2619,7 @@ where
         message.add_frame(Self::data_frame(&processor_data));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_nullable_response::<E::Output>(&response)
     }
 
@@ -2687,7 +2676,7 @@ where
             message.add_frame(Self::data_frame(&key_data));
         }
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         self.decode_entry_processor_results::<E::Output>(&response)
     }
 
@@ -2756,7 +2745,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&processor_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         self.decode_entry_processor_results::<E::Output>(&response)
     }
 
@@ -2808,7 +2797,7 @@ where
         message.add_frame(Self::data_frame(&processor_data));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         self.decode_entry_processor_results::<E::Output>(&response)
     }
 
@@ -2946,7 +2935,7 @@ where
             message.add_frame(Self::bool_frame(false)); // no bitmap options
         }
 
-        self.invoke(message).await?;
+        self.invoke_on_random(message).await?;
         Ok(())
     }
 
@@ -2986,7 +2975,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&aggregator_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_aggregate_response::<A::Output>(&response)
     }
 
@@ -3035,7 +3024,7 @@ where
         message.add_frame(Self::data_frame(&aggregator_data));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_aggregate_response::<A::Output>(&response)
     }
 
@@ -3076,7 +3065,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&projection_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_projection_response::<P::Output>(&response)
     }
 
@@ -3130,7 +3119,7 @@ where
         message.add_frame(Self::data_frame(&projection_data));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_projection_response::<P::Output>(&response)
     }
 
@@ -3167,7 +3156,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let (values, anchors) = Self::decode_paging_values_response::<V>(&response)?;
 
         let page = predicate.get_page();
@@ -3207,7 +3196,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let (keys, anchors) = Self::decode_paging_values_response::<K>(&response)?;
 
         let page = predicate.get_page();
@@ -3253,7 +3242,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let (entries, anchors) = Self::decode_paging_entries_response(&response)?;
 
         let page = predicate.get_page();
@@ -3701,7 +3690,7 @@ where
         message.add_frame(Self::int_frame(config.event_flags()));
         message.add_frame(Self::bool_frame(false));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
 
         let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
@@ -3804,7 +3793,7 @@ where
         message.add_frame(Self::bool_frame(false));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
 
         let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
@@ -3908,7 +3897,7 @@ where
         message.add_frame(Self::bool_frame(false));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
 
         let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
@@ -4001,7 +3990,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::bool_frame(false)); // local only = false
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
 
         let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
@@ -4094,7 +4083,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::bool_frame(false)); // local only = false
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
 
         let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
@@ -4171,7 +4160,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::uuid_frame(registration.id().as_uuid()));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -4266,7 +4255,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&interceptor_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_string_response(&response)
     }
 
@@ -4311,7 +4300,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::bool_frame(replace_existing));
 
-        self.invoke(message).await?;
+        self.invoke_on_random(message).await?;
         Ok(())
     }
 
@@ -4420,7 +4409,7 @@ where
             ClientMessage::create_for_encode(MAP_EVENT_JOURNAL_SUBSCRIBE, partition_id);
         message.add_frame(Self::string_frame(&self.name));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_event_journal_subscribe_response(&response)
     }
 
@@ -4668,7 +4657,7 @@ where
             message.add_frame(Self::data_frame(&key_data));
         }
 
-        self.invoke(message).await?;
+        self.invoke_on_random(message).await?;
         Ok(())
     }
 
@@ -4697,7 +4686,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::string_frame(id));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_bool_response(&response)
     }
 
