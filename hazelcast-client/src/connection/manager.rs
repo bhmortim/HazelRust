@@ -746,29 +746,37 @@ impl ConnectionManager {
 
     /// Returns the address for the connection that should handle requests for the given partition.
     ///
-    /// If the partition owner is known and connected, returns its address.
-    /// If the partition owner is known but not connected, attempts to connect.
-    /// If the partition is unknown or connection fails, falls back to any available connection.
+    /// If smart routing is enabled (default):
+    /// - If the partition owner is known and connected, returns its address.
+    /// - If the partition owner is known but not connected, attempts to connect.
+    /// - If the partition is unknown or connection fails, falls back to any available connection.
+    ///
+    /// If smart routing is disabled (unisocket mode):
+    /// - Returns any available connection without partition-aware routing.
     ///
     /// Returns an error only if no connections are available at all.
     #[instrument(
         name = "connection_manager.get_connection_for_partition",
         skip(self),
-        fields(partition_id = partition_id),
+        fields(partition_id = partition_id, smart_routing = self.config.network().smart_routing()),
         level = "debug"
     )]
     pub async fn get_connection_for_partition(&self, partition_id: i32) -> Result<SocketAddr> {
-        if let Some(owner_address) = self.get_partition_owner_address(partition_id).await {
-            if self.is_connected(&owner_address).await {
-                tracing::trace!(address = %owner_address, "using partition owner connection");
-                return Ok(owner_address);
-            }
+        if self.config.network().smart_routing() {
+            if let Some(owner_address) = self.get_partition_owner_address(partition_id).await {
+                if self.is_connected(&owner_address).await {
+                    tracing::trace!(address = %owner_address, "using partition owner connection");
+                    return Ok(owner_address);
+                }
 
-            tracing::debug!(address = %owner_address, "partition owner not connected, attempting connection");
-            if self.connect_to(owner_address).await.is_ok() {
-                return Ok(owner_address);
+                tracing::debug!(address = %owner_address, "partition owner not connected, attempting connection");
+                if self.connect_to(owner_address).await.is_ok() {
+                    return Ok(owner_address);
+                }
+                tracing::warn!(address = %owner_address, "failed to connect to partition owner, falling back");
             }
-            tracing::warn!(address = %owner_address, "failed to connect to partition owner, falling back");
+        } else {
+            tracing::trace!("smart routing disabled, using any available connection");
         }
 
         let addresses = self.connected_addresses().await;
@@ -1933,6 +1941,35 @@ mod tests {
 
         let result = manager.get_connection_for_partition(0).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_connection_for_partition_smart_routing_disabled() {
+        let (listener, addr) = create_mock_server().await;
+
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        let config = ClientConfigBuilder::new()
+            .add_address(addr)
+            .network(|n| n.smart_routing(false))
+            .build()
+            .unwrap();
+
+        let manager = ConnectionManager::from_config(config);
+
+        let member_uuid = uuid::Uuid::new_v4();
+        let other_addr: SocketAddr = "192.0.2.1:5701".parse().unwrap();
+        let member = crate::listener::Member::new(member_uuid, other_addr);
+
+        manager.handle_member_added(member).await;
+        manager.set_partition_owner(0, member_uuid).await;
+        manager.connect_to(addr).await.unwrap();
+
+        let result = manager.get_connection_for_partition(0).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), addr);
     }
 
     #[tokio::test]

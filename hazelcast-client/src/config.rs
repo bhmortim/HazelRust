@@ -436,6 +436,7 @@ pub struct NetworkConfig {
     ws_url: Option<String>,
     wan_replication: Vec<WanReplicationConfig>,
     load_balancer: Arc<dyn LoadBalancer>,
+    smart_routing: bool,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
     #[cfg(feature = "azure")]
@@ -457,7 +458,8 @@ impl std::fmt::Debug for NetworkConfig {
             .field("tls", &self.tls)
             .field("ws_url", &self.ws_url)
             .field("wan_replication", &self.wan_replication)
-            .field("load_balancer", &self.load_balancer);
+            .field("load_balancer", &self.load_balancer)
+            .field("smart_routing", &self.smart_routing);
         #[cfg(feature = "aws")]
         s.field("aws_discovery", &self.aws_discovery);
         #[cfg(feature = "azure")]
@@ -542,6 +544,17 @@ impl NetworkConfig {
     pub fn load_balancer(&self) -> &Arc<dyn LoadBalancer> {
         &self.load_balancer
     }
+
+    /// Returns whether smart routing (partition-aware routing) is enabled.
+    ///
+    /// When enabled (default), operations are routed to the cluster member
+    /// that owns the partition for the operation's key, reducing network hops.
+    ///
+    /// When disabled (unisocket mode), all operations go through a single
+    /// connection regardless of partition ownership.
+    pub fn smart_routing(&self) -> bool {
+        self.smart_routing
+    }
 }
 
 impl Default for NetworkConfig {
@@ -554,6 +567,7 @@ impl Default for NetworkConfig {
             ws_url: None,
             wan_replication: Vec::new(),
             load_balancer: default_load_balancer(),
+            smart_routing: true,
             #[cfg(feature = "aws")]
             aws_discovery: None,
             #[cfg(feature = "azure")]
@@ -578,6 +592,7 @@ pub struct NetworkConfigBuilder {
     ws_url: Option<String>,
     wan_replication: Vec<WanReplicationConfig>,
     load_balancer: Option<Arc<dyn LoadBalancer>>,
+    smart_routing: Option<bool>,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
     #[cfg(feature = "azure")]
@@ -599,7 +614,8 @@ impl std::fmt::Debug for NetworkConfigBuilder {
             .field("tls", &self.tls)
             .field("ws_url", &self.ws_url)
             .field("wan_replication", &self.wan_replication)
-            .field("load_balancer", &self.load_balancer.is_some());
+            .field("load_balancer", &self.load_balancer.is_some())
+            .field("smart_routing", &self.smart_routing);
         #[cfg(feature = "aws")]
         s.field("aws_discovery", &self.aws_discovery);
         #[cfg(feature = "azure")]
@@ -747,6 +763,29 @@ impl NetworkConfigBuilder {
         self
     }
 
+    /// Enables or disables smart routing (partition-aware routing).
+    ///
+    /// When enabled (default), operations are routed to the cluster member
+    /// that owns the partition for the operation's key. This reduces network
+    /// hops and improves performance.
+    ///
+    /// When disabled (unisocket mode), all operations go through a single
+    /// connection regardless of partition ownership. This can be useful for
+    /// debugging or when operating behind certain network proxies.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = NetworkConfigBuilder::new()
+    ///     .smart_routing(false) // Enable unisocket mode
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn smart_routing(mut self, enabled: bool) -> Self {
+        self.smart_routing = Some(enabled);
+        self
+    }
+
     /// Builds the network configuration.
     pub fn build(self) -> Result<NetworkConfig, ConfigError> {
         let addresses = if self.addresses.is_empty() {
@@ -765,6 +804,7 @@ impl NetworkConfigBuilder {
             ws_url: self.ws_url,
             wan_replication: self.wan_replication,
             load_balancer: self.load_balancer.unwrap_or_else(default_load_balancer),
+            smart_routing: self.smart_routing.unwrap_or(true),
             #[cfg(feature = "aws")]
             aws_discovery: self.aws_discovery,
             #[cfg(feature = "azure")]
@@ -3916,6 +3956,39 @@ mod tests {
             Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
         ];
         assert!(config.network().load_balancer().select(&members).is_some());
+    }
+
+    #[test]
+    fn test_network_config_smart_routing_default() {
+        let config = NetworkConfigBuilder::new().build().unwrap();
+        assert!(config.smart_routing());
+    }
+
+    #[test]
+    fn test_network_config_smart_routing_disabled() {
+        let config = NetworkConfigBuilder::new()
+            .smart_routing(false)
+            .build()
+            .unwrap();
+        assert!(!config.smart_routing());
+    }
+
+    #[test]
+    fn test_network_config_smart_routing_enabled() {
+        let config = NetworkConfigBuilder::new()
+            .smart_routing(true)
+            .build()
+            .unwrap();
+        assert!(config.smart_routing());
+    }
+
+    #[test]
+    fn test_client_config_with_smart_routing() {
+        let config = ClientConfig::builder()
+            .network(|n| n.smart_routing(false))
+            .build()
+            .unwrap();
+        assert!(!config.network().smart_routing());
     }
 
     #[test]
