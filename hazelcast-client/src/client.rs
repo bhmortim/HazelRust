@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use hazelcast_core::{Deserializable, Result, Serializable};
 
+use crate::cluster::PartitionService;
 use crate::config::ClientConfig;
 use crate::connection::ConnectionManager;
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};
@@ -483,6 +484,36 @@ impl HazelcastClient {
     /// Returns the number of known cluster members.
     pub async fn member_count(&self) -> usize {
         self.connection_manager.member_count().await
+    }
+
+    /// Returns the partition service for querying partition information.
+    ///
+    /// The partition service provides access to:
+    /// - Partition count and partition list
+    /// - Partition owners (which member owns each partition)
+    /// - Key-to-partition mapping
+    /// - Migration event notifications
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let partition_service = client.partition_service();
+    ///
+    /// // Get partition count
+    /// let count = partition_service.get_partition_count();
+    /// println!("Cluster has {} partitions", count);
+    ///
+    /// // Find which partition owns a key
+    /// let partition = partition_service.get_partition(&"my-key".to_string()).await;
+    /// println!("Key belongs to partition {}", partition.id());
+    ///
+    /// // Get the owner of a partition
+    /// if let Some(owner) = partition_service.get_partition_owner(0).await {
+    ///     println!("Partition 0 owned by {}", owner);
+    /// }
+    /// ```
+    pub fn partition_service(&self) -> PartitionService {
+        PartitionService::new(Arc::clone(&self.connection_manager))
     }
 
     /// Subscribes to cluster membership events.
