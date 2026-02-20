@@ -792,10 +792,10 @@ pub trait Compact: Send + Sync {
         Self: Sized;
 
     /// Writes this object's fields to the given writer.
-    fn write(&self, writer: &mut dyn CompactWriter) -> Result<()>;
+    fn write(&self, writer: &mut DefaultCompactWriter) -> Result<()>;
 
     /// Reads this object's fields from the given reader.
-    fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()>;
+    fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()>;
 }
 
 const NULL_MARKER: i8 = 0;
@@ -1871,7 +1871,7 @@ mod tests {
             "Person"
         }
 
-        fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+        fn write(&self, writer: &mut DefaultCompactWriter) -> Result<()> {
             writer.write_string("name", Some(&self.name))?;
             writer.write_int32("age", self.age)?;
             writer.write_boolean("active", self.active)?;
@@ -1879,7 +1879,7 @@ mod tests {
             Ok(())
         }
 
-        fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+        fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()> {
             self.name = reader.read_string("name")?.unwrap_or_default();
             self.age = reader.read_int32("age")?;
             self.active = reader.read_boolean("active")?;
@@ -1900,14 +1900,14 @@ mod tests {
             "Address"
         }
 
-        fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+        fn write(&self, writer: &mut DefaultCompactWriter) -> Result<()> {
             writer.write_string("street", Some(&self.street))?;
             writer.write_string("city", Some(&self.city))?;
             writer.write_int32("zip", self.zip)?;
             Ok(())
         }
 
-        fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+        fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()> {
             self.street = reader.read_string("street")?.unwrap_or_default();
             self.city = reader.read_string("city")?.unwrap_or_default();
             self.zip = reader.read_int32("zip")?;
@@ -2268,13 +2268,13 @@ mod tests {
                 "Employee"
             }
 
-            fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+            fn write(&self, writer: &mut DefaultCompactWriter) -> Result<()> {
                 writer.write_string("name", Some(&self.name))?;
                 writer.write_compact("address", self.address.as_ref())?;
                 Ok(())
             }
 
-            fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+            fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()> {
                 self.name = reader.read_string("name")?.unwrap_or_default();
                 self.address = reader.read_compact("address")?;
                 Ok(())
@@ -2628,13 +2628,13 @@ mod tests {
                 "PersonEvolved"
             }
 
-            fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+            fn write(&self, writer: &mut DefaultCompactWriter) -> Result<()> {
                 writer.write_string("name", Some(&self.name))?;
                 writer.write_int32("age", self.age)?;
                 Ok(())
             }
 
-            fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+            fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()> {
                 self.name = reader.read_string("name")?.unwrap_or_default();
                 self.age = reader.read_int32("age")?;
                 Ok(())
@@ -2653,14 +2653,14 @@ mod tests {
                 "PersonEvolved"
             }
 
-            fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+            fn write(&self, writer: &mut DefaultCompactWriter) -> Result<()> {
                 writer.write_string("name", Some(&self.name))?;
                 writer.write_int32("age", self.age)?;
                 writer.write_string("email", self.email.as_deref())?;
                 Ok(())
             }
 
-            fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+            fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()> {
                 self.name = reader.read_string("name")?.unwrap_or_default();
                 self.age = reader.read_int32("age")?;
                 self.email = reader.read_string("email")?;
@@ -2697,14 +2697,14 @@ mod tests {
                 "PersonEvolved2"
             }
 
-            fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+            fn write(&self, writer: &mut DefaultCompactWriter) -> Result<()> {
                 writer.write_string("name", Some(&self.name))?;
                 writer.write_int32("age", self.age)?;
                 writer.write_string("email", self.email.as_deref())?;
                 Ok(())
             }
 
-            fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+            fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()> {
                 self.name = reader.read_string("name")?.unwrap_or_default();
                 self.age = reader.read_int32("age")?;
                 self.email = reader.read_string("email")?;
@@ -2723,13 +2723,13 @@ mod tests {
                 "PersonEvolved2"
             }
 
-            fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+            fn write(&self, writer: &mut DefaultCompactWriter) -> Result<()> {
                 writer.write_string("name", Some(&self.name))?;
                 writer.write_int32("age", self.age)?;
                 Ok(())
             }
 
-            fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+            fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()> {
                 self.name = reader.read_string("name")?.unwrap_or_default();
                 self.age = reader.read_int32("age")?;
                 Ok(())

@@ -405,7 +405,7 @@ where
         message.add_frame(Self::int_frame(config.event_flags()));
         message.add_frame(Self::bool_frame(false));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
 
         let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
@@ -488,7 +488,7 @@ where
         message.add_frame(Self::int_frame(config.event_flags()));
         message.add_frame(Self::bool_frame(false));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
 
         let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
@@ -576,7 +576,7 @@ where
         message.add_frame(Self::bool_frame(false));
         message.add_frame(Self::data_frame(predicate_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
 
         let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
@@ -651,7 +651,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::uuid_frame(registration.id().as_uuid()));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_random(message).await?;
         Self::decode_bool_response(&response)
     }
 

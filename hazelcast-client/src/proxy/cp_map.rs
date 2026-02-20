@@ -241,18 +241,16 @@ where
         Self::decode_bool_response(&response)
     }
 
-    fn serialize_value<T: Serializable>(value: &T) -> Result<BytesMut> {
-        let mut buf = BytesMut::new();
-        value.serialize(&mut buf)?;
-        Ok(buf)
+    fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
+        value.to_bytes()
     }
 
     fn string_frame(s: &str) -> Frame {
         Frame::with_content(BytesMut::from(s.as_bytes()))
     }
 
-    fn data_frame(data: &BytesMut) -> Frame {
-        Frame::with_content(data.clone())
+    fn data_frame(data: &[u8]) -> Frame {
+        Frame::with_content(BytesMut::from(data))
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
@@ -291,7 +289,7 @@ where
             return Ok(None);
         }
 
-        let value = V::deserialize(&mut data_frame.content.clone())?;
+        let value = V::from_bytes(&data_frame.content)?;
         Ok(Some(value))
     }
 
@@ -344,8 +342,8 @@ mod tests {
 
     #[test]
     fn test_data_frame() {
-        let data = BytesMut::from(&b"test-data"[..]);
-        let frame = CPMap::<String, String>::data_frame(&data);
+        let data = b"test-data";
+        let frame = CPMap::<String, String>::data_frame(data);
         assert_eq!(&frame.content[..], b"test-data");
     }
 

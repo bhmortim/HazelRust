@@ -980,16 +980,10 @@ impl HazelcastClient {
         };
         use hazelcast_core::protocol::{ClientMessage, Frame};
 
-        let mut request = ClientMessage::new(CLIENT_GET_DISTRIBUTED_OBJECTS);
+        let mut request = ClientMessage::new_request(CLIENT_GET_DISTRIBUTED_OBJECTS);
         request.set_partition_id(PARTITION_ID_ANY);
 
-        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
-        let address = addresses
-            .first()
-            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
-
-        self.connection_manager.send_to(*address, &request).await?;
-        let response = self.connection_manager.receive_from(*address).await?;
+        let response = self.connection_manager.send(request).await?;
 
         let mut result = Vec::new();
         let frames = response.frames();
@@ -1042,7 +1036,7 @@ impl HazelcastClient {
         use hazelcast_core::protocol::constants::{CLIENT_DESTROY_PROXY, PARTITION_ID_ANY};
         use hazelcast_core::protocol::{ClientMessage, Frame};
 
-        let mut request = ClientMessage::new(CLIENT_DESTROY_PROXY);
+        let mut request = ClientMessage::new_request(CLIENT_DESTROY_PROXY);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let service_bytes = BytesMut::from(service_name.as_bytes());
@@ -1051,13 +1045,7 @@ impl HazelcastClient {
         let name_bytes = BytesMut::from(name.as_bytes());
         request.add_frame(Frame::with_content(name_bytes));
 
-        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
-        let address = addresses
-            .first()
-            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
-
-        self.connection_manager.send_to(*address, &request).await?;
-        let _response = self.connection_manager.receive_from(*address).await?;
+        let _response = self.connection_manager.send(request).await?;
 
         tracing::info!(
             service_name = %service_name,

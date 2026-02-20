@@ -104,7 +104,8 @@ impl LatencyTracker {
 
 // Re-exports from other stats modules for convenience
 pub use super::collection_stats::{LocalListStats, LocalQueueStats, LocalSetStats};
-pub use super::map_stats::{LocalMapStats, MapStatsTracker};
+pub use super::map_stats::LocalMapStats;
+pub(crate) use super::map_stats::MapStatsTracker;
 
 #[cfg(test)]
 mod tests {

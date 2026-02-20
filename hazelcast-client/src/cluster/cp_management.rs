@@ -171,16 +171,10 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn get_cp_group_ids(&self) -> Result<Vec<CPGroupId>> {
-        let mut request = ClientMessage::new(CP_SUBSYSTEM_GET_GROUP_IDS);
+        let mut request = ClientMessage::new_request(CP_SUBSYSTEM_GET_GROUP_IDS);
         request.set_partition_id(PARTITION_ID_ANY);
 
-        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
-        let address = addresses
-            .first()
-            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
-
-        self.connection_manager.send_to(*address, &request).await?;
-        let response = self.connection_manager.receive_from(*address).await?;
+        let response = self.connection_manager.send(request).await?;
 
         let mut result = Vec::new();
         let frames = response.frames();
@@ -234,19 +228,13 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn get_cp_group(&self, name: &str) -> Result<Option<CPGroup>> {
-        let mut request = ClientMessage::new(CP_SUBSYSTEM_GET_GROUP);
+        let mut request = ClientMessage::new_request(CP_SUBSYSTEM_GET_GROUP);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let name_bytes = BytesMut::from(name.as_bytes());
         request.add_frame(Frame::with_content(name_bytes));
 
-        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
-        let address = addresses
-            .first()
-            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
-
-        self.connection_manager.send_to(*address, &request).await?;
-        let response = self.connection_manager.receive_from(*address).await?;
+        let response = self.connection_manager.send(request).await?;
 
         let frames = response.frames();
 
@@ -321,9 +309,10 @@ impl CPSubsystemManagementService {
             idx += 2;
         }
 
+        let member_count = members.len();
         let group = CPGroup::new(group_id, status, members);
 
-        tracing::debug!(name = %name, status = ?status, members = members.len(), "retrieved CP group");
+        tracing::debug!(name = %name, status = ?status, members = member_count, "retrieved CP group");
         Ok(Some(group))
     }
 
@@ -345,19 +334,13 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn force_destroy_cp_group(&self, name: &str) -> Result<()> {
-        let mut request = ClientMessage::new(CP_SUBSYSTEM_FORCE_DESTROY_GROUP);
+        let mut request = ClientMessage::new_request(CP_SUBSYSTEM_FORCE_DESTROY_GROUP);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let name_bytes = BytesMut::from(name.as_bytes());
         request.add_frame(Frame::with_content(name_bytes));
 
-        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
-        let address = addresses
-            .first()
-            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
-
-        self.connection_manager.send_to(*address, &request).await?;
-        let _response = self.connection_manager.receive_from(*address).await?;
+        let _response = self.connection_manager.send(request).await?;
 
         tracing::warn!(name = %name, "force destroyed CP group");
         Ok(())
@@ -372,16 +355,10 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn get_cp_members(&self) -> Result<Vec<CPMember>> {
-        let mut request = ClientMessage::new(CP_SUBSYSTEM_GET_CP_MEMBERS);
+        let mut request = ClientMessage::new_request(CP_SUBSYSTEM_GET_CP_MEMBERS);
         request.set_partition_id(PARTITION_ID_ANY);
 
-        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
-        let address = addresses
-            .first()
-            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
-
-        self.connection_manager.send_to(*address, &request).await?;
-        let response = self.connection_manager.receive_from(*address).await?;
+        let response = self.connection_manager.send(request).await?;
 
         let mut result = Vec::new();
         let frames = response.frames();
@@ -431,16 +408,10 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn promote_to_cp_member(&self) -> Result<()> {
-        let mut request = ClientMessage::new(CP_SUBSYSTEM_PROMOTE_TO_CP_MEMBER);
+        let mut request = ClientMessage::new_request(CP_SUBSYSTEM_PROMOTE_TO_CP_MEMBER);
         request.set_partition_id(PARTITION_ID_ANY);
 
-        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
-        let address = addresses
-            .first()
-            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
-
-        self.connection_manager.send_to(*address, &request).await?;
-        let _response = self.connection_manager.receive_from(*address).await?;
+        let _response = self.connection_manager.send(request).await?;
 
         tracing::info!("promoted to CP member");
         Ok(())
@@ -463,19 +434,13 @@ impl CPSubsystemManagementService {
     /// - No connection to the cluster is available
     /// - A network error occurs
     pub async fn remove_cp_member(&self, uuid: Uuid) -> Result<()> {
-        let mut request = ClientMessage::new(CP_SUBSYSTEM_REMOVE_CP_MEMBER);
+        let mut request = ClientMessage::new_request(CP_SUBSYSTEM_REMOVE_CP_MEMBER);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let uuid_bytes = BytesMut::from(uuid.as_bytes().as_slice());
         request.add_frame(Frame::with_content(uuid_bytes));
 
-        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
-        let address = addresses
-            .first()
-            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
-
-        self.connection_manager.send_to(*address, &request).await?;
-        let _response = self.connection_manager.receive_from(*address).await?;
+        let _response = self.connection_manager.send(request).await?;
 
         tracing::warn!(uuid = %uuid, "removed CP member");
         Ok(())

@@ -7,12 +7,28 @@ use crate::error::Result;
 pub trait Serializable {
     /// Serializes this value to the given output.
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()>;
+
+    /// Convenience method: serializes this value to a byte vector.
+    fn to_bytes(&self) -> Result<Vec<u8>>
+    where
+        Self: Sized,
+    {
+        let mut output = super::ObjectDataOutput::new();
+        self.serialize(&mut output)?;
+        Ok(output.into_bytes())
+    }
 }
 
 /// Trait for types that can be deserialized from Hazelcast's binary format.
 pub trait Deserializable: Sized {
     /// Deserializes a value from the given input.
     fn deserialize<R: DataInput>(input: &mut R) -> Result<Self>;
+
+    /// Convenience method: deserializes a value from a byte slice.
+    fn from_bytes(data: &[u8]) -> Result<Self> {
+        let mut input = super::ObjectDataInput::new(data);
+        Self::deserialize(&mut input)
+    }
 }
 
 impl Serializable for i8 {

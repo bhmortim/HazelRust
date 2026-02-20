@@ -44,6 +44,75 @@ impl Frame {
         Self::new(content, BEGIN_FLAG)
     }
 
+    /// Creates a begin frame with no content.
+    pub fn new_begin_frame_empty() -> Self {
+        Self::with_flags(BEGIN_FLAG)
+    }
+
+    /// Creates a frame containing a UTF-8 string.
+    pub fn new_string_frame(s: &str) -> Self {
+        Self::with_content(BytesMut::from(s.as_bytes()))
+    }
+
+    /// Creates a frame containing raw byte data.
+    pub fn new_data_frame(data: &[u8]) -> Self {
+        Self::with_content(BytesMut::from(data))
+    }
+
+    /// Creates a new frame with the given capacity (shorthand for creating a frame to append data into).
+    pub fn with_initial_capacity(capacity: usize) -> Self {
+        Self::new(BytesMut::with_capacity(capacity), DEFAULT_FLAGS)
+    }
+
+    /// Appends an i32 value (little-endian) to the frame content.
+    pub fn append_i32(&mut self, value: i32) {
+        self.content.put_i32_le(value);
+    }
+
+    /// Appends an i64 value (little-endian) to the frame content.
+    pub fn append_i64(&mut self, value: i64) {
+        self.content.put_i64_le(value);
+    }
+
+    /// Appends a bool value to the frame content.
+    pub fn append_bool(&mut self, value: bool) {
+        self.content.put_u8(if value { 1 } else { 0 });
+    }
+
+    /// Reads an i32 value (little-endian) at the given byte offset in the frame content.
+    pub fn read_i32(&self, offset: usize) -> i32 {
+        i32::from_le_bytes([
+            self.content[offset],
+            self.content[offset + 1],
+            self.content[offset + 2],
+            self.content[offset + 3],
+        ])
+    }
+
+    /// Reads an i64 value (little-endian) at the given byte offset in the frame content.
+    pub fn read_i64(&self, offset: usize) -> i64 {
+        i64::from_le_bytes([
+            self.content[offset],
+            self.content[offset + 1],
+            self.content[offset + 2],
+            self.content[offset + 3],
+            self.content[offset + 4],
+            self.content[offset + 5],
+            self.content[offset + 6],
+            self.content[offset + 7],
+        ])
+    }
+
+    /// Reads a bool value at the given byte offset in the frame content.
+    pub fn read_bool(&self, offset: usize) -> bool {
+        self.content[offset] != 0
+    }
+
+    /// Returns a reference to the frame content bytes.
+    pub fn content(&self) -> &[u8] {
+        &self.content
+    }
+
     /// Creates an end frame (marks end of a client message).
     pub fn new_end_frame() -> Self {
         Self::with_flags(END_FLAG)
@@ -82,6 +151,21 @@ impl Frame {
     /// Returns true if this frame has the BACKUP_EVENT flag set.
     pub fn is_backup_event_frame(&self) -> bool {
         self.flags & BACKUP_EVENT_FLAG != 0
+    }
+
+    /// Shorthand for `is_null_frame()`.
+    pub fn is_null(&self) -> bool {
+        self.is_null_frame()
+    }
+
+    /// Shorthand for `is_begin_frame()`.
+    pub fn is_begin(&self) -> bool {
+        self.is_begin_frame()
+    }
+
+    /// Shorthand for `is_end_frame()`.
+    pub fn is_end(&self) -> bool {
+        self.is_end_frame()
     }
 
     /// Returns the size of this frame on the wire.

@@ -143,15 +143,15 @@ where
     /// Returns the sequence number of the added item, or -1 if the operation
     /// failed due to the overflow policy being `Fail` and the buffer being full.
     pub async fn add_with_policy(&self, item: T, overflow_policy: OverflowPolicy) -> Result<i64> {
-        let item_data = item.serialize()?;
+        let item_data = item.to_bytes()?;
 
-        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE + 8);
+        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 8);
         request.set_message_type(RINGBUFFER_ADD);
         request.set_partition_id(PARTITION_ID_ANY);
 
         request.add_frame(Frame::new_string_frame(&self.name));
 
-        let mut policy_frame = Frame::new(4);
+        let mut policy_frame = Frame::with_initial_capacity(4);
         policy_frame.append_i32(overflow_policy as i32);
         request.add_frame(policy_frame);
 
@@ -177,20 +177,20 @@ where
             return self.tail_sequence().await;
         }
 
-        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE + 8);
+        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 8);
         request.set_message_type(RINGBUFFER_ADD_ALL);
         request.set_partition_id(PARTITION_ID_ANY);
 
         request.add_frame(Frame::new_string_frame(&self.name));
 
-        request.add_frame(Frame::new_begin_frame());
+        request.add_frame(Frame::new_begin_frame_empty());
         for item in items {
-            let item_data = item.serialize()?;
+            let item_data = item.to_bytes()?;
             request.add_frame(Frame::new_data_frame(&item_data));
         }
         request.add_frame(Frame::new_end_frame());
 
-        let mut policy_frame = Frame::new(4);
+        let mut policy_frame = Frame::with_initial_capacity(4);
         policy_frame.append_i32(overflow_policy as i32);
         request.add_frame(policy_frame);
 
@@ -212,13 +212,13 @@ where
     /// Returns `None` if the sequence is stale (already overwritten) or
     /// if the sequence has not been written yet.
     pub async fn read_one(&self, sequence: i64) -> Result<Option<T>> {
-        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE + 8);
+        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 8);
         request.set_message_type(RINGBUFFER_READ_ONE);
         request.set_partition_id(PARTITION_ID_ANY);
 
         request.add_frame(Frame::new_string_frame(&self.name));
 
-        let mut seq_frame = Frame::new(8);
+        let mut seq_frame = Frame::with_initial_capacity(8);
         seq_frame.append_i64(sequence);
         request.add_frame(seq_frame);
         request.finalize();
@@ -234,7 +234,7 @@ where
             return Ok(None);
         }
 
-        let item = T::deserialize(&data_frame.content())?;
+        let item = T::from_bytes(data_frame.content())?;
         Ok(Some(item))
     }
 
@@ -251,13 +251,13 @@ where
         min_count: i32,
         max_count: i32,
     ) -> Result<(Vec<T>, i64)> {
-        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE + 24);
+        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 24);
         request.set_message_type(RINGBUFFER_READ_MANY);
         request.set_partition_id(PARTITION_ID_ANY);
 
         request.add_frame(Frame::new_string_frame(&self.name));
 
-        let mut params_frame = Frame::new(20);
+        let mut params_frame = Frame::with_initial_capacity(20);
         params_frame.append_i64(start_sequence);
         params_frame.append_i32(min_count);
         params_frame.append_i32(max_count);
@@ -284,7 +284,7 @@ where
                 break;
             }
             if !frame.is_begin() && !frame.is_null() {
-                let item = T::deserialize(&frame.content())?;
+                let item = T::from_bytes(frame.content())?;
                 items.push(item);
             }
             i += 1;
@@ -323,13 +323,13 @@ where
     ) -> Result<(Vec<T>, i64, i32)> {
         let filter_data = self.serialize_filter(&filter)?;
 
-        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE + 24);
+        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 24);
         request.set_message_type(RINGBUFFER_READ_MANY);
         request.set_partition_id(PARTITION_ID_ANY);
 
         request.add_frame(Frame::new_string_frame(&self.name));
 
-        let mut params_frame = Frame::new(20);
+        let mut params_frame = Frame::with_initial_capacity(20);
         params_frame.append_i64(start_sequence);
         params_frame.append_i32(min_count);
         params_frame.append_i32(max_count);
@@ -356,7 +356,7 @@ where
                 break;
             }
             if !frame.is_begin() && !frame.is_null() {
-                let item = T::deserialize(&frame.content())?;
+                let item = T::from_bytes(frame.content())?;
                 items.push(item);
             }
             i += 1;
@@ -367,7 +367,7 @@ where
 
     /// Returns the capacity of this ringbuffer.
     pub async fn capacity(&self) -> Result<i64> {
-        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE);
+        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
         request.set_message_type(RINGBUFFER_CAPACITY);
         request.set_partition_id(PARTITION_ID_ANY);
         request.add_frame(Frame::new_string_frame(&self.name));
@@ -385,7 +385,7 @@ where
 
     /// Returns the number of items in this ringbuffer.
     pub async fn size(&self) -> Result<i64> {
-        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE);
+        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
         request.set_message_type(RINGBUFFER_SIZE);
         request.set_partition_id(PARTITION_ID_ANY);
         request.add_frame(Frame::new_string_frame(&self.name));
@@ -406,7 +406,7 @@ where
     /// The head is the first item that can be read. If the ringbuffer is empty,
     /// returns the sequence of the next item to be added.
     pub async fn head_sequence(&self) -> Result<i64> {
-        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE);
+        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
         request.set_message_type(RINGBUFFER_HEAD_SEQUENCE);
         request.set_partition_id(PARTITION_ID_ANY);
         request.add_frame(Frame::new_string_frame(&self.name));
@@ -427,7 +427,7 @@ where
     /// The tail is the last item that was added. If the ringbuffer is empty,
     /// returns -1.
     pub async fn tail_sequence(&self) -> Result<i64> {
-        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE);
+        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
         request.set_message_type(RINGBUFFER_TAIL_SEQUENCE);
         request.set_partition_id(PARTITION_ID_ANY);
         request.add_frame(Frame::new_string_frame(&self.name));
@@ -448,7 +448,7 @@ where
     /// This is the number of items that can be added before the oldest items
     /// start being overwritten.
     pub async fn remaining_capacity(&self) -> Result<i64> {
-        let mut request = ClientMessage::create_for_encode(REQUEST_HEADER_SIZE);
+        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
         request.set_message_type(RINGBUFFER_REMAINING_CAPACITY);
         request.set_partition_id(PARTITION_ID_ANY);
         request.add_frame(Frame::new_string_frame(&self.name));

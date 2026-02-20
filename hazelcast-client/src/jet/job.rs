@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 
 use hazelcast_core::protocol::constants::{
     JET_EXPORT_SNAPSHOT, JET_GET_JOB_METRICS, JET_GET_JOB_STATUS, JET_RESUME_JOB,
-    JET_TERMINATE_JOB, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    JET_TERMINATE_JOB, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::{ClientMessage, Frame, HazelcastError, Result};
 
@@ -81,15 +81,12 @@ impl Job {
     ///
     /// Returns an error if communication with the cluster fails.
     pub async fn get_status(&self) -> Result<JobStatus> {
-        let mut message = ClientMessage::new();
-        message.set_message_type(JET_GET_JOB_STATUS);
-        message.set_partition_id(PARTITION_ID_ANY);
+        let mut message = ClientMessage::new_request(JET_GET_JOB_STATUS);
 
-        let mut id_bytes = Vec::with_capacity(8);
-        id_bytes.extend_from_slice(&self.id.to_le_bytes());
-        message.add_frame(Frame::new(id_bytes));
+        let id_bytes = self.id.to_le_bytes();
+        message.add_frame(Frame::new_data_frame(&id_bytes));
 
-        let response = self.invoke(message).await?;
+        let response = self.connection_manager.send(message).await?;
         let status_value = self.decode_int_response(&response)?;
         let status = JobStatus::from_wire_format(status_value).unwrap_or(JobStatus::NotRunning);
 
@@ -150,15 +147,12 @@ impl Job {
     /// Returns an error if the job is not in a suspended state or if
     /// communication with the cluster fails.
     pub async fn resume(&self) -> Result<()> {
-        let mut message = ClientMessage::new();
-        message.set_message_type(JET_RESUME_JOB);
-        message.set_partition_id(PARTITION_ID_ANY);
+        let mut message = ClientMessage::new_request(JET_RESUME_JOB);
 
-        let mut id_bytes = Vec::with_capacity(8);
-        id_bytes.extend_from_slice(&self.id.to_le_bytes());
-        message.add_frame(Frame::new(id_bytes));
+        let id_bytes = self.id.to_le_bytes();
+        message.add_frame(Frame::new_data_frame(&id_bytes));
 
-        self.invoke(message).await?;
+        self.connection_manager.send(message).await?;
         Ok(())
     }
 
@@ -239,19 +233,16 @@ impl Job {
     /// * `name` - The name to give the exported snapshot
     /// * `cancel_job` - If true, cancel the job after exporting
     pub async fn export_snapshot_with_options(&self, name: &str, cancel_job: bool) -> Result<()> {
-        let mut message = ClientMessage::new();
-        message.set_message_type(JET_EXPORT_SNAPSHOT);
-        message.set_partition_id(PARTITION_ID_ANY);
+        let mut message = ClientMessage::new_request(JET_EXPORT_SNAPSHOT);
 
-        let mut id_bytes = Vec::with_capacity(8);
-        id_bytes.extend_from_slice(&self.id.to_le_bytes());
-        message.add_frame(Frame::new(id_bytes));
+        let id_bytes = self.id.to_le_bytes();
+        message.add_frame(Frame::new_data_frame(&id_bytes));
 
-        message.add_frame(Frame::new(name.as_bytes().to_vec()));
+        message.add_frame(Frame::new_string_frame(name));
 
-        message.add_frame(Frame::new(vec![if cancel_job { 1u8 } else { 0u8 }]));
+        message.add_frame(Frame::new_data_frame(&[if cancel_job { 1u8 } else { 0u8 }]));
 
-        self.invoke(message).await?;
+        self.connection_manager.send(message).await?;
         Ok(())
     }
 
@@ -261,55 +252,34 @@ impl Job {
     ///
     /// Returns an error if communication with the cluster fails.
     pub async fn get_metrics(&self) -> Result<JobMetrics> {
-        let mut message = ClientMessage::new();
-        message.set_message_type(JET_GET_JOB_METRICS);
-        message.set_partition_id(PARTITION_ID_ANY);
+        let mut message = ClientMessage::new_request(JET_GET_JOB_METRICS);
 
-        let mut id_bytes = Vec::with_capacity(8);
-        id_bytes.extend_from_slice(&self.id.to_le_bytes());
-        message.add_frame(Frame::new(id_bytes));
+        let id_bytes = self.id.to_le_bytes();
+        message.add_frame(Frame::new_data_frame(&id_bytes));
 
-        let response = self.invoke(message).await?;
+        let response = self.connection_manager.send(message).await?;
         let _ = response;
         Ok(JobMetrics::new())
     }
 
     async fn terminate(&self, mode: TerminationMode) -> Result<()> {
-        let mut message = ClientMessage::new();
-        message.set_message_type(JET_TERMINATE_JOB);
-        message.set_partition_id(PARTITION_ID_ANY);
+        let mut message = ClientMessage::new_request(JET_TERMINATE_JOB);
 
-        let mut id_bytes = Vec::with_capacity(8);
-        id_bytes.extend_from_slice(&self.id.to_le_bytes());
-        message.add_frame(Frame::new(id_bytes));
+        let id_bytes = self.id.to_le_bytes();
+        message.add_frame(Frame::new_data_frame(&id_bytes));
 
-        message.add_frame(Frame::new(vec![mode as u8]));
+        message.add_frame(Frame::new_data_frame(&[mode as u8]));
 
-        message.add_frame(Frame::new(vec![0u8]));
+        message.add_frame(Frame::new_data_frame(&[0u8]));
 
-        self.invoke(message).await?;
+        self.connection_manager.send(message).await?;
         Ok(())
     }
 
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self
-            .connection_manager
-            .connected_addresses()
-            .await
-            .into_iter()
-            .next()
-            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))?;
-
-        self.connection_manager.send_to(address, message).await?;
-
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("no response received".to_string()))
-    }
-
     fn decode_int_response(&self, response: &ClientMessage) -> Result<i32> {
-        let frame = response.initial_frame();
+        let frame = response
+            .initial_frame()
+            .ok_or_else(|| HazelcastError::Serialization("missing initial frame".to_string()))?;
         if frame.content().len() >= RESPONSE_HEADER_SIZE + 4 {
             let bytes: [u8; 4] = frame.content()[RESPONSE_HEADER_SIZE..RESPONSE_HEADER_SIZE + 4]
                 .try_into()

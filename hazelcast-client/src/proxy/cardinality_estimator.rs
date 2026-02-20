@@ -70,7 +70,7 @@ where
     /// // count will be approximately 2
     /// ```
     pub async fn add(&self, value: &T) -> Result<()> {
-        let serialized = value.serialize()?;
+        let serialized = value.to_bytes()?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(CARDINALITY_ESTIMATOR_ADD);
         message.add_frame(Self::string_frame(&self.name));

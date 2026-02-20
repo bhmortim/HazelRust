@@ -40,7 +40,7 @@ pub use fenced_lock::FencedLock;
 pub use interceptor::MapInterceptor;
 pub use flake_id::{FlakeIdGenerator, IdBatch};
 pub use list::IList;
-pub use map::{IMap, IndexConfig, IndexConfigBuilder, IndexType};
+pub use map::{EntryView, IMap, IndexConfig, IndexConfigBuilder, IndexType};
 pub use map_stats::LocalMapStats;
 pub use multimap::MultiMap;
 pub use pn_counter::PNCounter;

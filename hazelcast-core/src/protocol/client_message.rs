@@ -30,6 +30,11 @@ impl ClientMessage {
         Self { frames: Vec::new() }
     }
 
+    /// Creates a new request message with the given message type, targeting any partition.
+    pub fn new_request(message_type: i32) -> Self {
+        Self::create_for_encode(message_type, PARTITION_ID_ANY)
+    }
+
     /// Creates a request message with the given type and partition ID.
     pub fn create_for_encode(message_type: i32, partition_id: i32) -> Self {
         let mut initial_frame = Frame::with_capacity(REQUEST_HEADER_SIZE, BEGIN_FLAG);
@@ -45,6 +50,36 @@ impl ClientMessage {
     /// Creates a request message targeting any partition.
     pub fn create_for_encode_any_partition(message_type: i32) -> Self {
         Self::create_for_encode(message_type, PARTITION_ID_ANY)
+    }
+
+    /// Creates a request message with a pre-allocated initial frame of the given capacity.
+    ///
+    /// The message type and partition ID should be set separately via
+    /// `set_message_type` and `set_partition_id`.
+    pub fn create_for_encode_with_capacity(capacity: usize) -> Self {
+        let initial_frame = Frame::with_capacity(capacity, BEGIN_FLAG);
+        Self {
+            frames: vec![initial_frame],
+        }
+    }
+
+    /// Sets the message type in the initial frame.
+    pub fn set_message_type(&mut self, message_type: i32) {
+        if let Some(frame) = self.frames.first_mut() {
+            // Ensure the frame content has enough space
+            while frame.content.len() < TYPE_FIELD_OFFSET + 4 {
+                frame.content.put_u8(0);
+            }
+            let bytes = message_type.to_le_bytes();
+            frame.content[TYPE_FIELD_OFFSET..TYPE_FIELD_OFFSET + 4].copy_from_slice(&bytes);
+        }
+    }
+
+    /// Finalizes the message by setting the END flag on the last frame.
+    pub fn finalize(&mut self) {
+        if let Some(last) = self.frames.last_mut() {
+            last.flags |= END_FLAG;
+        }
     }
 
     /// Creates a client message from received frames.
@@ -129,6 +164,16 @@ impl ClientMessage {
     /// Adds a frame to the message.
     pub fn add_frame(&mut self, frame: Frame) {
         self.frames.push(frame);
+    }
+
+    /// Adds a frame containing the given data bytes.
+    pub fn add_frame_with_data(&mut self, data: &[u8]) {
+        self.frames.push(Frame::new_data_frame(data));
+    }
+
+    /// Returns a reference to the initial (first) frame, if present.
+    pub fn initial_frame(&self) -> Option<&Frame> {
+        self.frames.first()
     }
 
     /// Returns a reference to all frames.

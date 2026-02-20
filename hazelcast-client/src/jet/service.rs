@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use hazelcast_core::protocol::constants::{
     JET_GET_JOB_IDS, JET_GET_JOB_STATUS, JET_GET_JOB_SUMMARY_LIST, JET_SUBMIT_JOB,
-    JET_TERMINATE_JOB, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    JET_TERMINATE_JOB, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::{ClientMessage, Frame, HazelcastError, Result};
 
@@ -44,31 +44,28 @@ impl JetService {
     pub async fn submit_job(&self, pipeline: &Pipeline, config: Option<JobConfig>) -> Result<Job> {
         let config = config.unwrap_or_default();
 
-        let mut message = ClientMessage::new();
-        message.set_message_type(JET_SUBMIT_JOB);
-        message.set_partition_id(PARTITION_ID_ANY);
+        let mut message = ClientMessage::new_request(JET_SUBMIT_JOB);
 
         let job_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
-        let mut id_bytes = Vec::with_capacity(8);
-        id_bytes.extend_from_slice(&job_id.to_le_bytes());
-        message.add_frame(Frame::new(id_bytes));
+        let id_bytes = job_id.to_le_bytes();
+        message.add_frame(Frame::new_data_frame(&id_bytes));
 
         let pipeline_data = self.serialize_pipeline(pipeline)?;
-        message.add_frame(Frame::new(pipeline_data));
+        message.add_frame(Frame::new_data_frame(&pipeline_data));
 
         let config_data = self.serialize_config(&config)?;
-        message.add_frame(Frame::new(config_data));
+        message.add_frame(Frame::new_data_frame(&config_data));
 
         if let Some(name) = config.name() {
-            message.add_frame(Frame::new(name.as_bytes().to_vec()));
+            message.add_frame(Frame::new_string_frame(name));
         } else {
-            message.add_frame(Frame::new(vec![]));
+            message.add_frame(Frame::new_data_frame(&[]));
         }
 
-        self.invoke(message).await?;
+        self.connection_manager.send(message).await?;
 
         Ok(Job::with_status(
             job_id,
@@ -135,11 +132,9 @@ impl JetService {
     ///
     /// Returns an error if communication with the cluster fails.
     pub async fn get_jobs(&self) -> Result<Vec<Job>> {
-        let mut message = ClientMessage::new();
-        message.set_message_type(JET_GET_JOB_SUMMARY_LIST);
-        message.set_partition_id(PARTITION_ID_ANY);
+        let message = ClientMessage::new_request(JET_GET_JOB_SUMMARY_LIST);
 
-        let response = self.invoke(message).await?;
+        let response = self.connection_manager.send(message).await?;
 
         self.decode_job_list(&response)
     }
@@ -154,13 +149,11 @@ impl JetService {
     ///
     /// Returns an error if communication with the cluster fails.
     pub async fn get_job_ids(&self) -> Result<Vec<i64>> {
-        let mut message = ClientMessage::new();
-        message.set_message_type(JET_GET_JOB_IDS);
-        message.set_partition_id(PARTITION_ID_ANY);
+        let mut message = ClientMessage::new_request(JET_GET_JOB_IDS);
 
-        message.add_frame(Frame::new(vec![1u8]));
+        message.add_frame(Frame::new_data_frame(&[1u8]));
 
-        let response = self.invoke(message).await?;
+        let response = self.connection_manager.send(message).await?;
 
         self.decode_job_ids(&response)
     }
@@ -180,15 +173,12 @@ impl JetService {
     /// Returns an error if the job does not exist or if communication
     /// with the cluster fails.
     pub async fn get_job_status(&self, job_id: i64) -> Result<JobStatus> {
-        let mut message = ClientMessage::new();
-        message.set_message_type(JET_GET_JOB_STATUS);
-        message.set_partition_id(PARTITION_ID_ANY);
+        let mut message = ClientMessage::new_request(JET_GET_JOB_STATUS);
 
-        let mut id_bytes = Vec::with_capacity(8);
-        id_bytes.extend_from_slice(&job_id.to_le_bytes());
-        message.add_frame(Frame::new(id_bytes));
+        let id_bytes = job_id.to_le_bytes();
+        message.add_frame(Frame::new_data_frame(&id_bytes));
 
-        let response = self.invoke(message).await?;
+        let response = self.connection_manager.send(message).await?;
         let status_value = self.decode_int_response(&response)?;
 
         JobStatus::from_wire_format(status_value)
@@ -206,37 +196,17 @@ impl JetService {
     /// Returns an error if the job does not exist, is already in a terminal
     /// state, or if communication with the cluster fails.
     pub async fn cancel_job(&self, job_id: i64) -> Result<()> {
-        let mut message = ClientMessage::new();
-        message.set_message_type(JET_TERMINATE_JOB);
-        message.set_partition_id(PARTITION_ID_ANY);
+        let mut message = ClientMessage::new_request(JET_TERMINATE_JOB);
 
-        let mut id_bytes = Vec::with_capacity(8);
-        id_bytes.extend_from_slice(&job_id.to_le_bytes());
-        message.add_frame(Frame::new(id_bytes));
+        let id_bytes = job_id.to_le_bytes();
+        message.add_frame(Frame::new_data_frame(&id_bytes));
 
-        message.add_frame(Frame::new(vec![0u8]));
+        message.add_frame(Frame::new_data_frame(&[0u8]));
 
-        message.add_frame(Frame::new(vec![0u8]));
+        message.add_frame(Frame::new_data_frame(&[0u8]));
 
-        self.invoke(message).await?;
+        self.connection_manager.send(message).await?;
         Ok(())
-    }
-
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self
-            .connection_manager
-            .connected_addresses()
-            .await
-            .into_iter()
-            .next()
-            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))?;
-
-        self.connection_manager.send_to(address, message).await?;
-
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("no response received".to_string()))
     }
 
     fn serialize_pipeline(&self, pipeline: &Pipeline) -> Result<Vec<u8>> {
@@ -283,7 +253,9 @@ impl JetService {
     }
 
     fn decode_int_response(&self, response: &ClientMessage) -> Result<i32> {
-        let frame = response.initial_frame();
+        let frame = response
+            .initial_frame()
+            .ok_or_else(|| HazelcastError::Serialization("missing initial frame".to_string()))?;
         if frame.content().len() >= RESPONSE_HEADER_SIZE + 4 {
             let bytes: [u8; 4] = frame.content()[RESPONSE_HEADER_SIZE..RESPONSE_HEADER_SIZE + 4]
                 .try_into()
@@ -295,7 +267,9 @@ impl JetService {
     }
 
     fn decode_job_ids(&self, response: &ClientMessage) -> Result<Vec<i64>> {
-        let frame = response.initial_frame();
+        let frame = response
+            .initial_frame()
+            .ok_or_else(|| HazelcastError::Serialization("missing initial frame".to_string()))?;
         let content = frame.content();
         let mut job_ids = Vec::new();
 

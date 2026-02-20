@@ -701,13 +701,13 @@ mod tests {
                 "Person"
             }
 
-            fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+            fn write(&self, writer: &mut DefaultCompactWriter) -> Result<()> {
                 writer.write_string("name", Some(&self.name))?;
                 writer.write_int32("age", self.age)?;
                 Ok(())
             }
 
-            fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+            fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()> {
                 self.name = reader.read_string("name")?.unwrap_or_default();
                 self.age = reader.read_int32("age")?;
                 Ok(())

@@ -1036,6 +1036,32 @@ impl ConnectionManager {
             .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
     }
 
+    /// Sends a request and returns the response, automatically routing based on partition ID.
+    ///
+    /// If the message has a specific partition ID, it is routed to the partition owner.
+    /// Otherwise, it is sent to any available connection.
+    pub async fn send(
+        &self,
+        message: hazelcast_core::ClientMessage,
+    ) -> Result<hazelcast_core::ClientMessage> {
+        let partition_id = message.partition_id().unwrap_or(hazelcast_core::protocol::constants::PARTITION_ID_ANY);
+        if partition_id >= 0 {
+            self.invoke_on_partition(partition_id, message).await
+        } else {
+            self.invoke_on_random(message).await
+        }
+    }
+
+    /// Invokes a request and returns the response, automatically routing based on partition ID.
+    ///
+    /// This is an alias for `send` for code that prefers the "invoke" terminology.
+    pub async fn invoke(
+        &self,
+        message: hazelcast_core::ClientMessage,
+    ) -> Result<hazelcast_core::ClientMessage> {
+        self.send(message).await
+    }
+
     /// Clears the partition table. Called during reconnection or cluster state reset.
     pub async fn clear_partition_table(&self) {
         let mut table = self.partition_table.write().await;

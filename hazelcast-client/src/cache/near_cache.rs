@@ -109,6 +109,16 @@ pub struct NearCache<K, V> {
     stats: NearCacheStats,
 }
 
+impl<K, V> std::fmt::Debug for NearCache<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NearCache")
+            .field("config", &self.config)
+            .field("store_size", &self.store.len())
+            .field("stats", &self.stats)
+            .finish()
+    }
+}
+
 impl<K, V> NearCache<K, V>
 where
     K: Eq + Hash + Clone,
