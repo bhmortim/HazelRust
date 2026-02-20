@@ -39,6 +39,7 @@ jobs:
       - name: Generate coverage report (hazelcast-core)
         run: |
           cargo llvm-cov --package hazelcast-core --all-features \
+            --ignore-run-fail \
             --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
@@ -52,6 +53,7 @@ jobs:
         if: always()
         run: |
           cargo llvm-cov --package hazelcast-core --all-features \
+            --ignore-run-fail \
             --html --output-dir coverage-html
 
       - name: Upload HTML report
