@@ -1752,7 +1752,7 @@ where
                                 Ok(Some(msg)) => {
                                     if Self::is_cache_entry_event(&msg, &cache_name) {
                                         if let Ok(event) = Self::decode_cache_entry_event(&msg, old_value_required) {
-                                            Self::dispatch_cache_event(&listener, event);
+                                            Self::dispatch_cache_event(listener.as_ref(), event);
                                         }
                                     }
                                 }

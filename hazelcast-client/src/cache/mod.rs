@@ -6,7 +6,8 @@ mod query_cache;
 pub use near_cache::{NearCache, NearCacheStats, PreloadStats};
 pub use query_cache::{QueryCache, QueryCacheConfig, QueryCacheConfigBuilder, QueryCacheStats};
 pub(crate) use query_cache::StatsTracker;
-pub use self::{EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder, PreloadConfig, PreloadConfigBuilder};
+// Note: EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder,
+// PreloadConfig, PreloadConfigBuilder are defined below in this module and already public.
 
 use std::time::Duration;
 

@@ -384,7 +384,7 @@ pub trait XAResource: Send + Sync {
     fn set_transaction_timeout(&mut self, timeout: Duration) -> bool;
 
     /// Determines if this resource manager is the same as another.
-    fn is_same_rm(&self, other: &dyn XAResource) -> bool;
+    fn is_same_rm(&self, other: &Self) -> bool;
 
     /// Returns the XA transaction identifier.
     fn xid(&self) -> &Xid;
@@ -717,7 +717,7 @@ impl XAResource for XATransaction {
         true
     }
 
-    fn is_same_rm(&self, other: &dyn XAResource) -> bool {
+    fn is_same_rm(&self, other: &Self) -> bool {
         self.xid == *other.xid()
     }
 

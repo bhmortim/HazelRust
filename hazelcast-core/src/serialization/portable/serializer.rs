@@ -12,10 +12,18 @@ use std::sync::Arc;
 pub const PORTABLE_TYPE_ID: i32 = -1;
 
 /// Serializer for Portable objects.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct PortableSerializer {
     factories: HashMap<i32, Arc<dyn PortableFactory>>,
     class_definitions: HashMap<(i32, i32, i32), ClassDefinition>,
+}
+
+impl std::fmt::Debug for PortableSerializer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PortableSerializer")
+            .field("class_definitions", &self.class_definitions)
+            .finish()
+    }
 }
 
 impl PortableSerializer {
@@ -166,14 +174,14 @@ mod tests {
             PERSON_CLASS_ID
         }
 
-        fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+        fn write_portable(&self, writer: &mut DefaultPortableWriter) -> Result<()> {
             writer.write_string("name", Some(&self.name))?;
             writer.write_int("age", self.age)?;
             writer.write_bool("active", self.active)?;
             Ok(())
         }
 
-        fn read_portable(&mut self, reader: &mut dyn super::super::PortableReader) -> Result<()> {
+        fn read_portable(&mut self, reader: &mut DefaultPortableReader) -> Result<()> {
             self.name = reader.read_string("name")?.unwrap_or_default();
             self.age = reader.read_int("age")?;
             self.active = reader.read_bool("active")?;
@@ -197,14 +205,14 @@ mod tests {
             ADDRESS_CLASS_ID
         }
 
-        fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+        fn write_portable(&self, writer: &mut DefaultPortableWriter) -> Result<()> {
             writer.write_string("street", Some(&self.street))?;
             writer.write_string("city", Some(&self.city))?;
             writer.write_int("zip", self.zip)?;
             Ok(())
         }
 
-        fn read_portable(&mut self, reader: &mut dyn super::super::PortableReader) -> Result<()> {
+        fn read_portable(&mut self, reader: &mut DefaultPortableReader) -> Result<()> {
             self.street = reader.read_string("street")?.unwrap_or_default();
             self.city = reader.read_string("city")?.unwrap_or_default();
             self.zip = reader.read_int("zip")?;
@@ -449,13 +457,13 @@ mod tests {
             ADDRESS_CLASS_ID
         }
 
-        fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+        fn write_portable(&self, writer: &mut DefaultPortableWriter) -> Result<()> {
             writer.write_string("city", Some(&self.city))?;
             writer.write_int("zip", self.zip)?;
             Ok(())
         }
 
-        fn read_portable(&mut self, reader: &mut dyn super::super::PortableReader) -> Result<()> {
+        fn read_portable(&mut self, reader: &mut DefaultPortableReader) -> Result<()> {
             self.city = reader.read_string("city")?.unwrap_or_default();
             self.zip = reader.read_int("zip")?;
             Ok(())
@@ -480,14 +488,14 @@ mod tests {
             EMPLOYEE_CLASS_ID
         }
 
-        fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+        fn write_portable(&self, writer: &mut DefaultPortableWriter) -> Result<()> {
             writer.write_string("name", Some(&self.name))?;
             writer.write_portable("home_address", self.home_address.as_ref())?;
             writer.write_portable("work_address", self.work_address.as_ref())?;
             Ok(())
         }
 
-        fn read_portable(&mut self, reader: &mut dyn super::super::PortableReader) -> Result<()> {
+        fn read_portable(&mut self, reader: &mut DefaultPortableReader) -> Result<()> {
             self.name = reader.read_string("name")?.unwrap_or_default();
             self.home_address = reader.read_portable("home_address")?;
             self.work_address = reader.read_portable("work_address")?;

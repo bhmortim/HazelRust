@@ -32,7 +32,7 @@ use hazelcast_core::protocol::constants::{
     MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_core::serialization::{DataInput, DataOutput, ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{
     compute_partition_hash, ClientMessage, Deserializable, HazelcastError, Result, Serializable,
 };
@@ -2941,7 +2941,7 @@ where
     ) -> tokio::task::JoinHandle<Result<Option<E::Output>>>
     where
         E: EntryProcessor + 'static,
-        E::Output: 'static,
+        E::Output: Send + 'static,
         K: 'static,
         V: 'static,
     {
@@ -3021,7 +3021,7 @@ where
         if let Some(ref name) = config.name {
             message.add_frame(Self::string_frame(name));
         } else {
-            message.add_frame(Frame::null());
+            message.add_frame(Frame::new_null_frame());
         }
 
         // Attributes count
@@ -5284,7 +5284,7 @@ mod tests {
         }
 
         impl Serializable for TestProcessor {
-            fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
                 output.write_i32(self.increment)?;
                 Ok(())
             }
@@ -5909,7 +5909,7 @@ mod tests {
         }
 
         impl Serializable for IncrementProcessor {
-            fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
                 output.write_i32(self.delta)?;
                 Ok(())
             }
@@ -6629,7 +6629,7 @@ mod tests {
         }
 
         impl Serializable for PrefixInterceptor {
-            fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
                 output.write_string(&self.prefix)?;
                 Ok(())
             }
@@ -7455,7 +7455,7 @@ mod tests {
         }
 
         impl Deserializable for ProcessorResult {
-            fn deserialize(input: &mut ObjectDataInput) -> hazelcast_core::Result<Self> {
+            fn deserialize<R: DataInput>(input: &mut R) -> hazelcast_core::Result<Self> {
                 Ok(Self {
                     old_value: input.read_i32()?,
                     new_value: input.read_i32()?,
@@ -7472,7 +7472,7 @@ mod tests {
         }
 
         impl Serializable for UpdateProcessor {
-            fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
                 output.write_i32(self.delta)?;
                 Ok(())
             }

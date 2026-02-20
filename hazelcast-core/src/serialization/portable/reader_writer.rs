@@ -347,11 +347,19 @@ struct FieldData {
 }
 
 /// Default implementation of `PortableReader`.
-#[derive(Debug)]
 pub struct DefaultPortableReader {
     version: i32,
     fields: HashMap<String, FieldData>,
     factories: HashMap<i32, Arc<dyn PortableFactory>>,
+}
+
+impl std::fmt::Debug for DefaultPortableReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefaultPortableReader")
+            .field("version", &self.version)
+            .field("fields", &self.fields)
+            .finish()
+    }
 }
 
 impl DefaultPortableReader {
@@ -510,7 +518,7 @@ impl PortableReader for DefaultPortableReader {
         }
     }
 
-    fn read_portable<P: Portable>(&mut self, name: &str) -> Result<Option<P>> {
+    fn read_portable<P: Portable + Default>(&mut self, name: &str) -> Result<Option<P>> {
         match self.get_field(name, FieldType::Portable)? {
             Some(data) => {
                 let mut input = ObjectDataInput::new(data);
@@ -519,36 +527,18 @@ impl PortableReader for DefaultPortableReader {
                     return Ok(None);
                 }
 
-                let factory_id = input.read_int()?;
-                let class_id = input.read_int()?;
+                let _factory_id = input.read_int()?;
+                let _class_id = input.read_int()?;
                 let nested_len = input.read_int()? as usize;
                 let nested_data = input.read_bytes(nested_len)?;
 
-                let factory = self.factories.get(&factory_id).ok_or_else(|| {
-                    HazelcastError::Serialization(format!(
-                        "No factory registered for factory_id={}",
-                        factory_id
-                    ))
-                })?;
-
-                let mut instance = factory.create(class_id).ok_or_else(|| {
-                    HazelcastError::Serialization(format!(
-                        "Factory {} cannot create class_id={}",
-                        factory_id, class_id
-                    ))
-                })?;
+                let mut instance = P::default();
 
                 let mut nested_reader =
                     DefaultPortableReader::from_bytes(&nested_data, 0, self.factories.clone())?;
                 instance.read_portable(&mut nested_reader)?;
 
-                let instance_any = instance as Box<dyn std::any::Any>;
-                match instance_any.downcast::<P>() {
-                    Ok(typed) => Ok(Some(*typed)),
-                    Err(_) => Err(HazelcastError::Serialization(
-                        "Type mismatch when reading portable".to_string(),
-                    )),
-                }
+                Ok(Some(instance))
             }
             None => Ok(None),
         }
@@ -729,7 +719,7 @@ impl PortableReader for DefaultPortableReader {
         }
     }
 
-    fn read_portable_array<P: Portable>(&mut self, name: &str) -> Result<Option<Vec<P>>> {
+    fn read_portable_array<P: Portable + Default>(&mut self, name: &str) -> Result<Option<Vec<P>>> {
         match self.get_field(name, FieldType::PortableArray)? {
             Some(data) => {
                 let mut input = ObjectDataInput::new(data);
@@ -742,24 +732,12 @@ impl PortableReader for DefaultPortableReader {
                 let mut result = Vec::with_capacity(len);
 
                 for _ in 0..len {
-                    let factory_id = input.read_int()?;
-                    let class_id = input.read_int()?;
+                    let _factory_id = input.read_int()?;
+                    let _class_id = input.read_int()?;
                     let nested_len = input.read_int()? as usize;
                     let nested_data = input.read_bytes(nested_len)?;
 
-                    let factory = self.factories.get(&factory_id).ok_or_else(|| {
-                        HazelcastError::Serialization(format!(
-                            "No factory registered for factory_id={}",
-                            factory_id
-                        ))
-                    })?;
-
-                    let mut instance = factory.create(class_id).ok_or_else(|| {
-                        HazelcastError::Serialization(format!(
-                            "Factory {} cannot create class_id={}",
-                            factory_id, class_id
-                        ))
-                    })?;
+                    let mut instance = P::default();
 
                     let mut nested_reader = DefaultPortableReader::from_bytes(
                         &nested_data,
@@ -768,15 +746,7 @@ impl PortableReader for DefaultPortableReader {
                     )?;
                     instance.read_portable(&mut nested_reader)?;
 
-                    let instance_any = instance as Box<dyn std::any::Any>;
-                    match instance_any.downcast::<P>() {
-                        Ok(typed) => result.push(*typed),
-                        Err(_) => {
-                            return Err(HazelcastError::Serialization(
-                                "Type mismatch when reading portable array element".to_string(),
-                            ))
-                        }
-                    }
+                    result.push(instance);
                 }
 
                 Ok(Some(result))
@@ -810,13 +780,13 @@ mod tests {
             INNER_CLASS_ID
         }
 
-        fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+        fn write_portable(&self, writer: &mut DefaultPortableWriter) -> Result<()> {
             writer.write_int("value", self.value)?;
             writer.write_string("label", Some(&self.label))?;
             Ok(())
         }
 
-        fn read_portable(&mut self, reader: &mut dyn PortableReader) -> Result<()> {
+        fn read_portable(&mut self, reader: &mut DefaultPortableReader) -> Result<()> {
             self.value = reader.read_int("value")?;
             self.label = reader.read_string("label")?.unwrap_or_default();
             Ok(())
@@ -839,14 +809,14 @@ mod tests {
             OUTER_CLASS_ID
         }
 
-        fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+        fn write_portable(&self, writer: &mut DefaultPortableWriter) -> Result<()> {
             writer.write_string("name", Some(&self.name))?;
             writer.write_portable("inner", self.inner.as_ref())?;
             writer.write_portable_array("items", self.items.as_deref())?;
             Ok(())
         }
 
-        fn read_portable(&mut self, reader: &mut dyn PortableReader) -> Result<()> {
+        fn read_portable(&mut self, reader: &mut DefaultPortableReader) -> Result<()> {
             self.name = reader.read_string("name")?.unwrap_or_default();
             self.inner = reader.read_portable("inner")?;
             self.items = reader.read_portable_array("items")?;

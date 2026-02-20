@@ -11,5 +11,7 @@ pub use cp_management::{CPGroup, CPGroupId, CPGroupStatus, CPMember, CPSubsystem
 pub use cp_session::{CPSession, CPSessionEndpointType, CPSessionId, CPSessionManagementService};
 pub use lifecycle_service::{LifecycleListenerRegistration, LifecycleService};
 pub use partition_service::{
-    MigrationEvent, MigrationListener, MigrationState, Partition, PartitionService,
+    BoxedMigrationListener, BoxedPartitionLostListener, FnMigrationListener,
+    FnPartitionLostListener, MigrationEvent, MigrationListener, MigrationState, Partition,
+    PartitionLostEvent, PartitionLostListener, PartitionService,
 };

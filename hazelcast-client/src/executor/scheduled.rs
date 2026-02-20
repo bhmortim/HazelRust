@@ -17,7 +17,7 @@ use hazelcast_core::protocol::{
     SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION, SCHEDULED_EXECUTOR_DISPOSE,
     PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable, Serializable as _};
+use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
 
 use crate::connection::ConnectionManager;
 use crate::listener::Member;
@@ -270,11 +270,11 @@ impl<T: Deserializable> ScheduledFuture<T> {
             .next()
             .ok_or_else(|| HazelcastError::Connection("No connection available".to_string()))?;
 
-        self.connection_manager.send_to(&address, message).await?;
+        self.connection_manager.send_to(address, message).await?;
 
         self.connection_manager
-            .receive_from(&address)
-            .await
+            .receive_from(address)
+            .await?
             .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))
     }
 
@@ -490,8 +490,7 @@ impl ScheduledExecutorService {
         let task_name = format!("task-{}", Uuid::new_v4());
         let delay_nanos = delay.as_nanos() as i64;
 
-        let mut key_data = Vec::new();
-        key.serialize(&mut key_data)?;
+        let key_data = key.to_bytes()?;
         let partition_id = Self::compute_partition_id(&key_data);
 
         let mut message =
@@ -609,11 +608,11 @@ impl ScheduledExecutorService {
             .next()
             .ok_or_else(|| HazelcastError::Connection("No connection available".to_string()))?;
 
-        self.connection_manager.send_to(&address, message).await?;
+        self.connection_manager.send_to(address, message).await?;
 
         self.connection_manager
-            .receive_from(&address)
-            .await
+            .receive_from(address)
+            .await?
             .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))
     }
 

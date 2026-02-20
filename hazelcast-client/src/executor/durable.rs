@@ -222,8 +222,7 @@ impl DurableExecutorService {
         R: Deserializable + Send + 'static,
         K: Serializable,
     {
-        let mut key_data = Vec::new();
-        key.serialize(&mut key_data)?;
+        let key_data = key.to_bytes()?;
         let partition_id = Self::compute_partition_id(&key_data);
         self.submit_to_partition(task, partition_id).await
     }
@@ -338,11 +337,11 @@ impl DurableExecutorService {
             .next()
             .ok_or_else(|| HazelcastError::Connection("No connection available".to_string()))?;
 
-        self.connection_manager.send_to(&address, message).await?;
+        self.connection_manager.send_to(address, message).await?;
 
         self.connection_manager
-            .receive_from(&address)
-            .await
+            .receive_from(address)
+            .await?
             .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))
     }
 
@@ -428,11 +427,11 @@ async fn retrieve_result_internal<R: Deserializable>(
         .next()
         .ok_or_else(|| HazelcastError::Connection("No connection available".to_string()))?;
 
-    connection_manager.send_to(&address, message).await?;
+    connection_manager.send_to(address, message).await?;
 
     let response = connection_manager
-        .receive_from(&address)
-        .await
+        .receive_from(address)
+        .await?
         .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))?;
 
     DurableExecutorService::decode_result_response(&response)

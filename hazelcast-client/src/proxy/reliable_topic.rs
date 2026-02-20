@@ -254,7 +254,7 @@ where
         }
 
         let count = messages.len();
-        let sequence = self.ringbuffer().add_all(messages).await?;
+        let sequence = self.ringbuffer().add_all(messages, OverflowPolicy::Overwrite).await?;
 
         for _ in 0..count {
             self.stats.record_publish();
@@ -276,7 +276,7 @@ where
         }
 
         let count = messages.len();
-        let sequence = self.ringbuffer().add_all_with_policy(messages, policy).await?;
+        let sequence = self.ringbuffer().add_all(messages, policy).await?;
 
         for _ in 0..count {
             self.stats.record_publish();

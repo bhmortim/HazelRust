@@ -34,6 +34,14 @@ pub enum HazelcastError {
     #[error("configuration error: {0}")]
     Configuration(String),
 
+    /// Illegal state errors (operation not valid in current state).
+    #[error("illegal state: {0}")]
+    IllegalState(String),
+
+    /// Quorum/split-brain protection errors.
+    #[error("quorum not present: {0}")]
+    QuorumNotPresent(String),
+
     /// I/O errors from the standard library.
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),

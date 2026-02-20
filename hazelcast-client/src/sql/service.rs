@@ -4,10 +4,8 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
-use hazelcast_core::protocol::constants::{
-    PARTITION_ID_ANY, SQL_CLOSE, SQL_EXECUTE, SQL_FETCH,
-};
-use hazelcast_core::protocol::ClientMessage;
+use hazelcast_core::protocol::constants::{SQL_CLOSE, SQL_EXECUTE, SQL_FETCH};
+use hazelcast_core::protocol::{ClientMessage, Frame};
 use hazelcast_core::{HazelcastError, Result};
 
 use crate::connection::ConnectionManager;
@@ -147,20 +145,20 @@ impl SqlService {
         // Skip update statistics
         initial_frame_content.push(0); // false
 
-        let mut request = ClientMessage::new_request(SQL_EXECUTE, PARTITION_ID_ANY);
-        request.add_frame_with_data(initial_frame_content);
+        let mut request = ClientMessage::new_request(SQL_EXECUTE);
+        request.add_frame_with_data(&initial_frame_content);
 
         // SQL string frame
-        request.add_string_frame(statement.query());
+        request.add_frame(Frame::new_string_frame(statement.query()));
 
         // Parameters frame - encode as list of Data objects
         self.encode_parameters(&mut request, statement.parameters())?;
 
         // Schema frame (nullable)
         if let Some(schema) = statement.schema() {
-            request.add_string_frame(schema);
+            request.add_frame(Frame::new_string_frame(schema));
         } else {
-            request.add_null_frame();
+            request.add_frame(Frame::new_null_frame());
         }
 
         Ok(request)
@@ -171,7 +169,7 @@ impl SqlService {
             // Empty list frame
             let mut buf = Vec::new();
             buf.extend_from_slice(&0i32.to_le_bytes()); // count = 0
-            request.add_frame_with_data(buf);
+            request.add_frame_with_data(&buf);
             return Ok(());
         }
 
@@ -183,7 +181,7 @@ impl SqlService {
             self.encode_sql_value(&mut buf, param)?;
         }
 
-        request.add_frame_with_data(buf);
+        request.add_frame_with_data(&buf);
         Ok(())
     }
 
@@ -235,7 +233,7 @@ impl SqlService {
             }
             SqlValue::Date(d) => {
                 buf.push(1);
-                let epoch_days = d.num_days_from_ce() - EPOCH_DATE;
+                let epoch_days = d.signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()).num_days() as i32;
                 buf.extend_from_slice(&epoch_days.to_le_bytes());
             }
             SqlValue::Time(t) => {
@@ -341,7 +339,7 @@ impl SqlService {
         })
     }
 
-    fn parse_row_metadata(&self, frames: &[hazelcast_core::protocol::Frame]) -> Result<SqlRowMetadata> {
+    fn parse_row_metadata(&self, frames: &[Frame]) -> Result<SqlRowMetadata> {
         if frames.is_empty() {
             return Ok(SqlRowMetadata::new(Vec::new()));
         }
@@ -398,7 +396,7 @@ impl SqlService {
 
     fn parse_row_page(
         &self,
-        frames: &[hazelcast_core::protocol::Frame],
+        frames: &[Frame],
         metadata: Option<&SqlRowMetadata>,
     ) -> Result<VecDeque<SqlRow>> {
         let mut rows = VecDeque::new();
@@ -632,8 +630,8 @@ impl SqlService {
         // Cursor buffer size
         initial_frame_content.extend_from_slice(&cursor_buffer_size.to_le_bytes());
 
-        let mut request = ClientMessage::new_request(SQL_FETCH, PARTITION_ID_ANY);
-        request.add_frame_with_data(initial_frame_content);
+        let mut request = ClientMessage::new_request(SQL_FETCH);
+        request.add_frame_with_data(&initial_frame_content);
         request
     }
 
@@ -643,8 +641,8 @@ impl SqlService {
         // Query ID
         query_id.encode(&mut initial_frame_content);
 
-        let mut request = ClientMessage::new_request(SQL_CLOSE, PARTITION_ID_ANY);
-        request.add_frame_with_data(initial_frame_content);
+        let mut request = ClientMessage::new_request(SQL_CLOSE);
+        request.add_frame_with_data(&initial_frame_content);
         request
     }
 }

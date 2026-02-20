@@ -5,7 +5,7 @@
 
 mod client_message;
 mod codec;
-mod constants;
+pub mod constants;
 mod frame;
 
 pub use client_message::{compute_partition_hash, next_correlation_id, ClientMessage};

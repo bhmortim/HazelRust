@@ -12,10 +12,9 @@ pub use durable::{DurableExecutorService, DurableFuture};
 pub use scheduled::{ScheduledExecutorService, ScheduledFuture, ScheduleType, TimeUnit};
 pub use service::ExecutorFuture;
 
-pub use self::{
-    Callable, ExecutionCallback, ExecutionTarget, ExecutorService,
-    FnExecutionCallback, MemberSelector, Runnable, RunnableTask, CallableTask,
-};
+// Note: Callable, ExecutionCallback, ExecutionTarget, ExecutorService,
+// FnExecutionCallback, MemberSelector, Runnable, RunnableTask, CallableTask
+// are defined below in this module and already public.
 
 use crate::listener::Member;
 
@@ -71,8 +70,7 @@ pub struct RunnableTask {
 impl RunnableTask {
     /// Creates a new runnable task wrapper from a runnable implementation.
     pub fn new<R: Runnable>(task: &R) -> hazelcast_core::Result<Self> {
-        let mut data = Vec::new();
-        task.serialize(&mut data)?;
+        let data = task.to_bytes()?;
         Ok(Self {
             data,
             factory_id: task.factory_id(),
@@ -108,8 +106,7 @@ pub struct CallableTask<T> {
 impl<T: Deserializable> CallableTask<T> {
     /// Creates a new callable task wrapper from a callable implementation.
     pub fn new<C: Callable<T>>(task: &C) -> hazelcast_core::Result<Self> {
-        let mut data = Vec::new();
-        task.serialize(&mut data)?;
+        let data = task.to_bytes()?;
         Ok(Self {
             data,
             factory_id: task.factory_id(),
@@ -137,6 +134,7 @@ impl<T: Deserializable> CallableTask<T> {
 /// Function-based execution callback wrapper.
 pub struct FnExecutionCallback<T, F, E>
 where
+    T: Send + Sync,
     F: Fn(T) + Send + Sync,
     E: Fn(HazelcastError) + Send + Sync,
 {
@@ -147,6 +145,7 @@ where
 
 impl<T, F, E> FnExecutionCallback<T, F, E>
 where
+    T: Send + Sync,
     F: Fn(T) + Send + Sync,
     E: Fn(HazelcastError) + Send + Sync,
 {
@@ -162,6 +161,7 @@ where
 
 impl<T, F, E> ExecutionCallback<T> for FnExecutionCallback<T, F, E>
 where
+    T: Send + Sync,
     F: Fn(T) + Send + Sync,
     E: Fn(HazelcastError) + Send + Sync,
 {

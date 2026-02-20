@@ -132,8 +132,8 @@ impl<K, V> EntryKeyComparator<K, V> {
 
 impl<K, V> PagingComparator<K, V> for EntryKeyComparator<K, V>
 where
-    K: Ord + Send + Sync,
-    V: Send + Sync,
+    K: Ord + Debug + Send + Sync,
+    V: Debug + Send + Sync,
 {
     fn factory_id(&self) -> i32 {
         self.factory_id
@@ -209,8 +209,8 @@ impl<K, V> EntryValueComparator<K, V> {
 
 impl<K, V> PagingComparator<K, V> for EntryValueComparator<K, V>
 where
-    K: Send + Sync,
-    V: Ord + Send + Sync,
+    K: Debug + Send + Sync,
+    V: Ord + Debug + Send + Sync,
 {
     fn factory_id(&self) -> i32 {
         self.factory_id

@@ -101,6 +101,9 @@ pub const MAP_SIZE: i32 = 0x010500;
 /// Map clear request.
 pub const MAP_CLEAR: i32 = 0x010D00;
 
+/// Map remove all request.
+pub const MAP_REMOVE_ALL: i32 = 0x012400;
+
 /// Queue offer request.
 pub const QUEUE_OFFER: i32 = 0x030100;
 
@@ -343,6 +346,9 @@ pub const CP_ATOMIC_REFERENCE_COMPARE_AND_SET: i32 = 0x0A0400;
 
 /// CP AtomicReference contains request.
 pub const CP_ATOMIC_REFERENCE_CONTAINS: i32 = 0x0A0500;
+
+/// CP AtomicReference is null request.
+pub const CP_ATOMIC_REFERENCE_IS_NULL: i32 = 0x0A0800;
 
 /// CP AtomicReference alter request.
 pub const CP_ATOMIC_REFERENCE_ALTER: i32 = 0x0A0600;

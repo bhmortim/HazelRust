@@ -29,6 +29,10 @@ serde = { version = "1.0", features = ["derive"] }
 bincode = "1.3"
 rust_decimal = "1.36"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+uuid = { version = "1.0", features = ["v4"] }
+rand = "0.8"
+base64 = "0.22"
+futures = "0.3"
 
 tokio-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2", optional = true }
@@ -64,8 +68,8 @@ rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
 tokio-test = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
 uuid = "1.0"
-testcontainers = "0.15"
-testcontainers-modules = { version = "0.3", features = ["blocking"] }
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["blocking"] }
 rand = "0.8"
 
 [[bench]]

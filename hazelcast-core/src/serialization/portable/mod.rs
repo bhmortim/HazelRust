@@ -330,7 +330,7 @@ pub trait PortableReader {
     fn read_string(&mut self, name: &str) -> Result<Option<String>>;
 
     /// Reads a nested Portable field.
-    fn read_portable<P: Portable>(&mut self, name: &str) -> Result<Option<P>>;
+    fn read_portable<P: Portable + Default>(&mut self, name: &str) -> Result<Option<P>>;
 
     /// Reads a byte array field.
     fn read_byte_array(&mut self, name: &str) -> Result<Option<Vec<i8>>>;
@@ -360,7 +360,7 @@ pub trait PortableReader {
     fn read_string_array(&mut self, name: &str) -> Result<Option<Vec<String>>>;
 
     /// Reads a Portable array field.
-    fn read_portable_array<P: Portable>(&mut self, name: &str) -> Result<Option<Vec<P>>>;
+    fn read_portable_array<P: Portable + Default>(&mut self, name: &str) -> Result<Option<Vec<P>>>;
 }
 
 /// Trait for writing Portable fields during serialization.
@@ -427,7 +427,7 @@ pub trait PortableWriter {
 }
 
 /// Trait for types that can be serialized using Portable serialization.
-pub trait Portable: Send + Sync {
+pub trait Portable: Send + Sync + 'static {
     /// Returns the factory ID for this type.
     fn factory_id(&self) -> i32;
 
@@ -435,10 +435,10 @@ pub trait Portable: Send + Sync {
     fn class_id(&self) -> i32;
 
     /// Writes this object's fields to the given writer.
-    fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()>;
+    fn write_portable(&self, writer: &mut DefaultPortableWriter) -> Result<()>;
 
     /// Reads this object's fields from the given reader.
-    fn read_portable(&mut self, reader: &mut dyn PortableReader) -> Result<()>;
+    fn read_portable(&mut self, reader: &mut DefaultPortableReader) -> Result<()>;
 }
 
 #[cfg(test)]

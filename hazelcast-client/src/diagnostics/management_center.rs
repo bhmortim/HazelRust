@@ -82,7 +82,7 @@ impl ManagementCenterService {
             .scripting_enabled(self.config.scripting_enabled())
             .update_interval(interval)
             .build()
-            .unwrap_or(self.config);
+            .unwrap_or(self.config.clone());
         self
     }
 
@@ -109,6 +109,8 @@ impl ManagementCenterService {
         let scripting_enabled = self.config.scripting_enabled();
         let labels = self.client_labels.clone();
         let instance_name = self.instance_name.clone();
+
+        let url_for_log = url.clone();
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -142,7 +144,7 @@ impl ManagementCenterService {
         });
 
         tracing::info!(
-            url = %url,
+            url = %url_for_log,
             interval_ms = interval.as_millis(),
             scripting_enabled = scripting_enabled,
             "Management Center service started"

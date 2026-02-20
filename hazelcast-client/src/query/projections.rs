@@ -22,7 +22,7 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use hazelcast_core::serialization::ObjectDataOutput;
+use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
 use hazelcast_core::{Result, Serializable};
 
 /// Factory ID for built-in Hazelcast projections.
@@ -63,7 +63,7 @@ pub trait Projection: Debug + Send + Sync {
 /// Helper to write an i32 in big-endian format.
 fn write_i32(output: &mut ObjectDataOutput, value: i32) -> Result<()> {
     for byte in value.to_be_bytes() {
-        byte.serialize(output)?;
+        output.write_byte(byte as i8)?;
     }
     Ok(())
 }
@@ -73,7 +73,7 @@ fn write_string(output: &mut ObjectDataOutput, value: &str) -> Result<()> {
     let bytes = value.as_bytes();
     write_i32(output, bytes.len() as i32)?;
     for byte in bytes {
-        (*byte as i8).serialize(output)?;
+        output.write_byte(*byte as i8)?;
     }
     Ok(())
 }

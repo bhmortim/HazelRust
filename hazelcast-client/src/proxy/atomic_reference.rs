@@ -147,7 +147,7 @@ where
     }
 
     fn serialize_value(&self, value: &T) -> Result<Frame> {
-        let bytes = value.serialize()?;
+        let bytes = value.to_bytes()?;
         Ok(Frame::with_content(BytesMut::from(bytes.as_slice())))
     }
 
@@ -191,7 +191,7 @@ where
             return Ok(None);
         }
 
-        let value = T::deserialize(data)?;
+        let value = T::from_bytes(data)?;
         Ok(Some(value))
     }
 
@@ -332,7 +332,7 @@ mod tests {
         let frame = reference.serialize_value(&original).unwrap();
         assert!(!frame.content.is_empty());
 
-        let deserialized = String::deserialize(&frame.content).unwrap();
+        let deserialized = String::from_bytes(&frame.content).unwrap();
         assert_eq!(deserialized, original);
     }
 }

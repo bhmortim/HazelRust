@@ -151,19 +151,13 @@ impl CPSessionManagementService {
     pub async fn get_sessions(&self, group_name: &str) -> Result<Vec<CPSession>> {
         const CP_SESSION_GET_ALL: i32 = 0x1F0100;
 
-        let mut request = ClientMessage::new(CP_SESSION_GET_ALL);
+        let mut request = ClientMessage::new_request(CP_SESSION_GET_ALL);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let name_bytes = BytesMut::from(group_name.as_bytes());
         request.add_frame(Frame::with_content(name_bytes));
 
-        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
-        let address = addresses
-            .first()
-            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
-
-        self.connection_manager.send_to(*address, &request).await?;
-        let response = self.connection_manager.receive_from(*address).await?;
+        let response = self.connection_manager.send(request).await?;
 
         let mut result = Vec::new();
         let frames = response.frames();
@@ -246,7 +240,7 @@ impl CPSessionManagementService {
     pub async fn force_close_session(&self, group_name: &str, session_id: i64) -> Result<()> {
         const CP_SESSION_FORCE_CLOSE: i32 = 0x1F0200;
 
-        let mut request = ClientMessage::new(CP_SESSION_FORCE_CLOSE);
+        let mut request = ClientMessage::new_request(CP_SESSION_FORCE_CLOSE);
         request.set_partition_id(PARTITION_ID_ANY);
 
         let name_bytes = BytesMut::from(group_name.as_bytes());
@@ -255,13 +249,7 @@ impl CPSessionManagementService {
         let session_bytes = BytesMut::from(session_id.to_le_bytes().as_slice());
         request.add_frame(Frame::with_content(session_bytes));
 
-        let addresses: Vec<_> = self.connection_manager.connected_addresses().await;
-        let address = addresses
-            .first()
-            .ok_or_else(|| hazelcast_core::HazelcastError::Io("no connected members".into()))?;
-
-        self.connection_manager.send_to(*address, &request).await?;
-        let _response = self.connection_manager.receive_from(*address).await?;
+        let _response = self.connection_manager.send(request).await?;
 
         tracing::warn!(group = %group_name, session_id = %session_id, "force closed CP session");
         Ok(())

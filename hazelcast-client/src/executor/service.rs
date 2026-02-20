@@ -89,8 +89,7 @@ impl super::ExecutorService {
         R: Deserializable + Send + 'static,
         K: Serializable,
     {
-        let mut key_data = Vec::new();
-        key.serialize(&mut key_data)?;
+        let key_data = key.to_bytes()?;
         self.submit_to_target(task, ExecutionTarget::KeyOwner(key_data))
             .await
     }
@@ -422,9 +421,9 @@ impl super::ExecutorService {
                         HazelcastError::Connection("No connection available".to_string())
                     })?;
 
-                connection_manager.send_to(&address, message).await?;
+                connection_manager.send_to(address, message).await?;
 
-                let response = connection_manager.receive_from(&address).await.ok_or_else(|| {
+                let response = connection_manager.receive_from(address).await?.ok_or_else(|| {
                     HazelcastError::Connection("Connection closed".to_string())
                 })?;
 
@@ -470,11 +469,11 @@ impl super::ExecutorService {
             .next()
             .ok_or_else(|| HazelcastError::Connection("No connection available".to_string()))?;
 
-        self.connection_manager.send_to(&address, message).await?;
+        self.connection_manager.send_to(address, message).await?;
 
         self.connection_manager
-            .receive_from(&address)
-            .await
+            .receive_from(address)
+            .await?
             .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))
     }
 
