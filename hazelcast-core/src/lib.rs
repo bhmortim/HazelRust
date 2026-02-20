@@ -6,7 +6,7 @@ pub mod error;
 pub mod protocol;
 pub mod serialization;
 
-pub use error::{HazelcastError, Result};
+pub use error::{HazelcastError, Result, ServerErrorCode};
 pub use protocol::{compute_partition_hash, ClientMessage, ClientMessageCodec, Frame};
 pub use serialization::{
     ClassDefinition, Compact, CompactReader, CompactSerializer, CompactWriter, DataInput,

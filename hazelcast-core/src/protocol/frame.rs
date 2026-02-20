@@ -10,7 +10,7 @@ use super::constants::*;
 /// - A 4-byte length field (little-endian)
 /// - A 2-byte flags field (little-endian)
 /// - Variable-length content
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     /// The frame content (payload after flags).
     pub content: BytesMut,

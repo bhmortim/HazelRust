@@ -686,7 +686,10 @@ impl GenericRecordBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serialization::compact::{Compact, CompactReader, CompactSerializer, CompactWriter, Schema};
+    use crate::serialization::compact::{
+        Compact, CompactReader, CompactSerializer, CompactWriter, DefaultCompactReader,
+        DefaultCompactWriter, Schema,
+    };
 
     #[test]
     fn test_generic_record_from_compact_bytes() {

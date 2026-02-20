@@ -1,6 +1,9 @@
 //! Default implementations of PortableReader and PortableWriter.
 
-use super::{ClassDefinition, FieldType, Portable, PortableFactory, PortableReader, PortableWriter};
+use super::{
+    ClassDefinition, FieldDefinition, FieldType, Portable, PortableFactory, PortableReader,
+    PortableWriter,
+};
 use crate::error::{HazelcastError, Result};
 use crate::serialization::{DataInput, DataOutput, ObjectDataInput, ObjectDataOutput};
 use std::collections::HashMap;

@@ -152,7 +152,9 @@ impl PortableSerializer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serialization::portable::{FieldDefinition, FieldType, PortableWriter};
+    use crate::serialization::portable::{
+        FieldDefinition, FieldType, PortableReader, PortableWriter,
+    };
 
     const TEST_FACTORY_ID: i32 = 1;
     const PERSON_CLASS_ID: i32 = 1;

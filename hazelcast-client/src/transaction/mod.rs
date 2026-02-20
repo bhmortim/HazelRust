@@ -212,12 +212,12 @@ impl TransactionContext {
         let timeout_ms = self.options.timeout.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_CREATE);
-        message.add_frame(Self::long_frame(timeout_ms));
-        message.add_frame(Self::int_frame(self.options.durability));
-        message.add_frame(Self::int_frame(self.options.transaction_type.value()));
-        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(txn_long_frame(timeout_ms));
+        message.add_frame(txn_int_frame(self.options.durability));
+        message.add_frame(txn_int_frame(self.options.transaction_type.value()));
+        message.add_frame(txn_long_frame(self.thread_id));
 
-        let _response = self.invoke(message).await?;
+        let _response = txn_invoke(&self.connection_manager, message).await?;
 
         self.state = TransactionState::Active;
         self.start_time = Some(std::time::Instant::now());
@@ -238,10 +238,10 @@ impl TransactionContext {
         }
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_COMMIT);
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
 
-        let _response = self.invoke(message).await?;
+        let _response = txn_invoke(&self.connection_manager, message).await?;
 
         self.state = TransactionState::Committed;
         Ok(())
@@ -260,10 +260,10 @@ impl TransactionContext {
         }
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_ROLLBACK);
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
 
-        let _response = self.invoke(message).await?;
+        let _response = txn_invoke(&self.connection_manager, message).await?;
 
         self.state = TransactionState::RolledBack;
         Ok(())
@@ -271,81 +271,86 @@ impl TransactionContext {
 
     /// Returns a transactional map proxy.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the transaction is not active.
-    pub fn get_map<K, V>(&self, name: &str) -> TransactionalMap<K, V>
+    /// Returns an error if the transaction is not active.
+    pub fn get_map<K, V>(&self, name: &str) -> Result<TransactionalMap<K, V>>
     where
         K: Serializable + Deserializable + Send + Sync,
         V: Serializable + Deserializable + Send + Sync,
     {
-        assert!(self.is_active(), "Transaction must be active to get a map");
-        TransactionalMap::new(
+        self.ensure_active("get_map")?;
+        Ok(TransactionalMap::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
             self.txn_id,
             self.thread_id,
-        )
+        ))
     }
 
     /// Returns a transactional queue proxy.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the transaction is not active.
-    pub fn get_queue<T>(&self, name: &str) -> TransactionalQueue<T>
+    /// Returns an error if the transaction is not active.
+    pub fn get_queue<T>(&self, name: &str) -> Result<TransactionalQueue<T>>
     where
         T: Serializable + Deserializable + Send + Sync,
     {
-        assert!(
-            self.is_active(),
-            "Transaction must be active to get a queue"
-        );
-        TransactionalQueue::new(
+        self.ensure_active("get_queue")?;
+        Ok(TransactionalQueue::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
             self.txn_id,
             self.thread_id,
-        )
+        ))
     }
 
     /// Returns a transactional set proxy.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the transaction is not active.
-    pub fn get_set<T>(&self, name: &str) -> TransactionalSet<T>
+    /// Returns an error if the transaction is not active.
+    pub fn get_set<T>(&self, name: &str) -> Result<TransactionalSet<T>>
     where
         T: Serializable + Deserializable + Send + Sync,
     {
-        assert!(self.is_active(), "Transaction must be active to get a set");
-        TransactionalSet::new(
+        self.ensure_active("get_set")?;
+        Ok(TransactionalSet::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
             self.txn_id,
             self.thread_id,
-        )
+        ))
     }
 
     /// Returns a transactional list proxy.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the transaction is not active.
-    pub fn get_list<T>(&self, name: &str) -> TransactionalList<T>
+    /// Returns an error if the transaction is not active.
+    pub fn get_list<T>(&self, name: &str) -> Result<TransactionalList<T>>
     where
         T: Serializable + Deserializable + Send + Sync,
     {
-        assert!(
-            self.is_active(),
-            "Transaction must be active to get a list"
-        );
-        TransactionalList::new(
+        self.ensure_active("get_list")?;
+        Ok(TransactionalList::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
             self.txn_id,
             self.thread_id,
-        )
+        ))
+    }
+
+    /// Ensures the transaction is in the `Active` state, returning an error if not.
+    fn ensure_active(&self, operation: &str) -> Result<()> {
+        if self.state != TransactionState::Active {
+            return Err(HazelcastError::IllegalState(format!(
+                "transaction must be active to call {}, current state: {:?}",
+                operation, self.state
+            )));
+        }
+        Ok(())
     }
 
     /// Creates a new XA transaction associated with this context's connection.
@@ -369,39 +374,129 @@ impl TransactionContext {
         xa::XATransaction::with_generated_xid(Arc::clone(&self.connection_manager))
     }
 
-    fn long_frame(value: i64) -> Frame {
-        let mut buf = BytesMut::with_capacity(8);
-        buf.extend_from_slice(&value.to_le_bytes());
-        Frame::with_content(buf)
+}
+
+// ============================================================================
+// Shared Transactional Helpers
+// ============================================================================
+
+/// Serializes a value into a byte vector using the Hazelcast data format.
+fn txn_serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
+    let mut output = ObjectDataOutput::new();
+    value.serialize(&mut output)?;
+    Ok(output.into_bytes())
+}
+
+/// Creates a frame containing a UTF-8 string.
+fn txn_string_frame(s: &str) -> Frame {
+    Frame::with_content(BytesMut::from(s.as_bytes()))
+}
+
+/// Creates a frame containing raw byte data.
+fn txn_data_frame(data: &[u8]) -> Frame {
+    Frame::with_content(BytesMut::from(data))
+}
+
+/// Creates a frame containing a little-endian i64.
+fn txn_long_frame(value: i64) -> Frame {
+    let mut buf = BytesMut::with_capacity(8);
+    buf.extend_from_slice(&value.to_le_bytes());
+    Frame::with_content(buf)
+}
+
+/// Creates a frame containing a little-endian i32.
+fn txn_int_frame(value: i32) -> Frame {
+    let mut buf = BytesMut::with_capacity(4);
+    buf.extend_from_slice(&value.to_le_bytes());
+    Frame::with_content(buf)
+}
+
+/// Creates a frame containing a UUID.
+fn txn_uuid_frame(uuid: Uuid) -> Frame {
+    let mut buf = BytesMut::with_capacity(16);
+    buf.extend_from_slice(uuid.as_bytes());
+    Frame::with_content(buf)
+}
+
+/// Sends a message and waits for the response on an available connection.
+async fn txn_invoke(
+    connection_manager: &ConnectionManager,
+    message: ClientMessage,
+) -> Result<ClientMessage> {
+    let address = txn_get_connection_address(connection_manager).await?;
+    connection_manager.send_to(address, message).await?;
+    connection_manager
+        .receive_from(address)
+        .await?
+        .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+}
+
+/// Returns the address of an available connection.
+async fn txn_get_connection_address(
+    connection_manager: &ConnectionManager,
+) -> Result<SocketAddr> {
+    let addresses = connection_manager.connected_addresses().await;
+    addresses
+        .into_iter()
+        .next()
+        .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
+}
+
+/// Decodes a nullable value from the second frame of a response message.
+fn txn_decode_nullable_response<T: Deserializable>(
+    response: &ClientMessage,
+) -> Result<Option<T>> {
+    let frames = response.frames();
+    if frames.len() < 2 {
+        return Ok(None);
     }
 
-    fn int_frame(value: i32) -> Frame {
-        let mut buf = BytesMut::with_capacity(4);
-        buf.extend_from_slice(&value.to_le_bytes());
-        Frame::with_content(buf)
+    let data_frame = &frames[1];
+    if data_frame.flags & IS_NULL_FLAG != 0 || data_frame.content.is_empty() {
+        return Ok(None);
     }
 
-    fn uuid_frame(uuid: Uuid) -> Frame {
-        let mut buf = BytesMut::with_capacity(16);
-        buf.extend_from_slice(uuid.as_bytes());
-        Frame::with_content(buf)
+    let mut input = ObjectDataInput::new(&data_frame.content);
+    T::deserialize(&mut input).map(Some)
+}
+
+/// Decodes a boolean value from the initial frame of a response message.
+fn txn_decode_bool_response(response: &ClientMessage) -> Result<bool> {
+    let frames = response.frames();
+    if frames.is_empty() {
+        return Err(HazelcastError::Serialization("empty response".to_string()));
     }
 
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
-        self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+    let initial_frame = &frames[0];
+    if initial_frame.content.len() > RESPONSE_HEADER_SIZE {
+        Ok(initial_frame.content[RESPONSE_HEADER_SIZE] != 0)
+    } else {
+        Err(HazelcastError::Serialization(
+            "response frame too short for bool field".to_string(),
+        ))
+    }
+}
+
+/// Decodes an i32 value from the initial frame of a response message.
+fn txn_decode_int_response(response: &ClientMessage) -> Result<i32> {
+    let frames = response.frames();
+    if frames.is_empty() {
+        return Err(HazelcastError::Serialization("empty response".to_string()));
     }
 
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses
-            .into_iter()
-            .next()
-            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
+    let initial_frame = &frames[0];
+    if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 4 {
+        let offset = RESPONSE_HEADER_SIZE;
+        Ok(i32::from_le_bytes([
+            initial_frame.content[offset],
+            initial_frame.content[offset + 1],
+            initial_frame.content[offset + 2],
+            initial_frame.content[offset + 3],
+        ]))
+    } else {
+        Err(HazelcastError::Serialization(
+            "response frame too short for int field".to_string(),
+        ))
     }
 }
 
@@ -448,226 +543,134 @@ where
 {
     /// Retrieves the value associated with the given key.
     pub async fn get(&self, key: &K) -> Result<Option<V>> {
-        let key_data = Self::serialize_value(key)?;
+        let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_GET);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
-        Self::decode_nullable_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_nullable_response(&response)
     }
 
     /// Associates the specified value with the specified key.
     pub async fn put(&self, key: K, value: V) -> Result<Option<V>> {
-        let key_data = Self::serialize_value(&key)?;
-        let value_data = Self::serialize_value(&value)?;
+        let key_data = txn_serialize_value(&key)?;
+        let value_data = txn_serialize_value(&value)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_PUT);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(-1)); // TTL
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
+        message.add_frame(txn_data_frame(&value_data));
+        message.add_frame(txn_long_frame(-1)); // TTL
 
-        let response = self.invoke(message).await?;
-        Self::decode_nullable_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_nullable_response(&response)
     }
 
     /// Sets the value for the specified key (without returning old value).
     pub async fn set(&self, key: K, value: V) -> Result<()> {
-        let key_data = Self::serialize_value(&key)?;
-        let value_data = Self::serialize_value(&value)?;
+        let key_data = txn_serialize_value(&key)?;
+        let value_data = txn_serialize_value(&value)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_SET);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
+        message.add_frame(txn_data_frame(&value_data));
 
-        self.invoke(message).await?;
+        txn_invoke(&self.connection_manager, message).await?;
         Ok(())
     }
 
     /// Puts a value if the key is not already present.
     pub async fn put_if_absent(&self, key: K, value: V) -> Result<Option<V>> {
-        let key_data = Self::serialize_value(&key)?;
-        let value_data = Self::serialize_value(&value)?;
+        let key_data = txn_serialize_value(&key)?;
+        let value_data = txn_serialize_value(&value)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_PUT_IF_ABSENT);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
+        message.add_frame(txn_data_frame(&value_data));
 
-        let response = self.invoke(message).await?;
-        Self::decode_nullable_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_nullable_response(&response)
     }
 
     /// Replaces the value for a key if it exists.
     pub async fn replace(&self, key: &K, value: V) -> Result<Option<V>> {
-        let key_data = Self::serialize_value(key)?;
-        let value_data = Self::serialize_value(&value)?;
+        let key_data = txn_serialize_value(key)?;
+        let value_data = txn_serialize_value(&value)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_REPLACE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
+        message.add_frame(txn_data_frame(&value_data));
 
-        let response = self.invoke(message).await?;
-        Self::decode_nullable_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_nullable_response(&response)
     }
 
     /// Removes the mapping for a key.
     pub async fn remove(&self, key: &K) -> Result<Option<V>> {
-        let key_data = Self::serialize_value(key)?;
+        let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_REMOVE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
-        Self::decode_nullable_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_nullable_response(&response)
     }
 
     /// Deletes the mapping for a key (without returning old value).
     pub async fn delete(&self, key: &K) -> Result<()> {
-        let key_data = Self::serialize_value(key)?;
+        let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_DELETE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
 
-        self.invoke(message).await?;
+        txn_invoke(&self.connection_manager, message).await?;
         Ok(())
     }
 
     /// Returns true if the map contains the specified key.
     pub async fn contains_key(&self, key: &K) -> Result<bool> {
-        let key_data = Self::serialize_value(key)?;
+        let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_CONTAINS_KEY);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
-        Self::decode_bool_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_bool_response(&response)
     }
 
     /// Returns the number of entries in this map.
     pub async fn size(&self) -> Result<usize> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_SIZE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
 
-        let response = self.invoke(message).await?;
-        Self::decode_int_response(&response).map(|v| v as usize)
-    }
-
-    fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
-        let mut output = ObjectDataOutput::new();
-        value.serialize(&mut output)?;
-        Ok(output.into_bytes())
-    }
-
-    fn string_frame(s: &str) -> Frame {
-        Frame::with_content(BytesMut::from(s.as_bytes()))
-    }
-
-    fn data_frame(data: &[u8]) -> Frame {
-        Frame::with_content(BytesMut::from(data))
-    }
-
-    fn long_frame(value: i64) -> Frame {
-        let mut buf = BytesMut::with_capacity(8);
-        buf.extend_from_slice(&value.to_le_bytes());
-        Frame::with_content(buf)
-    }
-
-    fn uuid_frame(uuid: Uuid) -> Frame {
-        let mut buf = BytesMut::with_capacity(16);
-        buf.extend_from_slice(uuid.as_bytes());
-        Frame::with_content(buf)
-    }
-
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
-        self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
-    }
-
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses
-            .into_iter()
-            .next()
-            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
-    }
-
-    fn decode_nullable_response<T: Deserializable>(response: &ClientMessage) -> Result<Option<T>> {
-        let frames = response.frames();
-        if frames.len() < 2 {
-            return Ok(None);
-        }
-
-        let data_frame = &frames[1];
-        if data_frame.flags & IS_NULL_FLAG != 0 || data_frame.content.is_empty() {
-            return Ok(None);
-        }
-
-        let mut input = ObjectDataInput::new(&data_frame.content);
-        T::deserialize(&mut input).map(Some)
-    }
-
-    fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
-        }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() > RESPONSE_HEADER_SIZE {
-            Ok(initial_frame.content[RESPONSE_HEADER_SIZE] != 0)
-        } else {
-            Ok(false)
-        }
-    }
-
-    fn decode_int_response(response: &ClientMessage) -> Result<i32> {
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
-        }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 4 {
-            let offset = RESPONSE_HEADER_SIZE;
-            Ok(i32::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-            ]))
-        } else {
-            Ok(0)
-        }
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_int_response(&response).map(|v| v as usize)
     }
 }
 
@@ -713,132 +716,40 @@ where
 {
     /// Inserts the specified element into this queue.
     pub async fn offer(&self, item: T) -> Result<bool> {
-        let item_data = Self::serialize_value(&item)?;
+        let item_data = txn_serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_QUEUE_OFFER);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&item_data));
-        message.add_frame(Self::long_frame(0)); // timeout
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&item_data));
+        message.add_frame(txn_long_frame(0)); // timeout
 
-        let response = self.invoke(message).await?;
-        Self::decode_bool_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_bool_response(&response)
     }
 
     /// Retrieves and removes the head of this queue.
     pub async fn poll(&self) -> Result<Option<T>> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_QUEUE_POLL);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::long_frame(0)); // timeout
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_long_frame(0)); // timeout
 
-        let response = self.invoke(message).await?;
-        Self::decode_nullable_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_nullable_response(&response)
     }
 
     /// Returns the number of elements in this queue.
     pub async fn size(&self) -> Result<usize> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_QUEUE_SIZE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
 
-        let response = self.invoke(message).await?;
-        Self::decode_int_response(&response).map(|v| v as usize)
-    }
-
-    fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
-        let mut output = ObjectDataOutput::new();
-        value.serialize(&mut output)?;
-        Ok(output.into_bytes())
-    }
-
-    fn string_frame(s: &str) -> Frame {
-        Frame::with_content(BytesMut::from(s.as_bytes()))
-    }
-
-    fn data_frame(data: &[u8]) -> Frame {
-        Frame::with_content(BytesMut::from(data))
-    }
-
-    fn long_frame(value: i64) -> Frame {
-        let mut buf = BytesMut::with_capacity(8);
-        buf.extend_from_slice(&value.to_le_bytes());
-        Frame::with_content(buf)
-    }
-
-    fn uuid_frame(uuid: Uuid) -> Frame {
-        let mut buf = BytesMut::with_capacity(16);
-        buf.extend_from_slice(uuid.as_bytes());
-        Frame::with_content(buf)
-    }
-
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
-        self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
-    }
-
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses
-            .into_iter()
-            .next()
-            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
-    }
-
-    fn decode_nullable_response<V: Deserializable>(response: &ClientMessage) -> Result<Option<V>> {
-        let frames = response.frames();
-        if frames.len() < 2 {
-            return Ok(None);
-        }
-
-        let data_frame = &frames[1];
-        if data_frame.flags & IS_NULL_FLAG != 0 || data_frame.content.is_empty() {
-            return Ok(None);
-        }
-
-        let mut input = ObjectDataInput::new(&data_frame.content);
-        V::deserialize(&mut input).map(Some)
-    }
-
-    fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
-        }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() > RESPONSE_HEADER_SIZE {
-            Ok(initial_frame.content[RESPONSE_HEADER_SIZE] != 0)
-        } else {
-            Ok(false)
-        }
-    }
-
-    fn decode_int_response(response: &ClientMessage) -> Result<i32> {
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
-        }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 4 {
-            let offset = RESPONSE_HEADER_SIZE;
-            Ok(i32::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-            ]))
-        } else {
-            Ok(0)
-        }
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_int_response(&response).map(|v| v as usize)
     }
 }
 
@@ -884,118 +795,41 @@ where
 {
     /// Adds the specified element to this set.
     pub async fn add(&self, item: T) -> Result<bool> {
-        let item_data = Self::serialize_value(&item)?;
+        let item_data = txn_serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_SET_ADD);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&item_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&item_data));
 
-        let response = self.invoke(message).await?;
-        Self::decode_bool_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_bool_response(&response)
     }
 
     /// Removes the specified element from this set.
     pub async fn remove(&self, item: &T) -> Result<bool> {
-        let item_data = Self::serialize_value(item)?;
+        let item_data = txn_serialize_value(item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_SET_REMOVE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&item_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&item_data));
 
-        let response = self.invoke(message).await?;
-        Self::decode_bool_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_bool_response(&response)
     }
 
     /// Returns the number of elements in this set.
     pub async fn size(&self) -> Result<usize> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_SET_SIZE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
 
-        let response = self.invoke(message).await?;
-        Self::decode_int_response(&response).map(|v| v as usize)
-    }
-
-    fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
-        let mut output = ObjectDataOutput::new();
-        value.serialize(&mut output)?;
-        Ok(output.into_bytes())
-    }
-
-    fn string_frame(s: &str) -> Frame {
-        Frame::with_content(BytesMut::from(s.as_bytes()))
-    }
-
-    fn data_frame(data: &[u8]) -> Frame {
-        Frame::with_content(BytesMut::from(data))
-    }
-
-    fn long_frame(value: i64) -> Frame {
-        let mut buf = BytesMut::with_capacity(8);
-        buf.extend_from_slice(&value.to_le_bytes());
-        Frame::with_content(buf)
-    }
-
-    fn uuid_frame(uuid: Uuid) -> Frame {
-        let mut buf = BytesMut::with_capacity(16);
-        buf.extend_from_slice(uuid.as_bytes());
-        Frame::with_content(buf)
-    }
-
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
-        self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
-    }
-
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses
-            .into_iter()
-            .next()
-            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
-    }
-
-    fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
-        }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() > RESPONSE_HEADER_SIZE {
-            Ok(initial_frame.content[RESPONSE_HEADER_SIZE] != 0)
-        } else {
-            Ok(false)
-        }
-    }
-
-    fn decode_int_response(response: &ClientMessage) -> Result<i32> {
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
-        }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 4 {
-            let offset = RESPONSE_HEADER_SIZE;
-            Ok(i32::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-            ]))
-        } else {
-            Ok(0)
-        }
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_int_response(&response).map(|v| v as usize)
     }
 }
 
@@ -1041,118 +875,41 @@ where
 {
     /// Appends the specified element to the end of this list.
     pub async fn add(&self, item: T) -> Result<bool> {
-        let item_data = Self::serialize_value(&item)?;
+        let item_data = txn_serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_LIST_ADD);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&item_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&item_data));
 
-        let response = self.invoke(message).await?;
-        Self::decode_bool_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_bool_response(&response)
     }
 
     /// Removes the first occurrence of the specified element from this list.
     pub async fn remove(&self, item: &T) -> Result<bool> {
-        let item_data = Self::serialize_value(item)?;
+        let item_data = txn_serialize_value(item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_LIST_REMOVE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::data_frame(&item_data));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&item_data));
 
-        let response = self.invoke(message).await?;
-        Self::decode_bool_response(&response)
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_bool_response(&response)
     }
 
     /// Returns the number of elements in this list.
     pub async fn size(&self) -> Result<usize> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_LIST_SIZE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
 
-        let response = self.invoke(message).await?;
-        Self::decode_int_response(&response).map(|v| v as usize)
-    }
-
-    fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
-        let mut output = ObjectDataOutput::new();
-        value.serialize(&mut output)?;
-        Ok(output.into_bytes())
-    }
-
-    fn string_frame(s: &str) -> Frame {
-        Frame::with_content(BytesMut::from(s.as_bytes()))
-    }
-
-    fn data_frame(data: &[u8]) -> Frame {
-        Frame::with_content(BytesMut::from(data))
-    }
-
-    fn long_frame(value: i64) -> Frame {
-        let mut buf = BytesMut::with_capacity(8);
-        buf.extend_from_slice(&value.to_le_bytes());
-        Frame::with_content(buf)
-    }
-
-    fn uuid_frame(uuid: Uuid) -> Frame {
-        let mut buf = BytesMut::with_capacity(16);
-        buf.extend_from_slice(uuid.as_bytes());
-        Frame::with_content(buf)
-    }
-
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
-        self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
-    }
-
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses
-            .into_iter()
-            .next()
-            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
-    }
-
-    fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
-        }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() > RESPONSE_HEADER_SIZE {
-            Ok(initial_frame.content[RESPONSE_HEADER_SIZE] != 0)
-        } else {
-            Ok(false)
-        }
-    }
-
-    fn decode_int_response(response: &ClientMessage) -> Result<i32> {
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
-        }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 4 {
-            let offset = RESPONSE_HEADER_SIZE;
-            Ok(i32::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-            ]))
-        } else {
-            Ok(0)
-        }
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_int_response(&response).map(|v| v as usize)
     }
 }
 

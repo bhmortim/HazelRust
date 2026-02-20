@@ -19,7 +19,7 @@ pub fn next_correlation_id() -> i64 {
 /// The first frame is the "initial frame" containing the message header
 /// (type, correlation ID, partition ID for requests). Additional frames
 /// contain the message payload.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientMessage {
     frames: Vec<Frame>,
 }
@@ -88,26 +88,32 @@ impl ClientMessage {
     }
 
     /// Returns the message type from the initial frame.
+    ///
+    /// Returns `None` if there is no initial frame or if the frame content
+    /// is too short to contain a message type field.
     pub fn message_type(&self) -> Option<i32> {
-        self.frames.first().map(|f| {
+        self.frames.first().and_then(|f| {
             if f.content.len() >= TYPE_FIELD_OFFSET + 4 {
-                i32::from_le_bytes([
+                Some(i32::from_le_bytes([
                     f.content[TYPE_FIELD_OFFSET],
                     f.content[TYPE_FIELD_OFFSET + 1],
                     f.content[TYPE_FIELD_OFFSET + 2],
                     f.content[TYPE_FIELD_OFFSET + 3],
-                ])
+                ]))
             } else {
-                0
+                None
             }
         })
     }
 
     /// Returns the correlation ID from the initial frame.
+    ///
+    /// Returns `None` if there is no initial frame or if the frame content
+    /// is too short to contain a correlation ID field.
     pub fn correlation_id(&self) -> Option<i64> {
-        self.frames.first().map(|f| {
+        self.frames.first().and_then(|f| {
             if f.content.len() >= CORRELATION_ID_OFFSET + 8 {
-                i64::from_le_bytes([
+                Some(i64::from_le_bytes([
                     f.content[CORRELATION_ID_OFFSET],
                     f.content[CORRELATION_ID_OFFSET + 1],
                     f.content[CORRELATION_ID_OFFSET + 2],
@@ -116,9 +122,9 @@ impl ClientMessage {
                     f.content[CORRELATION_ID_OFFSET + 5],
                     f.content[CORRELATION_ID_OFFSET + 6],
                     f.content[CORRELATION_ID_OFFSET + 7],
-                ])
+                ]))
             } else {
-                0
+                None
             }
         })
     }
@@ -135,17 +141,20 @@ impl ClientMessage {
     }
 
     /// Returns the partition ID from the initial frame (for requests).
+    ///
+    /// Returns `None` if there is no initial frame or if the frame content
+    /// is too short to contain a partition ID field.
     pub fn partition_id(&self) -> Option<i32> {
-        self.frames.first().map(|f| {
+        self.frames.first().and_then(|f| {
             if f.content.len() >= PARTITION_ID_OFFSET + 4 {
-                i32::from_le_bytes([
+                Some(i32::from_le_bytes([
                     f.content[PARTITION_ID_OFFSET],
                     f.content[PARTITION_ID_OFFSET + 1],
                     f.content[PARTITION_ID_OFFSET + 2],
                     f.content[PARTITION_ID_OFFSET + 3],
-                ])
+                ]))
             } else {
-                PARTITION_ID_ANY
+                None
             }
         })
     }
@@ -455,7 +464,8 @@ mod tests {
         let short_frame = Frame::with_content(BytesMut::from(&[0x01, 0x02][..]));
         let msg = ClientMessage::from_frames(vec![short_frame]);
 
-        assert_eq!(msg.message_type(), Some(0));
+        // Short content should return None instead of silently defaulting
+        assert_eq!(msg.message_type(), None);
     }
 
     #[test]
@@ -463,7 +473,8 @@ mod tests {
         let short_frame = Frame::with_content(BytesMut::from(&[0x01, 0x02, 0x03, 0x04][..]));
         let msg = ClientMessage::from_frames(vec![short_frame]);
 
-        assert_eq!(msg.correlation_id(), Some(0));
+        // Short content should return None instead of silently defaulting
+        assert_eq!(msg.correlation_id(), None);
     }
 
     #[test]
@@ -471,7 +482,8 @@ mod tests {
         let short_frame = Frame::with_content(BytesMut::from(&[0x01; 10][..]));
         let msg = ClientMessage::from_frames(vec![short_frame]);
 
-        assert_eq!(msg.partition_id(), Some(PARTITION_ID_ANY));
+        // Short content should return None instead of silently defaulting
+        assert_eq!(msg.partition_id(), None);
     }
 
     #[test]
@@ -479,8 +491,9 @@ mod tests {
         let short_frame = Frame::with_content(BytesMut::from(&[0x01, 0x02][..]));
         let mut msg = ClientMessage::from_frames(vec![short_frame]);
 
+        // Setting on a short frame is a no-op; reading back returns None
         msg.set_correlation_id(999);
-        assert_eq!(msg.correlation_id(), Some(0));
+        assert_eq!(msg.correlation_id(), None);
     }
 
     #[test]
@@ -488,8 +501,9 @@ mod tests {
         let short_frame = Frame::with_content(BytesMut::from(&[0x01; 10][..]));
         let mut msg = ClientMessage::from_frames(vec![short_frame]);
 
+        // Setting on a short frame is a no-op; reading back returns None
         msg.set_partition_id(42);
-        assert_eq!(msg.partition_id(), Some(PARTITION_ID_ANY));
+        assert_eq!(msg.partition_id(), None);
     }
 
     #[test]

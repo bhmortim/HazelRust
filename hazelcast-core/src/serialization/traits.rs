@@ -154,6 +154,145 @@ impl Serializable for [u8] {
     }
 }
 
+// ============================================================================
+// Unsigned integer types
+// ============================================================================
+
+impl Serializable for u8 {
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+        output.write_byte(*self as i8)
+    }
+}
+
+impl Deserializable for u8 {
+    fn deserialize<R: DataInput>(input: &mut R) -> Result<Self> {
+        input.read_byte().map(|b| b as u8)
+    }
+}
+
+impl Serializable for u16 {
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+        output.write_short(*self as i16)
+    }
+}
+
+impl Deserializable for u16 {
+    fn deserialize<R: DataInput>(input: &mut R) -> Result<Self> {
+        input.read_short().map(|s| s as u16)
+    }
+}
+
+impl Serializable for u32 {
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+        output.write_int(*self as i32)
+    }
+}
+
+impl Deserializable for u32 {
+    fn deserialize<R: DataInput>(input: &mut R) -> Result<Self> {
+        input.read_int().map(|i| i as u32)
+    }
+}
+
+impl Serializable for u64 {
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+        output.write_long(*self as i64)
+    }
+}
+
+impl Deserializable for u64 {
+    fn deserialize<R: DataInput>(input: &mut R) -> Result<Self> {
+        input.read_long().map(|l| l as u64)
+    }
+}
+
+// ============================================================================
+// Option<T> support for nullable fields
+// ============================================================================
+
+impl<T: Serializable> Serializable for Option<T> {
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+        match self {
+            Some(value) => {
+                output.write_bool(true)?;
+                value.serialize(output)
+            }
+            None => output.write_bool(false),
+        }
+    }
+}
+
+impl<T: Deserializable> Deserializable for Option<T> {
+    fn deserialize<R: DataInput>(input: &mut R) -> Result<Self> {
+        let is_present = input.read_bool()?;
+        if is_present {
+            T::deserialize(input).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+// ============================================================================
+// Collection serialization helpers
+// ============================================================================
+
+/// Serializes a list of items with a length prefix.
+///
+/// Format: `i32` length followed by each element serialized in order.
+/// This is useful for serializing `Vec<T>` where T is not `u8`.
+pub fn serialize_list<T: Serializable, W: DataOutput>(items: &[T], output: &mut W) -> Result<()> {
+    output.write_int(items.len() as i32)?;
+    for item in items {
+        item.serialize(output)?;
+    }
+    Ok(())
+}
+
+/// Deserializes a list of items with a length prefix.
+///
+/// Format: `i32` length followed by each element deserialized in order.
+pub fn deserialize_list<T: Deserializable, R: DataInput>(input: &mut R) -> Result<Vec<T>> {
+    let len = input.read_int()? as usize;
+    let mut items = Vec::with_capacity(len);
+    for _ in 0..len {
+        items.push(T::deserialize(input)?);
+    }
+    Ok(items)
+}
+
+/// Serializes a map as a sequence of key-value pairs with a length prefix.
+///
+/// Format: `i32` entry count followed by (key, value) pairs.
+pub fn serialize_map<K: Serializable, V: Serializable, W: DataOutput>(
+    map: &std::collections::HashMap<K, V>,
+    output: &mut W,
+) -> Result<()> {
+    output.write_int(map.len() as i32)?;
+    for (key, value) in map {
+        key.serialize(output)?;
+        value.serialize(output)?;
+    }
+    Ok(())
+}
+
+/// Deserializes a map from a sequence of key-value pairs with a length prefix.
+pub fn deserialize_map<K, V, R>(input: &mut R) -> Result<std::collections::HashMap<K, V>>
+where
+    K: Deserializable + Eq + std::hash::Hash,
+    V: Deserializable,
+    R: DataInput,
+{
+    let len = input.read_int()? as usize;
+    let mut map = std::collections::HashMap::with_capacity(len);
+    for _ in 0..len {
+        let key = K::deserialize(input)?;
+        let value = V::deserialize(input)?;
+        map.insert(key, value);
+    }
+    Ok(map)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,5 +501,107 @@ mod tests {
 
         let result = f64::deserialize(&mut input).unwrap();
         assert!(result.is_nan());
+    }
+
+    // ====== Tests for new unsigned types ======
+
+    #[test]
+    fn test_u8_round_trip() {
+        round_trip(0u8);
+        round_trip(127u8);
+        round_trip(255u8);
+    }
+
+    #[test]
+    fn test_u16_round_trip() {
+        round_trip(0u16);
+        round_trip(u16::MAX);
+        round_trip(12345u16);
+    }
+
+    #[test]
+    fn test_u32_round_trip() {
+        round_trip(0u32);
+        round_trip(u32::MAX);
+        round_trip(123456789u32);
+    }
+
+    #[test]
+    fn test_u64_round_trip() {
+        round_trip(0u64);
+        round_trip(u64::MAX);
+        round_trip(1234567890123456789u64);
+    }
+
+    // ====== Tests for Option<T> ======
+
+    #[test]
+    fn test_option_some_round_trip() {
+        let mut output = ObjectDataOutput::new();
+        Some(42i32).serialize(&mut output).unwrap();
+        let bytes = output.as_bytes();
+        let mut input = ObjectDataInput::new(bytes);
+        let result = Option::<i32>::deserialize(&mut input).unwrap();
+        assert_eq!(result, Some(42));
+    }
+
+    #[test]
+    fn test_option_none_round_trip() {
+        let mut output = ObjectDataOutput::new();
+        let none: Option<i32> = None;
+        none.serialize(&mut output).unwrap();
+        let bytes = output.as_bytes();
+        let mut input = ObjectDataInput::new(bytes);
+        let result = Option::<i32>::deserialize(&mut input).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_option_string_round_trip() {
+        let mut output = ObjectDataOutput::new();
+        Some("hello".to_string()).serialize(&mut output).unwrap();
+        let bytes = output.as_bytes();
+        let mut input = ObjectDataInput::new(bytes);
+        let result = Option::<String>::deserialize(&mut input).unwrap();
+        assert_eq!(result, Some("hello".to_string()));
+    }
+
+    // ====== Tests for collection helpers ======
+
+    #[test]
+    fn test_serialize_list_i32() {
+        let items = vec![1i32, 2, 3, 4, 5];
+        let mut output = ObjectDataOutput::new();
+        super::serialize_list(&items, &mut output).unwrap();
+        let bytes = output.as_bytes();
+        let mut input = ObjectDataInput::new(bytes);
+        let result: Vec<i32> = super::deserialize_list(&mut input).unwrap();
+        assert_eq!(result, items);
+    }
+
+    #[test]
+    fn test_serialize_list_empty() {
+        let items: Vec<String> = vec![];
+        let mut output = ObjectDataOutput::new();
+        super::serialize_list(&items, &mut output).unwrap();
+        let bytes = output.as_bytes();
+        let mut input = ObjectDataInput::new(bytes);
+        let result: Vec<String> = super::deserialize_list(&mut input).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_serialize_map_round_trip() {
+        use std::collections::HashMap;
+        let mut map = HashMap::new();
+        map.insert("key1".to_string(), 100i32);
+        map.insert("key2".to_string(), 200i32);
+
+        let mut output = ObjectDataOutput::new();
+        super::serialize_map(&map, &mut output).unwrap();
+        let bytes = output.as_bytes();
+        let mut input = ObjectDataInput::new(bytes);
+        let result: HashMap<String, i32> = super::deserialize_map(&mut input).unwrap();
+        assert_eq!(result, map);
     }
 }
