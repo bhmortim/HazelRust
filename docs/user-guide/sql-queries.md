@@ -30,9 +30,10 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     // Execute a query and collect results
     let result = client.sql()
@@ -62,9 +63,10 @@ use hazelcast_client::sql::SqlStatement;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     // Using positional parameters
     let statement = SqlStatement::new("SELECT * FROM users WHERE id = ?")
@@ -100,9 +102,10 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     // Comparison operators
     let active_users = client.sql()
@@ -141,9 +144,10 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     // Sorting
     let result = client.sql()
@@ -184,9 +188,10 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     // Count
     let result = client.sql()
@@ -245,9 +250,10 @@ use futures::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     // Configure cursor buffer size for memory control
     let statement = SqlStatement::new("SELECT * FROM large_table")
@@ -285,9 +291,10 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     // Inner join
     let result = client.sql()
@@ -331,9 +338,10 @@ use hazelcast_client::sql::SqlStatement;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     // INSERT (SINK INTO for IMap)
     let insert = SqlStatement::new(
@@ -380,9 +388,10 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     let statement = SqlStatement::new(
         "SELECT * FROM large_table WHERE complex_condition(data)"

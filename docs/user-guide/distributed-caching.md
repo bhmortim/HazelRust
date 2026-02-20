@@ -26,14 +26,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .time_to_live_seconds(300)
         .max_idle_seconds(60);
 
-    let config = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
-        .add_near_cache_config(near_cache_config);
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .add_near_cache_config(near_cache_config)
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
 
     // The map automatically uses Near Cache
-    let products = client.get_map::<String, String>("products").await?;
+    let products = client.get_map::<String, String>("products");
 
     // First read - fetches from cluster
     let _ = products.get(&"SKU-001".to_string()).await?;
@@ -129,15 +130,16 @@ use hazelcast_client::config::NearCacheConfig;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
         .add_near_cache_config(
             NearCacheConfig::new("managed-cache")
                 .invalidate_on_change(false)
-        );
+        )
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
-    let map = client.get_map::<String, String>("managed-cache").await?;
+    let map = client.get_map::<String, String>("managed-cache");
 
     // Manually clear the local Near Cache
     map.clear_near_cache();
@@ -174,15 +176,16 @@ use hazelcast_client::config::NearCacheConfig;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
         .add_near_cache_config(
             NearCacheConfig::new("monitored-cache")
                 .max_size(10_000)
-        );
+        )
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
-    let map = client.get_map::<String, String>("monitored-cache").await?;
+    let map = client.get_map::<String, String>("monitored-cache");
 
     // Perform some operations
     for i in 0..100 {
@@ -242,16 +245,17 @@ async fn load_from_database(user_id: &str) -> Result<Option<String>, Box<dyn std
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
         .add_near_cache_config(
             NearCacheConfig::new("users")
                 .max_size(10_000)
                 .time_to_live_seconds(600)
-        );
+        )
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
-    let users = client.get_map::<String, String>("users").await?;
+    let users = client.get_map::<String, String>("users");
 
     // First call loads from DB and caches
     let user = get_user_with_fallback(&users, "user-123").await?;

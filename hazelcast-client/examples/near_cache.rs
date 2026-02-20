@@ -1,31 +1,34 @@
-//! Example: Near Cache for client-side caching
+//! Example: Near Cache for client-side caching.
 //!
-//! Demonstrates configuring and using NearCache for reduced latency.
+//! Demonstrates configuring and using Near Cache for reduced read latency.
+//! Near Cache keeps a local copy of frequently accessed entries so that
+//! reads hit local memory instead of crossing the network.
 //!
 //! Run with: `cargo run --example near_cache`
+//!
+//! Requires a Hazelcast cluster running on localhost:5701.
 
-use hazelcast_client::cache::{EvictionPolicy, InMemoryFormat, NearCacheConfig};
-use hazelcast_client::{Client, ClientConfig};
+use hazelcast_client::{ClientConfig, EvictionPolicy, HazelcastClient, InMemoryFormat, NearCacheConfig};
 use std::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Configure near cache for the "products" map
-    let near_cache_config = NearCacheConfig::new("products")
+    let near_cache_config = NearCacheConfig::builder("products")
         .max_size(1000)
         .eviction_policy(EvictionPolicy::Lru)
         .time_to_live(Duration::from_secs(60))
-        .max_idle(Duration::from_secs(30))
         .in_memory_format(InMemoryFormat::Binary)
-        .invalidate_on_change(true);
+        .build()?;
 
-    let config = ClientConfig::new()
+    let config = ClientConfig::builder()
         .cluster_name("dev")
-        .address("127.0.0.1:5701")
-        .near_cache(near_cache_config);
+        .add_address("127.0.0.1:5701".parse()?)
+        .add_near_cache_config(near_cache_config)
+        .build()?;
 
-    let client = Client::new(config).await?;
-    let map = client.get_map::<String, String>("products").await?;
+    let client = HazelcastClient::new(config).await?;
+    let map = client.get_map::<String, String>("products");
 
     // Populate the map
     println!("Populating map with sample data...");
@@ -43,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Benchmark: Compare cache hits vs misses
     let iterations = 1000;
 
-    // Cached reads (should be fast - hitting local near cache)
+    // Cached reads (should be fast — hitting local near cache)
     println!("--- Cached Reads (Near Cache Hits) ---");
     let start = Instant::now();
     for _ in 0..iterations {
@@ -62,13 +65,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Show near cache statistics
     if let Some(stats) = map.get_near_cache_stats() {
         println!("\n--- Near Cache Statistics ---");
-        println!("  Hits:       {}", stats.hits);
-        println!("  Misses:     {}", stats.misses);
-        println!("  Hit Ratio:  {:.1}%", stats.hit_ratio() * 100.0);
-        println!("  Owned:      {} entries", stats.owned_entry_count);
-        println!("  Memory:     {} bytes", stats.owned_entry_memory);
-        println!("  Evictions:  {}", stats.evictions);
-        println!("  Expirations:{}", stats.expirations);
+        println!("  Hits:        {}", stats.hits);
+        println!("  Misses:      {}", stats.misses);
+        println!("  Hit Ratio:   {:.1}%", stats.hit_ratio() * 100.0);
+        println!("  Owned:       {} entries", stats.owned_entry_count);
+        println!("  Memory:      {} bytes", stats.owned_entry_memory);
+        println!("  Evictions:   {}", stats.evictions);
+        println!("  Expirations: {}", stats.expirations);
     }
 
     // Demonstrate invalidation
@@ -86,7 +89,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Demonstrate TTL expiration
     println!("\n--- TTL Expiration Demo ---");
     println!("Near cache entries expire after 60 seconds TTL");
-    println!("Idle entries expire after 30 seconds max-idle time");
 
     // Eviction policy demonstration
     println!("\n--- Eviction Policy: LRU ---");

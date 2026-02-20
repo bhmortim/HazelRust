@@ -12,15 +12,16 @@ use hazelcast_client::transaction::TransactionOptions;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     // Begin a transaction
-    let tx = client.new_transaction(TransactionOptions::default()).await?;
+    let tx = client.new_transaction_context(TransactionOptions::default());
 
     // Get transactional map handles
-    let accounts = tx.get_map::<String, i64>("accounts").await?;
+    let accounts = tx.get_map::<String, i64>("accounts")?;
 
     // Perform operations within the transaction
     let from_balance = accounts.get(&"alice".to_string()).await?.unwrap_or(0);
@@ -91,16 +92,17 @@ use hazelcast_client::transaction::TransactionOptions;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
-    let tx = client.new_transaction(TransactionOptions::default()).await?;
+    let tx = client.new_transaction_context(TransactionOptions::default());
 
     // Multiple maps in the same transaction
-    let orders = tx.get_map::<String, String>("orders").await?;
-    let inventory = tx.get_map::<String, i32>("inventory").await?;
-    let audit_log = tx.get_map::<String, String>("audit_log").await?;
+    let orders = tx.get_map::<String, String>("orders")?;
+    let inventory = tx.get_map::<String, i32>("inventory")?;
+    let audit_log = tx.get_map::<String, String>("audit_log")?;
 
     let product_id = "PROD-001";
     let order_id = "ORD-12345";
@@ -145,9 +147,10 @@ use hazelcast_client::transaction::{XAResource, Xid};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     // Get the XA resource
     let xa_resource = client.get_xa_resource();
@@ -163,7 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     xa_resource.start(&xid).await?;
 
     // Perform operations
-    let map = client.get_map::<String, String>("xa-data").await?;
+    let map = client.get_map::<String, String>("xa-data");
     map.put("key".to_string(), "value".to_string()).await?;
 
     // End the transaction branch
@@ -244,9 +247,10 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     let xa_resource = client.get_xa_resource();
 
@@ -291,12 +295,13 @@ use hazelcast_client::transaction::TransactionOptions;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
-    let tx = client.new_transaction(TransactionOptions::default()).await?;
-    let map = tx.get_map::<String, i32>("tx-map").await?;
+    let tx = client.new_transaction_context(TransactionOptions::default());
+    let map = tx.get_map::<String, i32>("tx-map")?;
 
     // Available operations in transaction context
     map.put("key1".to_string(), 100).await?;
@@ -326,12 +331,13 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
-    let tx = client.new_transaction(TransactionOptions::default()).await?;
-    let queue = tx.get_queue::<String>("tx-queue").await?;
+    let tx = client.new_transaction_context(TransactionOptions::default());
+    let queue = tx.get_queue::<String>("tx-queue")?;
 
     // Offer with timeout
     queue.offer("task-1".to_string(), Duration::from_secs(5)).await?;
@@ -365,10 +371,10 @@ async fn transfer_funds(
     to: &str,
     amount: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tx = client.new_transaction(TransactionOptions::default()).await?;
+    let tx = client.new_transaction_context(TransactionOptions::default());
 
     let result = async {
-        let accounts = tx.get_map::<String, i64>("accounts").await?;
+        let accounts = tx.get_map::<String, i64>("accounts")?;
 
         let from_balance = accounts.get(&from.to_string()).await?
             .ok_or("Source account not found")?;
@@ -400,9 +406,10 @@ async fn transfer_funds(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     match transfer_funds(&client, "alice", "bob", 100).await {
         Ok(()) => println!("Transfer successful"),
@@ -447,16 +454,17 @@ where
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
     let client_ref = &client;
 
     with_retry(3, Duration::from_millis(100), || {
         Box::pin(async move {
-            let tx = client_ref.new_transaction(TransactionOptions::default()).await?;
-            let map = tx.get_map::<String, i32>("retry-test").await?;
+            let tx = client_ref.new_transaction_context(TransactionOptions::default());
+            let map = tx.get_map::<String, i32>("retry-test")?;
 
             map.put("counter".to_string(), 1).await?;
             tx.commit().await?;

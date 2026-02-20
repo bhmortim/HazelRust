@@ -7,6 +7,12 @@ This guide walks you through connecting to a Hazelcast cluster and performing ba
 - Rust 1.70 or later
 - A running Hazelcast cluster (local or remote)
 
+The fastest way to start a local cluster is with Docker:
+
+```sh
+docker run --rm -p 5701:5701 hazelcast/hazelcast:5.5
+```
+
 ## Adding the Dependency
 
 Add `hazelcast-client` to your `Cargo.toml`:
@@ -26,10 +32,10 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create a client configuration
-    let config = ClientConfig::new()
+    // Build a configuration targeting the default cluster name "dev"
+    let config = ClientConfig::builder()
         .cluster_name("dev")
-        .addresses(vec!["127.0.0.1:5701"]);
+        .build()?;
 
     // Connect to the cluster
     let client = HazelcastClient::new(config).await?;
@@ -51,13 +57,12 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::new()
+    let config = ClientConfig::builder()
         .cluster_name("production")
-        .addresses(vec![
-            "192.168.1.10:5701",
-            "192.168.1.11:5701",
-            "192.168.1.12:5701",
-        ]);
+        .add_address("192.168.1.10:5701".parse()?)
+        .add_address("192.168.1.11:5701".parse()?)
+        .add_address("192.168.1.12:5701".parse()?)
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
     client.shutdown().await?;
@@ -67,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Working with Distributed Maps
 
-The `IMap` is Hazelcast's distributed implementation of a concurrent map.
+The `IMap` is Hazelcast's distributed implementation of a concurrent map. Data is automatically partitioned across cluster members.
 
 ### Basic CRUD Operations
 
@@ -76,14 +81,13 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::new()
+    let config = ClientConfig::builder()
         .cluster_name("dev")
-        .addresses(vec!["127.0.0.1:5701"]);
-
+        .build()?;
     let client = HazelcastClient::new(config).await?;
 
-    // Get a distributed map
-    let map = client.get_map::<String, String>("my-distributed-map").await?;
+    // Get a handle to a distributed map (no network call yet)
+    let map = client.get_map::<String, String>("my-distributed-map");
 
     // Put a key-value pair
     map.put("key1".to_string(), "value1".to_string()).await?;
@@ -120,11 +124,12 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .cluster_name("dev")
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
-    let map = client.get_map::<String, i64>("session-cache").await?;
+    let map = client.get_map::<String, i64>("session-cache");
 
     // Entry expires after 30 minutes
     map.put_with_ttl(
@@ -146,11 +151,12 @@ use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .cluster_name("dev")
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
-    let map = client.get_map::<String, i32>("inventory").await?;
+    let map = client.get_map::<String, i32>("inventory");
 
     // Put multiple entries at once
     let mut entries = HashMap::new();
@@ -185,21 +191,22 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .cluster_name("dev")
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
-    let map = client.get_map::<String, i32>("counters").await?;
+    let map = client.get_map::<String, i32>("counters");
 
-    // Put if absent - only inserts if key doesn't exist
+    // Put if absent — only inserts if key doesn't exist
     let previous = map.put_if_absent("counter".to_string(), 0).await?;
     println!("Previous value: {:?}", previous);
 
-    // Replace - only updates if key exists
+    // Replace — only updates if key exists
     let old_value = map.replace("counter".to_string(), 1).await?;
     println!("Old value: {:?}", old_value);
 
-    // Compare and set - atomic conditional update
+    // Compare and set — atomic conditional update
     let success = map.replace_if_same(
         "counter".to_string(),
         1,  // expected current value
@@ -222,45 +229,36 @@ React to map changes in real-time:
 
 ```rust
 use hazelcast_client::{ClientConfig, HazelcastClient};
-use hazelcast_client::map::{EntryEvent, EntryListener};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
+    let config = ClientConfig::builder()
+        .cluster_name("dev")
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
+
+    let map = client.get_map::<String, String>("events-demo");
+
+    // Register a listener for entry events
+    let listener_id = map.add_entry_listener(
+        |event| {
+            println!("Event: {} on key '{}'", event.event_type, event.key);
+        },
+        true, // include_value
     ).await?;
 
-    let map = client.get_map::<String, String>("events-demo").await?;
-
-    // Register a listener for all entry events
-    let listener = EntryListener::new()
-        .on_added(|event: EntryEvent<String, String>| {
-            println!("Entry added: {} = {}", event.key, event.value.unwrap());
-        })
-        .on_updated(|event: EntryEvent<String, String>| {
-            println!(
-                "Entry updated: {} changed from {:?} to {:?}",
-                event.key, event.old_value, event.value
-            );
-        })
-        .on_removed(|event: EntryEvent<String, String>| {
-            println!("Entry removed: {}", event.key);
-        })
-        .include_value(true);
-
-    let registration_id = map.add_entry_listener(listener).await?;
-    println!("Listener registered: {}", registration_id);
+    println!("Listener registered: {}", listener_id);
 
     // Trigger some events
     map.put("greeting".to_string(), "Hello".to_string()).await?;
     map.put("greeting".to_string(), "Hello, World!".to_string()).await?;
     map.remove(&"greeting".to_string()).await?;
 
-    // Allow time for events to process
+    // Allow time for events to arrive
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     // Remove the listener when done
-    map.remove_entry_listener(&registration_id).await?;
+    map.remove_entry_listener(listener_id).await?;
 
     client.shutdown().await?;
     Ok(())
@@ -285,11 +283,12 @@ struct User {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .cluster_name("dev")
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
-    let users = client.get_map::<u64, User>("users").await?;
+    let users = client.get_map::<u64, User>("users");
 
     let user = User {
         id: 1,
@@ -311,7 +310,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Next Steps
 
-- [Distributed Caching](distributed-caching.md) - Configure Near Cache for low-latency reads
-- [SQL Queries](sql-queries.md) - Query your data with SQL
-- [Transactions](transactions.md) - Execute atomic multi-map operations
-- [Cluster Failover](cluster-failover.md) - Configure resilience and failover
+- [Distributed Caching](distributed-caching.md) — Configure Near Cache for low-latency reads
+- [SQL Queries](sql-queries.md) — Query your data with SQL
+- [Transactions](transactions.md) — Execute atomic multi-map operations
+- [Cluster Failover](cluster-failover.md) — Configure resilience and failover
