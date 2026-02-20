@@ -25,9 +25,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Total time to keep retrying (0 = infinite)
         .cluster_connect_timeout(Duration::from_secs(300));
 
-    let config = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
-        .connection_retry(retry_config);
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .connection_retry(retry_config)
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
     client.shutdown().await?;
@@ -76,22 +77,20 @@ use hazelcast_client::config::ClientFailoverConfig;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Primary cluster configuration
-    let primary = ClientConfig::new()
+    let primary = ClientConfig::builder()
         .cluster_name("primary")
-        .addresses(vec![
-            "10.0.1.10:5701",
-            "10.0.1.11:5701",
-            "10.0.1.12:5701",
-        ]);
+        .add_address("10.0.1.10:5701".parse()?)
+        .add_address("10.0.1.11:5701".parse()?)
+        .add_address("10.0.1.12:5701".parse()?)
+        .build()?;
 
     // Secondary (DR) cluster configuration
-    let secondary = ClientConfig::new()
+    let secondary = ClientConfig::builder()
         .cluster_name("secondary")
-        .addresses(vec![
-            "10.0.2.10:5701",
-            "10.0.2.11:5701",
-            "10.0.2.12:5701",
-        ]);
+        .add_address("10.0.2.10:5701".parse()?)
+        .add_address("10.0.2.11:5701".parse()?)
+        .add_address("10.0.2.12:5701".parse()?)
+        .build()?;
 
     let failover_config = ClientFailoverConfig::new()
         .add_client_config(primary)
@@ -118,12 +117,13 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
         // How often to send heartbeat pings
         .heartbeat_interval(Duration::from_secs(5))
         // Time to wait for heartbeat response before declaring connection dead
-        .heartbeat_timeout(Duration::from_secs(60));
+        .heartbeat_timeout(Duration::from_secs(60))
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
     client.shutdown().await?;
@@ -154,10 +154,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .size(2)
         .quorum_type(QuorumType::Read);
 
-    let config = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
         .add_quorum_config(quorum)
-        .add_quorum_config(read_quorum);
+        .add_quorum_config(read_quorum)
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
     client.shutdown().await?;
@@ -181,11 +182,12 @@ use hazelcast_client::error::HazelcastError;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = HazelcastClient::new(
-        ClientConfig::new().addresses(vec!["127.0.0.1:5701"])
-    ).await?;
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
+    let client = HazelcastClient::new(config).await?;
 
-    let map = client.get_map::<String, String>("protected-map").await?;
+    let map = client.get_map::<String, String>("protected-map");
 
     match map.put("key".to_string(), "value".to_string()).await {
         Ok(_) => println!("Write successful"),
@@ -214,8 +216,9 @@ use hazelcast_client::cluster::{MembershipListener, MembershipEvent, InitialMemb
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"]);
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
 
@@ -267,9 +270,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let config = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
-        .add_lifecycle_listener(lifecycle_listener);
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .add_lifecycle_listener(lifecycle_listener)
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
 
@@ -290,17 +294,18 @@ use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
+    let config = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
         // Enable smart routing (default: true)
         // Routes requests directly to partition owner
-        .smart_routing(true);
+        .smart_routing(true)
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
 
     // With smart routing, get/put operations go directly
     // to the member owning the key's partition
-    let map = client.get_map::<String, String>("smart-map").await?;
+    let map = client.get_map::<String, String>("smart-map");
     map.put("key".to_string(), "value".to_string()).await?;
 
     client.shutdown().await?;
@@ -319,14 +324,16 @@ use hazelcast_client::config::LoadBalancer;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Round-robin across all members
-    let round_robin = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
-        .load_balancer(LoadBalancer::RoundRobin);
+    let round_robin = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .load_balancer(LoadBalancer::RoundRobin)
+        .build()?;
 
     // Random member selection
-    let random = ClientConfig::new()
-        .addresses(vec!["127.0.0.1:5701"])
-        .load_balancer(LoadBalancer::Random);
+    let _random = ClientConfig::builder()
+        .add_address("127.0.0.1:5701".parse()?)
+        .load_balancer(LoadBalancer::Random)
+        .build()?;
 
     let client = HazelcastClient::new(round_robin).await?;
     client.shutdown().await?;
@@ -354,10 +361,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Verify server hostname
         .hostname_verification(true);
 
-    let config = ClientConfig::new()
+    let config = ClientConfig::builder()
         .cluster_name("secure-cluster")
-        .addresses(vec!["hazelcast.example.com:5701"])
-        .tls(tls);
+        .add_address("hazelcast.example.com:5701".parse()?)
+        .tls(tls)
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
     client.shutdown().await?;
@@ -391,13 +399,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let config = ClientConfig::new()
+    let config = ClientConfig::builder()
         .cluster_name("production")
-        .addresses(vec![
-            "hazelcast-1.prod.internal:5701",
-            "hazelcast-2.prod.internal:5701",
-            "hazelcast-3.prod.internal:5701",
-        ])
+        .add_address("hazelcast-1.prod.internal:5701".parse()?)
+        .add_address("hazelcast-2.prod.internal:5701".parse()?)
+        .add_address("hazelcast-3.prod.internal:5701".parse()?)
         // Connection resilience
         .connection_retry(
             ConnectionRetryConfig::new()
@@ -427,7 +433,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .hostname_verification(true)
         )
         // Lifecycle monitoring
-        .add_lifecycle_listener(lifecycle_listener);
+        .add_lifecycle_listener(lifecycle_listener)
+        .build()?;
 
     let client = HazelcastClient::new(config).await?;
 

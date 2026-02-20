@@ -3,6 +3,13 @@ name = "hazelcast-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Async Rust client for Hazelcast — distributed maps, queues, locks, transactions, SQL, and streaming on Tokio"
+readme = "README.md"
+keywords = ["hazelcast", "distributed", "cache", "cluster", "async"]
+categories = ["asynchronous", "caching", "database", "network-programming"]
 
 [features]
 default = []

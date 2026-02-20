@@ -1,22 +1,25 @@
-//! Example: IMap entry listeners
+//! Example: IMap entry listeners.
 //!
 //! Demonstrates how to subscribe to map entry events (add, update, remove, evict).
 //!
 //! Run with: `cargo run --example map_listeners`
+//!
+//! Requires a Hazelcast cluster running on localhost:5701.
 
-use hazelcast_client::{Client, ClientConfig};
+use hazelcast_client::{ClientConfig, HazelcastClient};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::new()
+    let config = ClientConfig::builder()
         .cluster_name("dev")
-        .address("127.0.0.1:5701");
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
 
-    let client = Client::new(config).await?;
-    let map = client.get_map::<String, String>("listener-demo").await?;
+    let client = HazelcastClient::new(config).await?;
+    let map = client.get_map::<String, String>("listener-demo");
 
     // Track event counts
     let add_count = Arc::new(AtomicUsize::new(0));

@@ -1,26 +1,22 @@
-//! Example: SQL queries against Hazelcast maps
+//! Example: SQL queries against Hazelcast maps.
 //!
-//! Demonstrates the SQL service for querying distributed maps.
+//! Demonstrates the SQL service for querying distributed maps, including
+//! creating mappings, inserting data, filtering, and aggregation.
 //!
 //! Run with: `cargo run --example sql_queries`
+//!
+//! Requires a Hazelcast cluster running on localhost:5701.
 
-use hazelcast_client::{Client, ClientConfig};
-
-#[derive(Debug, Clone)]
-struct Employee {
-    id: i64,
-    name: String,
-    department: String,
-    salary: i64,
-}
+use hazelcast_client::{ClientConfig, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::new()
+    let config = ClientConfig::builder()
         .cluster_name("dev")
-        .address("127.0.0.1:5701");
+        .add_address("127.0.0.1:5701".parse()?)
+        .build()?;
 
-    let client = Client::new(config).await?;
+    let client = HazelcastClient::new(config).await?;
 
     // Create mapping for the employees map
     let sql = client.get_sql();
@@ -100,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = sql
         .execute(
             r#"
-            SELECT 
+            SELECT
                 department,
                 COUNT(*) as employee_count,
                 AVG(salary) as avg_salary,
@@ -122,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // Query 4: Parameterized query
+    // Query 4: High earners
     println!("\n--- High Earners (salary > $80,000) ---");
     let result = sql
         .execute("SELECT name, salary FROM employees WHERE salary > 80000 ORDER BY salary DESC")
@@ -138,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Clean up
     sql.execute("DROP MAPPING IF EXISTS employees").await?;
-    let map = client.get_map::<i64, String>("employees").await?;
+    let map = client.get_map::<i64, String>("employees");
     map.clear().await?;
     client.shutdown().await?;
 
