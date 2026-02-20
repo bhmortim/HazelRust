@@ -14,7 +14,7 @@ fn bench_primitive_serialization(c: &mut Criterion) {
         b.iter(|| {
             let mut output = ObjectDataOutput::new();
             black_box(42i32).serialize(&mut output).unwrap();
-            black_box(output.as_bytes())
+            black_box(output.into_bytes())
         })
     });
 
@@ -22,7 +22,7 @@ fn bench_primitive_serialization(c: &mut Criterion) {
         b.iter(|| {
             let mut output = ObjectDataOutput::new();
             black_box(123456789i64).serialize(&mut output).unwrap();
-            black_box(output.as_bytes())
+            black_box(output.into_bytes())
         })
     });
 
@@ -30,7 +30,7 @@ fn bench_primitive_serialization(c: &mut Criterion) {
         b.iter(|| {
             let mut output = ObjectDataOutput::new();
             black_box(3.14159265359f64).serialize(&mut output).unwrap();
-            black_box(output.as_bytes())
+            black_box(output.into_bytes())
         })
     });
 
@@ -38,7 +38,7 @@ fn bench_primitive_serialization(c: &mut Criterion) {
         b.iter(|| {
             let mut output = ObjectDataOutput::new();
             black_box(true).serialize(&mut output).unwrap();
-            black_box(output.as_bytes())
+            black_box(output.into_bytes())
         })
     });
 
@@ -101,7 +101,7 @@ fn bench_string_serialization(c: &mut Criterion) {
             b.iter(|| {
                 let mut output = ObjectDataOutput::new();
                 s.serialize(&mut output).unwrap();
-                black_box(output.as_bytes())
+                black_box(output.into_bytes())
             })
         });
     }
@@ -151,7 +151,7 @@ fn bench_bytes_serialization(c: &mut Criterion) {
                 b.iter(|| {
                     let mut output = ObjectDataOutput::new();
                     data.serialize(&mut output).unwrap();
-                    black_box(output.as_bytes())
+                    black_box(output.into_bytes())
                 })
             },
         );
@@ -199,7 +199,7 @@ fn bench_mixed_serialization(c: &mut Criterion) {
             let mut output = ObjectDataOutput::new();
             key.serialize(&mut output).unwrap();
             value.serialize(&mut output).unwrap();
-            black_box(output.as_bytes())
+            black_box(output.into_bytes())
         })
     });
 
@@ -215,7 +215,7 @@ fn bench_mixed_serialization(c: &mut Criterion) {
             name.serialize(&mut output).unwrap();
             price.serialize(&mut output).unwrap();
             active.serialize(&mut output).unwrap();
-            black_box(output.as_bytes())
+            black_box(output.into_bytes())
         })
     });
 
