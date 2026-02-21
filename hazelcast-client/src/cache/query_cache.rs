@@ -1,6 +1,6 @@
 //! Continuous Query Cache implementation for client-side caching with predicate filtering.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -245,6 +245,123 @@ impl QueryCacheConfigBuilder {
 /// A type alias for a boxed listener closure used in QueryCache.
 pub type QueryCacheEntryListenerFn<K, V> = Box<dyn Fn(&EntryEvent<K, V>) + Send + Sync>;
 
+/// The type of local index used by a QueryCache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryCacheIndexType {
+    /// Hash-based index for equality lookups.
+    Hash,
+    /// Sorted (BTreeMap) index for range queries and equality lookups.
+    Sorted,
+}
+
+/// A predicate for querying local indexes.
+#[derive(Debug, Clone)]
+pub enum QueryCacheIndexPredicate {
+    /// Match entries where the indexed attribute equals the given serialized value.
+    Equal(Vec<u8>),
+}
+
+impl QueryCacheIndexPredicate {
+    /// Creates an equality predicate from a serializable value.
+    pub fn equal<T: Serializable>(value: &T) -> Result<Self> {
+        let mut output = ObjectDataOutput::new();
+        value.serialize(&mut output)?;
+        Ok(QueryCacheIndexPredicate::Equal(output.into_bytes()))
+    }
+}
+
+/// Trait for extracting an indexable attribute from a cached value.
+///
+/// Implementations should return a serialized byte representation of the
+/// attribute value, or `None` if the attribute is not present.
+pub trait AttributeExtractor<V>: Send + Sync {
+    /// Extracts the attribute value as serialized bytes.
+    fn extract(&self, value: &V) -> Option<Vec<u8>>;
+}
+
+/// A closure-based attribute extractor.
+pub struct FnAttributeExtractor<V> {
+    func: Box<dyn Fn(&V) -> Option<Vec<u8>> + Send + Sync>,
+}
+
+impl<V> FnAttributeExtractor<V> {
+    /// Creates a new attribute extractor from a closure.
+    pub fn new<F>(func: F) -> Self
+    where
+        F: Fn(&V) -> Option<Vec<u8>> + Send + Sync + 'static,
+    {
+        Self {
+            func: Box::new(func),
+        }
+    }
+}
+
+impl<V> AttributeExtractor<V> for FnAttributeExtractor<V> {
+    fn extract(&self, value: &V) -> Option<Vec<u8>> {
+        (self.func)(value)
+    }
+}
+
+/// Internal index storage.
+enum LocalIndex {
+    Hash(HashMap<Vec<u8>, HashSet<Vec<u8>>>),
+    Sorted(BTreeMap<Vec<u8>, HashSet<Vec<u8>>>),
+}
+
+impl LocalIndex {
+    fn new(index_type: QueryCacheIndexType) -> Self {
+        match index_type {
+            QueryCacheIndexType::Hash => LocalIndex::Hash(HashMap::new()),
+            QueryCacheIndexType::Sorted => LocalIndex::Sorted(BTreeMap::new()),
+        }
+    }
+
+    fn insert(&mut self, attr_value: Vec<u8>, key: Vec<u8>) {
+        match self {
+            LocalIndex::Hash(map) => {
+                map.entry(attr_value).or_default().insert(key);
+            }
+            LocalIndex::Sorted(map) => {
+                map.entry(attr_value).or_default().insert(key);
+            }
+        }
+    }
+
+    fn remove_key(&mut self, attr_value: &[u8], key: &[u8]) {
+        match self {
+            LocalIndex::Hash(map) => {
+                if let Some(keys) = map.get_mut(attr_value) {
+                    keys.remove(key);
+                    if keys.is_empty() {
+                        map.remove(attr_value);
+                    }
+                }
+            }
+            LocalIndex::Sorted(map) => {
+                if let Some(keys) = map.get_mut(attr_value) {
+                    keys.remove(key);
+                    if keys.is_empty() {
+                        map.remove(attr_value);
+                    }
+                }
+            }
+        }
+    }
+
+    fn get_keys(&self, predicate: &QueryCacheIndexPredicate) -> HashSet<Vec<u8>> {
+        match predicate {
+            QueryCacheIndexPredicate::Equal(value) => match self {
+                LocalIndex::Hash(map) => {
+                    map.get(value).cloned().unwrap_or_default()
+                }
+                LocalIndex::Sorted(map) => {
+                    map.get(value).cloned().unwrap_or_default()
+                }
+            },
+        }
+    }
+}
+
 pub struct QueryCache<K, V> {
     name: String,
     map_name: String,
@@ -256,6 +373,10 @@ pub struct QueryCache<K, V> {
     entry_listeners: Arc<Mutex<Vec<(u64, QueryCacheEntryListenerFn<K, V>)>>>,
     next_listener_id: Arc<AtomicU64>,
     destroyed: AtomicBool,
+    // Local indexes: attribute_name -> index
+    local_indexes: Arc<RwLock<HashMap<String, LocalIndex>>>,
+    // Attribute extractors keyed by name
+    attribute_extractors: Arc<RwLock<HashMap<String, Arc<dyn AttributeExtractor<V>>>>>,
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
@@ -267,7 +388,7 @@ impl<K, V> fmt::Debug for QueryCache<K, V> {
             .field("include_value", &self.include_value)
             .field("has_predicate", &self.predicate.is_some())
             .field("destroyed", &self.destroyed)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -289,6 +410,8 @@ where
             entry_listeners: Arc::new(Mutex::new(Vec::new())),
             next_listener_id: Arc::new(AtomicU64::new(1)),
             destroyed: AtomicBool::new(false),
+            local_indexes: Arc::new(RwLock::new(HashMap::new())),
+            attribute_extractors: Arc::new(RwLock::new(HashMap::new())),
             _phantom: PhantomData,
         }
     }
@@ -312,6 +435,8 @@ where
             listener_registration: Arc::new(Mutex::new(None)),
             entry_listeners: Arc::new(Mutex::new(Vec::new())),
             next_listener_id: Arc::new(AtomicU64::new(1)),
+            local_indexes: Arc::new(RwLock::new(HashMap::new())),
+            attribute_extractors: Arc::new(RwLock::new(HashMap::new())),
             destroyed: AtomicBool::new(false),
             _phantom: PhantomData,
         }
@@ -558,7 +683,6 @@ where
             EntryEventType::Removed | EntryEventType::Evicted | EntryEventType::Expired => {
                 cache.remove(&key_data);
             }
-            _ => {}
         }
     }
 
@@ -655,6 +779,153 @@ where
         }
     }
 
+    // ========================================================================
+    // Local Index Support
+    // ========================================================================
+
+    /// Adds a local index on a named attribute.
+    ///
+    /// The extractor defines how to extract the indexed attribute value from
+    /// cached values. Existing cache entries are indexed immediately.
+    pub fn add_index(
+        &self,
+        attribute_name: &str,
+        index_type: QueryCacheIndexType,
+        extractor: impl AttributeExtractor<V> + 'static,
+    ) {
+        let extractor = Arc::new(extractor);
+
+        // Create the index
+        let mut index = LocalIndex::new(index_type);
+
+        // Index existing entries
+        let cache = self.cache.read().unwrap();
+        for (key_data, value_data) in cache.iter() {
+            let mut input = ObjectDataInput::new(value_data);
+            if let Ok(value) = V::deserialize(&mut input) {
+                if let Some(attr_bytes) = extractor.extract(&value) {
+                    index.insert(attr_bytes, key_data.clone());
+                }
+            }
+        }
+
+        let mut indexes = self.local_indexes.write().unwrap();
+        indexes.insert(attribute_name.to_string(), index);
+
+        let mut extractors = self.attribute_extractors.write().unwrap();
+        extractors.insert(attribute_name.to_string(), extractor);
+    }
+
+    /// Removes a local index by name.
+    pub fn remove_index(&self, attribute_name: &str) -> bool {
+        let mut indexes = self.local_indexes.write().unwrap();
+        let removed = indexes.remove(attribute_name).is_some();
+        let mut extractors = self.attribute_extractors.write().unwrap();
+        extractors.remove(attribute_name);
+        removed
+    }
+
+    /// Queries a local index and returns matching keys.
+    pub fn keys_by_index(&self, attribute_name: &str, predicate: &QueryCacheIndexPredicate) -> Vec<K> {
+        let indexes = self.local_indexes.read().unwrap();
+        let index = match indexes.get(attribute_name) {
+            Some(idx) => idx,
+            None => return Vec::new(),
+        };
+
+        let key_bytes = index.get_keys(predicate);
+        let mut result = Vec::with_capacity(key_bytes.len());
+        for kb in &key_bytes {
+            let mut input = ObjectDataInput::new(kb);
+            if let Ok(key) = K::deserialize(&mut input) {
+                result.push(key);
+            }
+        }
+        result
+    }
+
+    /// Queries a local index and returns matching values.
+    pub fn values_by_index(&self, attribute_name: &str, predicate: &QueryCacheIndexPredicate) -> Vec<V> {
+        let indexes = self.local_indexes.read().unwrap();
+        let index = match indexes.get(attribute_name) {
+            Some(idx) => idx,
+            None => return Vec::new(),
+        };
+
+        let key_bytes = index.get_keys(predicate);
+        let cache = self.cache.read().unwrap();
+        let mut result = Vec::with_capacity(key_bytes.len());
+        for kb in &key_bytes {
+            if let Some(vb) = cache.get(kb) {
+                let mut input = ObjectDataInput::new(vb);
+                if let Ok(value) = V::deserialize(&mut input) {
+                    result.push(value);
+                }
+            }
+        }
+        result
+    }
+
+    /// Queries a local index and returns matching key-value pairs.
+    pub fn entries_by_index(&self, attribute_name: &str, predicate: &QueryCacheIndexPredicate) -> Vec<(K, V)> {
+        let indexes = self.local_indexes.read().unwrap();
+        let index = match indexes.get(attribute_name) {
+            Some(idx) => idx,
+            None => return Vec::new(),
+        };
+
+        let key_bytes = index.get_keys(predicate);
+        let cache = self.cache.read().unwrap();
+        let mut result = Vec::with_capacity(key_bytes.len());
+        for kb in &key_bytes {
+            if let Some(vb) = cache.get(kb) {
+                let mut ki = ObjectDataInput::new(kb);
+                let mut vi = ObjectDataInput::new(vb);
+                if let (Ok(key), Ok(value)) = (K::deserialize(&mut ki), V::deserialize(&mut vi)) {
+                    result.push((key, value));
+                }
+            }
+        }
+        result
+    }
+
+    /// Returns the names of all registered local indexes.
+    pub fn index_names(&self) -> Vec<String> {
+        let indexes = self.local_indexes.read().unwrap();
+        indexes.keys().cloned().collect()
+    }
+
+    /// Updates all local indexes when a value is added or updated.
+    fn add_to_indexes(&self, key_data: &[u8], value: &V) {
+        let extractors = self.attribute_extractors.read().unwrap();
+        let mut indexes = self.local_indexes.write().unwrap();
+
+        for (name, extractor) in extractors.iter() {
+            if let Some(attr_bytes) = extractor.extract(value) {
+                if let Some(index) = indexes.get_mut(name) {
+                    index.insert(attr_bytes, key_data.to_vec());
+                }
+            }
+        }
+    }
+
+    /// Removes a key from all local indexes.
+    fn remove_from_indexes(&self, key_data: &[u8], value_data: &[u8]) {
+        let extractors = self.attribute_extractors.read().unwrap();
+        let mut indexes = self.local_indexes.write().unwrap();
+
+        let mut input = ObjectDataInput::new(value_data);
+        if let Ok(value) = V::deserialize(&mut input) {
+            for (name, extractor) in extractors.iter() {
+                if let Some(attr_bytes) = extractor.extract(&value) {
+                    if let Some(index) = indexes.get_mut(name) {
+                        index.remove_key(&attr_bytes, key_data);
+                    }
+                }
+            }
+        }
+    }
+
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
         value.serialize(&mut output)?;
@@ -675,6 +946,8 @@ impl<K, V> Clone for QueryCache<K, V> {
             entry_listeners: Arc::clone(&self.entry_listeners),
             next_listener_id: Arc::clone(&self.next_listener_id),
             destroyed: AtomicBool::new(self.destroyed.load(Ordering::Acquire)),
+            local_indexes: Arc::clone(&self.local_indexes),
+            attribute_extractors: Arc::clone(&self.attribute_extractors),
             _phantom: PhantomData,
         }
     }

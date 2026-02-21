@@ -795,6 +795,140 @@ where
         Self::decode_bool_response(&response)
     }
 
+    /// Atomically computes a new value for the given key using the provided
+    /// remapping function. The function receives the key and the current value
+    /// (or `None` if absent) and should return the new value (or `None` to remove).
+    ///
+    /// Uses lock-based atomicity: lock → get → apply → put/remove → unlock.
+    pub async fn compute<F>(&self, key: &K, remapping_function: F) -> Result<Option<V>>
+    where
+        K: Clone,
+        V: Clone,
+        F: FnOnce(&K, Option<&V>) -> Option<V>,
+    {
+        self.lock(key).await?;
+        let result = async {
+            let current = self.get(key).await?;
+            let new_value = remapping_function(key, current.as_ref());
+            match new_value {
+                Some(v) => {
+                    self.put(key.clone(), v.clone()).await?;
+                    Ok(Some(v))
+                }
+                None => {
+                    if current.is_some() {
+                        self.remove(key).await?;
+                    }
+                    Ok(None)
+                }
+            }
+        }
+        .await;
+        self.unlock(key).await?;
+        result
+    }
+
+    /// Atomically computes a value for the given key only if it is not already
+    /// present. The mapping function receives the key and should return the
+    /// value to associate, or `None` to leave the key absent.
+    ///
+    /// Uses lock-based atomicity: lock → get → apply → put → unlock.
+    pub async fn compute_if_absent<F>(&self, key: &K, mapping_function: F) -> Result<Option<V>>
+    where
+        K: Clone,
+        V: Clone,
+        F: FnOnce(&K) -> Option<V>,
+    {
+        self.lock(key).await?;
+        let result = async {
+            let current = self.get(key).await?;
+            if current.is_some() {
+                return Ok(current);
+            }
+            match mapping_function(key) {
+                Some(v) => {
+                    self.put(key.clone(), v.clone()).await?;
+                    Ok(Some(v))
+                }
+                None => Ok(None),
+            }
+        }
+        .await;
+        self.unlock(key).await?;
+        result
+    }
+
+    /// Atomically computes a new value for the given key only if it is already
+    /// present. The remapping function receives the key and current value and
+    /// should return the new value, or `None` to remove the mapping.
+    ///
+    /// Uses lock-based atomicity: lock → get → apply → put/remove → unlock.
+    pub async fn compute_if_present<F>(&self, key: &K, remapping_function: F) -> Result<Option<V>>
+    where
+        K: Clone,
+        V: Clone,
+        F: FnOnce(&K, &V) -> Option<V>,
+    {
+        self.lock(key).await?;
+        let result = async {
+            let current = self.get(key).await?;
+            match current {
+                Some(ref cur) => match remapping_function(key, cur) {
+                    Some(v) => {
+                        self.put(key.clone(), v.clone()).await?;
+                        Ok(Some(v))
+                    }
+                    None => {
+                        self.remove(key).await?;
+                        Ok(None)
+                    }
+                },
+                None => Ok(None),
+            }
+        }
+        .await;
+        self.unlock(key).await?;
+        result
+    }
+
+    /// Merges the given value with an existing value for the given key using the
+    /// provided remapping function. If the key is not present, the given value
+    /// is simply inserted. If the key is present, the remapping function receives
+    /// the existing and new values and should return the merged result, or `None`
+    /// to remove the mapping.
+    ///
+    /// Uses lock-based atomicity: lock → get → apply → put/remove → unlock.
+    pub async fn merge<F>(&self, key: &K, value: V, remapping_function: F) -> Result<Option<V>>
+    where
+        K: Clone,
+        V: Clone,
+        F: FnOnce(&V, &V) -> Option<V>,
+    {
+        self.lock(key).await?;
+        let result = async {
+            let current = self.get(key).await?;
+            match current {
+                Some(ref existing) => match remapping_function(existing, &value) {
+                    Some(merged) => {
+                        self.put(key.clone(), merged.clone()).await?;
+                        Ok(Some(merged))
+                    }
+                    None => {
+                        self.remove(key).await?;
+                        Ok(None)
+                    }
+                },
+                None => {
+                    self.put(key.clone(), value.clone()).await?;
+                    Ok(Some(value))
+                }
+            }
+        }
+        .await;
+        self.unlock(key).await?;
+        result
+    }
+
     /// Removes the mapping for a key from this map if it is present.
     ///
     /// If near-cache is enabled, invalidates the local cache entry before

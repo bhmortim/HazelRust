@@ -150,7 +150,11 @@ pub mod sql;
 pub mod tower_service;
 pub mod transaction;
 
-pub use cache::{EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder, QueryCache, QueryCacheConfig, QueryCacheConfigBuilder, QueryCacheStats};
+pub use cache::{
+    AttributeExtractor, EvictionPolicy, FnAttributeExtractor, InMemoryFormat, NearCacheConfig,
+    NearCacheConfigBuilder, QueryCache, QueryCacheConfig, QueryCacheConfigBuilder,
+    QueryCacheIndexPredicate, QueryCacheIndexType, QueryCacheStats,
+};
 pub use client::{ConnectionListener, HazelcastClient};
 pub use executor::{
     Callable, CallableTask, ExecutionCallback, ExecutionTarget, ExecutorService,
@@ -204,7 +208,7 @@ pub use sql::{
 };
 pub use transaction::{
     TransactionContext, TransactionOptions, TransactionState, TransactionType,
-    TransactionalList, TransactionalMap, TransactionalQueue, TransactionalSet,
+    TransactionalList, TransactionalMap, TransactionalMultiMap, TransactionalQueue, TransactionalSet,
     XAResource, XATransaction, XaTransactionState, Xid,
     XA_TMNOFLAGS, XA_TMJOIN, XA_TMRESUME, XA_TMSUCCESS, XA_TMFAIL, XA_TMSUSPEND,
     XA_TMSTARTRSCAN, XA_TMENDRSCAN, XA_TMONEPHASE,
