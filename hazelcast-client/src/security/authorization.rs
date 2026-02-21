@@ -34,7 +34,7 @@ impl Permission {
     pub fn implies(&self, other: Permission) -> bool {
         match self {
             Permission::All => true,
-            Permission::Write => matches!(other, Permission::Put | Permission::Remove),
+            Permission::Write => matches!(other, Permission::Write | Permission::Put | Permission::Remove),
             _ => *self == other,
         }
     }

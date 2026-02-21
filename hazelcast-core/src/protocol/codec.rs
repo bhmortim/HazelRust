@@ -78,7 +78,7 @@ impl Decoder for ClientMessageCodec {
                 self.pending_frames.push(frame);
             }
 
-            if is_end {
+            if is_end && self.in_message {
                 self.in_message = false;
                 let frames = std::mem::take(&mut self.pending_frames);
                 return Ok(Some(ClientMessage::from_frames(frames)));

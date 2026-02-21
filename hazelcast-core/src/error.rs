@@ -321,11 +321,84 @@ impl HazelcastError {
         }
     }
 
+    /// Returns `true` if this error is transient (temporary, likely to resolve on its own).
+    ///
+    /// Transient errors are a subset of retryable errors — they indicate temporary
+    /// conditions such as network blips, member restarts, or partition migrations
+    /// that will typically resolve without intervention.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::Connection(_) | Self::TargetDisconnected(_) | Self::MemberLeft(_) => true,
+            Self::Timeout(_) => true,
+            Self::Io(_) => true,
+            Self::Server { code, .. } => matches!(
+                code,
+                ServerErrorCode::PartitionMigrating
+                    | ServerErrorCode::TargetDisconnected
+                    | ServerErrorCode::MemberLeft
+                    | ServerErrorCode::RetryableIo
+            ),
+            _ => false,
+        }
+    }
+
+    /// Returns the error category for structured error handling.
+    pub fn category(&self) -> ErrorCategory {
+        match self {
+            Self::Connection(_) | Self::TargetDisconnected(_) | Self::MemberLeft(_)
+            | Self::InstanceNotActive(_) | Self::Io(_) => ErrorCategory::Network,
+            Self::Authentication(_) => ErrorCategory::Authentication,
+            Self::Authorization(_) => ErrorCategory::Authorization,
+            Self::Serialization(_) => ErrorCategory::Serialization,
+            Self::Configuration(_) => ErrorCategory::Configuration,
+            Self::Timeout(_) => ErrorCategory::Timeout,
+            Self::IllegalState(_) | Self::QuorumNotPresent(_) => ErrorCategory::State,
+            Self::Protocol(_) => ErrorCategory::Network,
+            Self::Server { .. } => ErrorCategory::ServerSide,
+        }
+    }
+
     /// Returns the server error code if this is a server error.
     pub fn server_error_code(&self) -> Option<ServerErrorCode> {
         match self {
             Self::Server { code, .. } => Some(*code),
             _ => None,
+        }
+    }
+}
+
+/// Classification of error categories for structured error handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorCategory {
+    /// Network and connection errors.
+    Network,
+    /// Authentication failures.
+    Authentication,
+    /// Authorization / permission errors.
+    Authorization,
+    /// Serialization / deserialization errors.
+    Serialization,
+    /// Client configuration errors.
+    Configuration,
+    /// Server-side exceptions.
+    ServerSide,
+    /// Operation timeout.
+    Timeout,
+    /// Invalid state for the requested operation.
+    State,
+}
+
+impl fmt::Display for ErrorCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Network => write!(f, "NETWORK"),
+            Self::Authentication => write!(f, "AUTHENTICATION"),
+            Self::Authorization => write!(f, "AUTHORIZATION"),
+            Self::Serialization => write!(f, "SERIALIZATION"),
+            Self::Configuration => write!(f, "CONFIGURATION"),
+            Self::ServerSide => write!(f, "SERVER_SIDE"),
+            Self::Timeout => write!(f, "TIMEOUT"),
+            Self::State => write!(f, "STATE"),
         }
     }
 }

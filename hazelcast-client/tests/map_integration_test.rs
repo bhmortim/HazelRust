@@ -2,15 +2,11 @@
 
 mod common;
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hazelcast_client::{
-    ClientConfigBuilder, HazelcastClient, NearCacheConfig,
-    Predicates, Aggregators, Projections,
-};
-use hazelcast_client::proxy::map::{IndexConfig, IndexType};
+use hazelcast_client::HazelcastClient;
+use hazelcast_client::proxy::{IndexConfig, IndexType};
 use hazelcast_client::listener::EntryListenerConfig;
 
 use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
@@ -26,7 +22,7 @@ async fn test_map_put_and_get() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     let old = map.put("key1".to_string(), "value1".to_string()).await.unwrap();
     assert!(old.is_none());
@@ -48,7 +44,7 @@ async fn test_map_put_returns_old_value() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     map.put("key1".to_string(), "value1".to_string()).await.unwrap();
     let old = map.put("key1".to_string(), "value2".to_string()).await.unwrap();
@@ -72,7 +68,7 @@ async fn test_map_remove() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     map.put("key1".to_string(), "value1".to_string()).await.unwrap();
     
@@ -99,7 +95,7 @@ async fn test_map_contains_key() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     assert!(!map.contains_key(&"key1".to_string()).await.unwrap());
 
@@ -123,7 +119,7 @@ async fn test_map_size() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     assert_eq!(map.size().await.unwrap(), 0);
 
@@ -151,7 +147,7 @@ async fn test_map_clear() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     for i in 0..10 {
         map.put(format!("key{}", i), format!("value{}", i)).await.unwrap();
@@ -173,7 +169,7 @@ async fn test_map_with_integer_keys() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map-int");
-    let map = client.get_map::<i32, String>(&map_name).await.unwrap();
+    let map = client.get_map::<i32, String>(&map_name);
 
     map.put(42, "answer".to_string()).await.unwrap();
     
@@ -194,7 +190,7 @@ async fn test_map_with_integer_values() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map-int-val");
-    let map = client.get_map::<String, i64>(&map_name).await.unwrap();
+    let map = client.get_map::<String, i64>(&map_name);
 
     map.put("counter".to_string(), 100).await.unwrap();
     
@@ -215,7 +211,7 @@ async fn test_map_bulk_operations() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map-bulk");
-    let map = client.get_map::<String, i32>(&map_name).await.unwrap();
+    let map = client.get_map::<String, i32>(&map_name);
 
     for i in 0..100 {
         map.put(format!("key-{}", i), i).await.unwrap();
@@ -253,9 +249,7 @@ async fn test_map_concurrent_operations() {
         
         let handle = tokio::spawn(async move {
             let map = client_clone
-                .get_map::<String, i32>(&map_name_clone)
-                .await
-                .unwrap();
+                .get_map::<String, i32>(&map_name_clone);
             
             for j in 0..10 {
                 let key = format!("key-{}-{}", i, j);
@@ -270,7 +264,7 @@ async fn test_map_concurrent_operations() {
         handle.await.unwrap();
     }
 
-    let map = client.get_map::<String, i32>(&map_name).await.unwrap();
+    let map = client.get_map::<String, i32>(&map_name);
     assert_eq!(map.size().await.unwrap(), 100);
 
     map.clear().await.unwrap();
@@ -287,7 +281,7 @@ async fn test_map_entry_listener_added_event() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map-listener");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     let events = Arc::new(std::sync::Mutex::new(Vec::new()));
     let events_clone = Arc::clone(&events);
@@ -324,7 +318,7 @@ async fn test_map_add_index() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map-index");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     let sorted_index = IndexConfig::builder()
         .name("age-idx")
@@ -357,7 +351,7 @@ async fn test_map_special_characters_in_keys() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map-special");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     let special_keys = vec![
         "key with spaces",
@@ -395,7 +389,7 @@ async fn test_map_large_values() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map-large");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     let large_value = "x".repeat(100_000);
     map.put("large-key".to_string(), large_value.clone()).await.unwrap();
@@ -417,7 +411,7 @@ async fn test_map_empty_string_key_and_value() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map-empty");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     map.put(String::new(), "empty-key-value".to_string()).await.unwrap();
     let value = map.get(&String::new()).await.unwrap();
@@ -441,7 +435,7 @@ async fn test_map_clone_shares_state() {
         .await
         .expect("failed to connect");
     let map_name = unique_name("test-map-clone");
-    let map1 = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map1 = client.get_map::<String, String>(&map_name);
     let map2 = map1.clone();
 
     map1.put("key1".to_string(), "value1".to_string()).await.unwrap();

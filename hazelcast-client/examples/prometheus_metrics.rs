@@ -14,8 +14,6 @@ use hazelcast_client::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
-
     // Create the Prometheus exporter (installs global metrics recorder)
     let exporter = PrometheusExporterBuilder::new()
         .with_prefix("hazelcast")

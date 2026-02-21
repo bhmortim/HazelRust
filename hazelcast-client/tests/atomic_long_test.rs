@@ -214,5 +214,5 @@ async fn test_atomic_long_clone() {
 #[test]
 fn test_atomic_long_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<hazelcast_client::AtomicLong>();
+    assert_send_sync::<hazelcast_client::proxy::AtomicLong>();
 }

@@ -876,6 +876,11 @@ impl ConnectionManager {
         self.config.find_quorum_config(name)
     }
 
+    /// Returns all configured quorum (split-brain protection) configurations.
+    pub fn quorum_configs(&self) -> &[crate::config::QuorumConfig] {
+        self.config.quorum_configs()
+    }
+
     /// Returns the number of partitions in the cluster.
     pub fn partition_count(&self) -> i32 {
         self.partition_count.load(std::sync::atomic::Ordering::Acquire)
@@ -1040,6 +1045,11 @@ impl ConnectionManager {
     ///
     /// If the message has a specific partition ID, it is routed to the partition owner.
     /// Otherwise, it is sent to any available connection.
+    #[instrument(
+        name = "connection_manager.send",
+        skip(self, message),
+        level = "debug"
+    )]
     pub async fn send(
         &self,
         message: hazelcast_core::ClientMessage,
@@ -1055,6 +1065,11 @@ impl ConnectionManager {
     /// Invokes a request and returns the response, automatically routing based on partition ID.
     ///
     /// This is an alias for `send` for code that prefers the "invoke" terminology.
+    #[instrument(
+        name = "connection_manager.invoke",
+        skip(self, message),
+        level = "debug"
+    )]
     pub async fn invoke(
         &self,
         message: hazelcast_core::ClientMessage,
@@ -2450,9 +2465,9 @@ mod tests {
         manager.set_partition_owner(0, member_uuid).await;
         manager.connect_to(addr).await.unwrap();
 
-        let msg = hazelcast_core::ClientMessage::new();
+        let msg = hazelcast_core::ClientMessage::create_for_encode(0x000100, 0);
         let result = manager.send_to_partition(0, msg).await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "send_to_partition failed: {:?}", result.err());
     }
 
     #[tokio::test]

@@ -316,7 +316,7 @@ impl SqlStatement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use chrono::{TimeZone, Timelike};
 
     #[test]
     fn test_sql_column_type_roundtrip() {

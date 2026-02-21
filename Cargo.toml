@@ -2,6 +2,7 @@
 members = [
     "hazelcast-core",
     "hazelcast-client",
+    "hazelcast-derive",
 ]
 resolver = "2"
 

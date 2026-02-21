@@ -149,7 +149,7 @@ pub struct KafkaSourceConfig {
 impl KafkaSourceConfig {
     /// Creates a new builder for KafkaSourceConfig.
     pub fn builder() -> KafkaSourceConfigBuilder {
-        KafkaSourceConfigBuilder::default()
+        KafkaSourceConfigBuilder::new()
     }
 
     /// Returns the bootstrap servers.
@@ -360,7 +360,7 @@ pub struct KafkaSinkConfig {
 impl KafkaSinkConfig {
     /// Creates a new builder for KafkaSinkConfig.
     pub fn builder() -> KafkaSinkConfigBuilder {
-        KafkaSinkConfigBuilder::default()
+        KafkaSinkConfigBuilder::new()
     }
 
     /// Returns the bootstrap servers.

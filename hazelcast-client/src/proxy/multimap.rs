@@ -1347,7 +1347,11 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let config = crate::config::ClientConfigBuilder::new()
+            .add_address(addr)
+            .build()
+            .unwrap();
+        let cm = Arc::new(ConnectionManager::from_config(config));
         let map1: MultiMap<String, String> = MultiMap::new("test".to_string(), cm);
         let map2 = map1.clone();
 

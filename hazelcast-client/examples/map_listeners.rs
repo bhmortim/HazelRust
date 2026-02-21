@@ -7,6 +7,7 @@
 //! Requires a Hazelcast cluster running on localhost:5701.
 
 use hazelcast_client::{ClientConfig, HazelcastClient};
+use hazelcast_client::listener::EntryListenerConfig;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,43 +31,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let update_counter = update_count.clone();
     let remove_counter = remove_count.clone();
 
-    // Add entry listener with value included
-    let listener_id = map
+    // Configure listener for all events with values included
+    let listener_config = EntryListenerConfig::all();
+
+    // Add entry listener
+    let listener_reg = map
         .add_entry_listener(
+            listener_config,
             move |event| {
-                match event.event_type.as_str() {
-                    "ADDED" => {
+                match event.event_type {
+                    hazelcast_client::listener::EntryEventType::Added => {
                         add_counter.fetch_add(1, Ordering::SeqCst);
                         println!(
-                            "[ADDED] {} -> {}",
+                            "[ADDED] {} -> {:?}",
                             event.key,
-                            event.value.as_deref().unwrap_or("N/A")
+                            event.new_value,
                         );
                     }
-                    "UPDATED" => {
+                    hazelcast_client::listener::EntryEventType::Updated => {
                         update_counter.fetch_add(1, Ordering::SeqCst);
                         println!(
-                            "[UPDATED] {} -> {} (was: {})",
+                            "[UPDATED] {} -> {:?} (was: {:?})",
                             event.key,
-                            event.value.as_deref().unwrap_or("N/A"),
-                            event.old_value.as_deref().unwrap_or("N/A")
+                            event.new_value,
+                            event.old_value,
                         );
                     }
-                    "REMOVED" => {
+                    hazelcast_client::listener::EntryEventType::Removed => {
                         remove_counter.fetch_add(1, Ordering::SeqCst);
                         println!("[REMOVED] {}", event.key);
                     }
-                    "EVICTED" => {
+                    hazelcast_client::listener::EntryEventType::Evicted => {
                         println!("[EVICTED] {}", event.key);
                     }
-                    _ => {}
+                    hazelcast_client::listener::EntryEventType::Expired => {
+                        println!("[EXPIRED] {}", event.key);
+                    }
                 }
             },
-            true, // include_value
         )
         .await?;
 
-    println!("Listener registered: {}", listener_id);
+    println!("Listener registered: {:?}", listener_reg);
 
     // Perform operations that trigger events
     println!("\n--- Performing map operations ---\n");
@@ -85,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Removed: {}", remove_count.load(Ordering::SeqCst));
 
     // Clean up
-    map.remove_entry_listener(listener_id).await?;
+    map.remove_entry_listener(&listener_reg).await?;
     map.clear().await?;
     client.shutdown().await?;
 

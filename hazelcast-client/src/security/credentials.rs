@@ -613,6 +613,10 @@ mod tests {
     use super::*;
     use std::env;
     use std::io::Write;
+    use std::sync::Mutex;
+
+    /// Mutex to serialize tests that manipulate environment variables.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_credential_error_display() {
@@ -692,15 +696,17 @@ mod tests {
 
     struct EnvGuard {
         vars: Vec<(String, Option<String>)>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl EnvGuard {
         fn new(vars: &[&str]) -> Self {
+            let lock = ENV_MUTEX.lock().unwrap();
             let vars = vars
                 .iter()
                 .map(|&v| (v.to_string(), env::var(v).ok()))
                 .collect();
-            Self { vars }
+            Self { vars, _lock: lock }
         }
     }
 

@@ -112,7 +112,7 @@ mod tests {
     }
 
     impl Serializable for TestInterceptor {
-        fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+        fn serialize<W: hazelcast_core::serialization::DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
             output.write_string(&self.prefix)?;
             Ok(())
         }

@@ -4,6 +4,7 @@
 //! Requires a Hazelcast cluster running at 127.0.0.1:5701
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use hazelcast_client::transaction::TransactionOptions;
@@ -147,7 +148,7 @@ async fn test_transactional_map_operations() {
         }
     };
 
-    let map_name = format!("txn-map-{}", uuid::Uuid::new_v4());
+    let map_name = format!("txn-map-{}", std::process::id());
 
     let options = TransactionOptions::new();
     let mut txn = client.new_transaction_context(options);
@@ -160,7 +161,7 @@ async fn test_transactional_map_operations() {
     }
 
     // Get transactional map
-    let txn_map = txn.get_map::<String, String>(&map_name);
+    let txn_map = txn.get_map::<String, String>(&map_name).unwrap();
 
     // Perform operations within transaction
     let key = "txn-key".to_string();
@@ -210,7 +211,7 @@ async fn test_transaction_isolation() {
         }
     };
 
-    let map_name = format!("txn-isolation-{}", uuid::Uuid::new_v4());
+    let map_name = format!("txn-isolation-{}", std::process::id());
     let map = client.get_map::<String, i32>(&map_name);
 
     // Setup initial value
@@ -226,7 +227,7 @@ async fn test_transaction_isolation() {
         return;
     }
 
-    let txn_map = txn.get_map::<String, i32>(&map_name);
+    let txn_map = txn.get_map::<String, i32>(&map_name).unwrap();
 
     // Modify in transaction
     let _ = txn_map.put(key.clone(), 200).await;
@@ -304,41 +305,26 @@ async fn test_multiple_concurrent_transactions() {
         }
     };
 
-    let map_name = format!("txn-concurrent-{}", uuid::Uuid::new_v4());
+    let map_name = format!("txn-concurrent-{}", std::process::id());
 
-    // Start multiple transactions
-    let mut handles = vec![];
+    // Start multiple transactions sequentially (HazelcastClient is not Clone)
+    for i in 0..3i32 {
+        let mut txn = client.new_transaction_context(TransactionOptions::new());
 
-    for i in 0..3 {
-        let client_clone = client.clone();
-        let map_name_clone = map_name.clone();
+        if txn.begin().await.is_err() {
+            eprintln!("Transaction {} failed to begin", i);
+            continue;
+        }
 
-        let handle = tokio::spawn(async move {
-            let mut txn = client_clone.new_transaction_context(TransactionOptions::new());
-
-            if txn.begin().await.is_err() {
-                return format!("Transaction {} failed to begin", i);
-            }
-
-            let txn_map = txn.get_map::<String, i32>(&map_name_clone);
+        if let Ok(txn_map) = txn.get_map::<String, i32>(&map_name) {
             let _ = txn_map.put(format!("key-{}", i), i).await;
 
-            if txn.commit().await.is_err() {
-                return format!("Transaction {} failed to commit", i);
-            }
-
-            format!("Transaction {} completed", i)
-        });
-
-        handles.push(handle);
-    }
-
-    // Wait for all transactions
-    for handle in handles {
-        match handle.await {
-            Ok(result) => println!("{}", result),
-            Err(e) => eprintln!("Task panicked: {}", e),
+        if txn.commit().await.is_err() {
+            eprintln!("Transaction {} failed to commit", i);
+        } else {
+            println!("Transaction {} completed", i);
         }
+        } // if let Ok(txn_map)
     }
 
     // Verify results

@@ -466,6 +466,16 @@ impl Schema {
             | (FieldKind::NullableFloat64, FieldKind::Float64) => true,
             (FieldKind::Boolean, FieldKind::NullableBoolean)
             | (FieldKind::NullableBoolean, FieldKind::Boolean) => true,
+            (FieldKind::Decimal, FieldKind::NullableDecimal)
+            | (FieldKind::NullableDecimal, FieldKind::Decimal) => true,
+            (FieldKind::Time, FieldKind::NullableTime)
+            | (FieldKind::NullableTime, FieldKind::Time) => true,
+            (FieldKind::Date, FieldKind::NullableDate)
+            | (FieldKind::NullableDate, FieldKind::Date) => true,
+            (FieldKind::Timestamp, FieldKind::NullableTimestamp)
+            | (FieldKind::NullableTimestamp, FieldKind::Timestamp) => true,
+            (FieldKind::TimestampWithTimezone, FieldKind::NullableTimestampWithTimezone)
+            | (FieldKind::NullableTimestampWithTimezone, FieldKind::TimestampWithTimezone) => true,
             _ => false,
         }
     }

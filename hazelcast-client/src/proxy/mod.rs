@@ -24,18 +24,20 @@ mod replicated_map;
 mod ringbuffer;
 mod semaphore;
 mod set;
+mod pipeline;
 mod topic;
+mod vector_collection;
 
 pub use atomic_long::AtomicLong;
 pub use atomic_reference::AtomicReference;
-pub use cache::ICache;
+pub use cache::{ExpiryPolicy, ICache};
 pub use cardinality_estimator::CardinalityEstimator;
 pub use cp_map::CPMap;
 pub use collection_stats::{LocalListStats, LocalQueueStats, LocalSetStats};
 pub use local_stats::{LatencyStats, LatencyTracker};
 pub use countdown_latch::CountDownLatch;
 pub use distributed_iterator::{DistributedIterator, IterationType, IteratorConfig};
-pub use entry_processor::{EntryProcessor, EntryProcessorResult};
+pub use entry_processor::{EntryProcessor, EntryProcessorResult, Offloadable, ReadOnly};
 pub use fenced_lock::FencedLock;
 pub use interceptor::MapInterceptor;
 pub use flake_id::{FlakeIdGenerator, IdBatch};
@@ -50,4 +52,9 @@ pub use replicated_map::ReplicatedMap;
 pub use ringbuffer::{FalseFilter, OverflowPolicy, Ringbuffer, RingbufferFilter, TrueFilter};
 pub use semaphore::Semaphore;
 pub use set::ISet;
+pub use pipeline::Pipelining;
 pub use topic::{ITopic, LocalTopicStats, TopicMessage};
+pub use vector_collection::{
+    VectorCollection, VectorCollectionConfig, VectorDocument, VectorIndexConfig, VectorMetric,
+    VectorSearchResult, VectorValue,
+};

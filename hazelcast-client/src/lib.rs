@@ -119,6 +119,8 @@
 //! | `gcp` | GCP Compute Engine discovery |
 //! | `kubernetes` | Kubernetes pod discovery |
 //! | `cloud` | Hazelcast Cloud discovery |
+//! | `eureka` | Netflix Eureka service discovery |
+//! | `kerberos` | Kerberos/GSSAPI authentication |
 //! | `kafka` | Kafka connectors for Jet pipelines |
 //! | `websocket` | WebSocket transport |
 
@@ -139,11 +141,14 @@ pub mod metrics;
 pub mod proxy;
 pub mod query;
 pub mod security;
+pub mod runtime;
 pub mod sql;
+#[cfg(feature = "tower")]
+pub mod tower_service;
 pub mod transaction;
 
 pub use cache::{EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder, QueryCache, QueryCacheConfig, QueryCacheConfigBuilder, QueryCacheStats};
-pub use client::HazelcastClient;
+pub use client::{ConnectionListener, HazelcastClient};
 pub use executor::{
     Callable, CallableTask, ExecutionCallback, ExecutionTarget, ExecutorService,
     FnExecutionCallback, Runnable, RunnableTask,
@@ -152,9 +157,9 @@ pub use config::{
     ClientConfig, ClientConfigBuilder, ConfigError, DiagnosticsConfig, DiagnosticsConfigBuilder,
     NetworkConfig, NetworkConfigBuilder, PermissionAction, Permissions, QuorumConfig,
     QuorumConfigBuilder, QuorumFunction, QuorumType, RetryConfig, RetryConfigBuilder,
-    SecurityConfig, SecurityConfigBuilder, WanReplicationConfig, WanReplicationConfigBuilder,
-    WanReplicationRef, WanReplicationRefBuilder, WanTargetClusterConfig,
-    WanTargetClusterConfigBuilder,
+    RoutingMode, SecurityConfig, SecurityConfigBuilder, WanReplicationConfig,
+    WanReplicationConfigBuilder, WanReplicationRef, WanReplicationRefBuilder,
+    WanTargetClusterConfig, WanTargetClusterConfigBuilder,
 };
 pub use diagnostics::{OperationTracker, SlowOperationDetector};
 #[cfg(feature = "metrics")]
@@ -163,7 +168,9 @@ pub use metrics::{
     PrometheusExporterBuilder,
 };
 pub use connection::{
-    ClusterDiscovery, Connection, ConnectionEvent, ConnectionId, ConnectionManager,
+    AutoDetectionDiscovery, ClusterDiscovery, Connection, ConnectionEvent, ConnectionId,
+    ConnectionManager, DataConnectionConfig, DataConnectionService, DetectedEnvironment,
+    MulticastDiscovery, MulticastDiscoveryConfig, SocketInterceptor, SocketOptions,
     StaticAddressDiscovery,
 };
 pub use hazelcast_core as core;
@@ -172,7 +179,11 @@ pub use listener::{
     FnItemListener, ItemEvent, ItemEventType, ItemListener, ItemListenerConfig, LifecycleEvent,
     ListenerId, ListenerRegistration, ListenerStats,
 };
-pub use proxy::{AtomicReference, EntryView, IList, IMap, IQueue, ISet, ITopic, MultiMap, TopicMessage};
+pub use proxy::{
+    AtomicReference, EntryView, ExpiryPolicy, IList, IMap, IQueue, ISet, ITopic, MultiMap,
+    Offloadable, Pipelining, ReadOnly, TopicMessage, VectorCollection, VectorCollectionConfig,
+    VectorDocument, VectorIndexConfig, VectorMetric, VectorSearchResult, VectorValue,
+};
 pub use query::{
     AndPredicate, BetweenPredicate, EqualPredicate, FalsePredicate, GreaterThanPredicate,
     InPredicate, LessThanPredicate, LikePredicate, MultiAttributeProjection, NotEqualPredicate,
@@ -201,9 +212,10 @@ pub use jet::{
     KafkaSourceConfigBuilder,
 };
 pub use cluster::{
-    BoxedMigrationListener, BoxedPartitionLostListener, ClientInfo, ClusterService,
+    BoxedMigrationListener, BoxedPartitionLostListener, ClientInfo, ClusterService, ClusterView,
     FnMigrationListener, FnPartitionLostListener, MigrationEvent, MigrationListener,
     MigrationState, Partition, PartitionLostEvent, PartitionLostListener, PartitionService,
+    SplitBrainProtectionService,
 };
 pub use deployment::{
     ClassDefinition, ClassDefinitionBuilder, ClassProviderMode, ResourceEntry,
@@ -226,3 +238,14 @@ pub use security::GcpCredentialProvider;
 
 #[cfg(feature = "kubernetes")]
 pub use security::KubernetesCredentialProvider;
+
+#[cfg(feature = "kerberos")]
+pub use security::{KerberosAuthenticator, KerberosCredentials};
+
+#[cfg(feature = "eureka")]
+pub use connection::{EurekaDiscovery, EurekaDiscoveryConfig};
+
+pub use runtime::{Runtime, TokioRuntime};
+
+#[cfg(feature = "tower")]
+pub use tower_service::HazelcastService;

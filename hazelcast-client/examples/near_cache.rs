@@ -63,15 +63,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Show near cache statistics
-    if let Some(stats) = map.get_near_cache_stats() {
+    if let Some(stats) = map.near_cache_stats() {
         println!("\n--- Near Cache Statistics ---");
-        println!("  Hits:        {}", stats.hits);
-        println!("  Misses:      {}", stats.misses);
+        println!("  Hits:        {}", stats.hits());
+        println!("  Misses:      {}", stats.misses());
         println!("  Hit Ratio:   {:.1}%", stats.hit_ratio() * 100.0);
-        println!("  Owned:       {} entries", stats.owned_entry_count);
-        println!("  Memory:      {} bytes", stats.owned_entry_memory);
-        println!("  Evictions:   {}", stats.evictions);
-        println!("  Expirations: {}", stats.expirations);
+        println!("  Evictions:   {}", stats.evictions());
+        println!("  Expirations: {}", stats.expirations());
     }
 
     // Demonstrate invalidation

@@ -19,7 +19,7 @@ async fn test_list_add_and_get() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     let added = list.add("item1".to_string()).await.unwrap();
     assert!(added);
@@ -41,7 +41,7 @@ async fn test_list_preserves_order() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-order");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     list.add("first".to_string()).await.unwrap();
     list.add("second".to_string()).await.unwrap();
@@ -65,7 +65,7 @@ async fn test_list_add_at_index() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-add-at");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     list.add("first".to_string()).await.unwrap();
     list.add("third".to_string()).await.unwrap();
@@ -90,7 +90,7 @@ async fn test_list_remove_at() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-remove-at");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     list.add("first".to_string()).await.unwrap();
     list.add("second".to_string()).await.unwrap();
@@ -117,7 +117,7 @@ async fn test_list_set() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-set");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     list.add("old-value".to_string()).await.unwrap();
 
@@ -140,7 +140,7 @@ async fn test_list_size() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-size");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     assert_eq!(list.size().await.unwrap(), 0);
 
@@ -167,7 +167,7 @@ async fn test_list_contains() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-contains");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     assert!(!list.contains(&"item".to_string()).await.unwrap());
 
@@ -188,7 +188,7 @@ async fn test_list_is_empty() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-empty");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     assert!(list.is_empty().await.unwrap());
 
@@ -210,7 +210,7 @@ async fn test_list_clear() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-clear");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     for i in 0..10 {
         list.add(format!("item-{}", i)).await.unwrap();
@@ -232,7 +232,7 @@ async fn test_list_with_integers() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-int");
-    let list = client.get_list::<i32>(&list_name).await.unwrap();
+    let list = client.get_list::<i32>(&list_name);
 
     list.add(10).await.unwrap();
     list.add(20).await.unwrap();
@@ -256,7 +256,7 @@ async fn test_list_allows_duplicates() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-dup");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     list.add("same".to_string()).await.unwrap();
     list.add("same".to_string()).await.unwrap();
@@ -282,7 +282,7 @@ async fn test_list_bulk_operations() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-bulk");
-    let list = client.get_list::<i32>(&list_name).await.unwrap();
+    let list = client.get_list::<i32>(&list_name);
 
     for i in 0..100 {
         list.add(i).await.unwrap();
@@ -320,9 +320,7 @@ async fn test_list_concurrent_operations() {
         
         let handle = tokio::spawn(async move {
             let list = client_clone
-                .get_list::<i32>(&list_name_clone)
-                .await
-                .unwrap();
+                .get_list::<i32>(&list_name_clone);
             
             for j in 0..10 {
                 list.add(i * 10 + j).await.unwrap();
@@ -336,7 +334,7 @@ async fn test_list_concurrent_operations() {
         handle.await.unwrap();
     }
 
-    let list = client.get_list::<i32>(&list_name).await.unwrap();
+    let list = client.get_list::<i32>(&list_name);
     assert_eq!(list.size().await.unwrap(), 100);
 
     list.clear().await.unwrap();
@@ -353,7 +351,7 @@ async fn test_list_get_out_of_bounds() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-oob");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
 
     list.add("only-item".to_string()).await.unwrap();
 
@@ -374,7 +372,7 @@ async fn test_list_clone_shares_state() {
         .await
         .expect("failed to connect");
     let list_name = unique_name("test-list-clone");
-    let list1 = client.get_list::<String>(&list_name).await.unwrap();
+    let list1 = client.get_list::<String>(&list_name);
     let list2 = list1.clone();
 
     list1.add("item1".to_string()).await.unwrap();

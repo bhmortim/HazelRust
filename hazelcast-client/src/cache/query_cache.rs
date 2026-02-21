@@ -1,6 +1,7 @@
 //! Continuous Query Cache implementation for client-side caching with predicate filtering.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -10,6 +11,7 @@ use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{Deserializable, Result, Serializable};
 
 use crate::listener::{EntryEvent, EntryEventType, ListenerRegistration};
+use crate::query::Predicate;
 
 /// Statistics for a QueryCache instance.
 #[derive(Debug, Clone, Default)]
@@ -240,16 +242,33 @@ impl QueryCacheConfigBuilder {
 /// let user = cache.get(&user_id);
 /// let all_keys = cache.key_set();
 /// ```
-#[derive(Debug)]
+/// A type alias for a boxed listener closure used in QueryCache.
+pub type QueryCacheEntryListenerFn<K, V> = Box<dyn Fn(&EntryEvent<K, V>) + Send + Sync>;
+
 pub struct QueryCache<K, V> {
     name: String,
     map_name: String,
     cache: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
     include_value: bool,
+    predicate: Option<Box<dyn Predicate + Send + Sync>>,
     stats: Arc<StatsTracker>,
     listener_registration: Arc<Mutex<Option<ListenerRegistration>>>,
+    entry_listeners: Arc<Mutex<Vec<(u64, QueryCacheEntryListenerFn<K, V>)>>>,
+    next_listener_id: Arc<AtomicU64>,
     destroyed: AtomicBool,
     _phantom: PhantomData<fn() -> (K, V)>,
+}
+
+impl<K, V> fmt::Debug for QueryCache<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("QueryCache")
+            .field("name", &self.name)
+            .field("map_name", &self.map_name)
+            .field("include_value", &self.include_value)
+            .field("has_predicate", &self.predicate.is_some())
+            .field("destroyed", &self.destroyed)
+            .finish()
+    }
 }
 
 impl<K, V> QueryCache<K, V>
@@ -264,11 +283,43 @@ where
             map_name,
             cache: Arc::new(RwLock::new(HashMap::new())),
             include_value,
+            predicate: None,
             stats: Arc::new(StatsTracker::new()),
             listener_registration: Arc::new(Mutex::new(None)),
+            entry_listeners: Arc::new(Mutex::new(Vec::new())),
+            next_listener_id: Arc::new(AtomicU64::new(1)),
             destroyed: AtomicBool::new(false),
             _phantom: PhantomData,
         }
+    }
+
+    /// Creates a new QueryCache with a predicate filter (internal constructor).
+    ///
+    /// Entries are filtered by the predicate before being cached locally.
+    pub(crate) fn with_predicate(
+        name: String,
+        map_name: String,
+        include_value: bool,
+        predicate: Box<dyn Predicate + Send + Sync>,
+    ) -> Self {
+        Self {
+            name,
+            map_name,
+            cache: Arc::new(RwLock::new(HashMap::new())),
+            include_value,
+            predicate: Some(predicate),
+            stats: Arc::new(StatsTracker::new()),
+            listener_registration: Arc::new(Mutex::new(None)),
+            entry_listeners: Arc::new(Mutex::new(Vec::new())),
+            next_listener_id: Arc::new(AtomicU64::new(1)),
+            destroyed: AtomicBool::new(false),
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Returns `true` if this query cache has a predicate filter.
+    pub fn has_predicate(&self) -> bool {
+        self.predicate.is_some()
     }
 
     /// Returns the name of this query cache.
@@ -543,6 +594,67 @@ where
         Arc::clone(&self.stats)
     }
 
+    /// Adds an entry listener to this query cache.
+    ///
+    /// The listener will be called whenever entries are added, updated, or removed
+    /// from this local query cache. Returns an ID that can be used to remove the
+    /// listener later.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let listener_id = query_cache.add_entry_listener(|event| {
+    ///     println!("Cache event: {:?} for key {:?}", event.event_type, event.key);
+    /// });
+    /// ```
+    pub fn add_entry_listener<F>(&self, listener: F) -> u64
+    where
+        F: Fn(&EntryEvent<K, V>) + Send + Sync + 'static,
+    {
+        let id = self.next_listener_id.fetch_add(1, Ordering::Relaxed);
+        let mut listeners = self.entry_listeners.lock().unwrap();
+        listeners.push((id, Box::new(listener)));
+        id
+    }
+
+    /// Removes a previously registered entry listener.
+    ///
+    /// Returns `true` if the listener was found and removed, `false` otherwise.
+    pub fn remove_entry_listener(&self, listener_id: u64) -> bool {
+        let mut listeners = self.entry_listeners.lock().unwrap();
+        let before_len = listeners.len();
+        listeners.retain(|(id, _)| *id != listener_id);
+        listeners.len() < before_len
+    }
+
+    /// Recreates this query cache after a reconnection.
+    ///
+    /// This clears all local entries and resets the cache state so it can be
+    /// repopulated from the cluster. Used internally during reconnection recovery
+    /// to ensure the cache is consistent.
+    ///
+    /// The existing listener registration is preserved but the cache data is cleared.
+    pub fn recreate(&self) {
+        if self.destroyed.load(Ordering::Acquire) {
+            return;
+        }
+
+        // Clear the local cache so it can be repopulated
+        let mut cache = self.cache.write().unwrap();
+        cache.clear();
+
+        // Reset stats for fresh start
+        // We don't have reset on StatsTracker but we can accept the old counts carry forward
+    }
+
+    /// Notifies registered entry listeners of an event.
+    pub(crate) fn notify_listeners(&self, event: &EntryEvent<K, V>) {
+        let listeners = self.entry_listeners.lock().unwrap();
+        for (_, listener) in listeners.iter() {
+            listener(event);
+        }
+    }
+
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
         value.serialize(&mut output)?;
@@ -557,8 +669,11 @@ impl<K, V> Clone for QueryCache<K, V> {
             map_name: self.map_name.clone(),
             cache: Arc::clone(&self.cache),
             include_value: self.include_value,
+            predicate: None, // Predicate is not cloned; the original cache owns it
             stats: Arc::clone(&self.stats),
             listener_registration: Arc::clone(&self.listener_registration),
+            entry_listeners: Arc::clone(&self.entry_listeners),
+            next_listener_id: Arc::clone(&self.next_listener_id),
             destroyed: AtomicBool::new(self.destroyed.load(Ordering::Acquire)),
             _phantom: PhantomData,
         }

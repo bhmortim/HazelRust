@@ -52,16 +52,19 @@ pub mod error;
 pub mod protocol;
 pub mod serialization;
 
-pub use error::{HazelcastError, Result, ServerErrorCode};
+pub use error::{ErrorCategory, HazelcastError, Result, ServerErrorCode};
 pub use protocol::{compute_partition_hash, ClientMessage, ClientMessageCodec, Frame};
 pub use serialization::{
     ClassDefinition, Compact, CompactReader, CompactSerializer, CompactWriter, DataInput,
     DataOutput, DefaultCompactReader, DefaultCompactWriter, DefaultPortableReader,
     DefaultPortableWriter, Deserializable, FieldDefinition, FieldDescriptor, FieldKind, FieldType,
-    GenericRecord, GenericRecordBuilder, ObjectDataInput, ObjectDataOutput, Portable,
-    PortableFactory, PortableReader, PortableSerializer, PortableWriter, Schema, Serializable,
-    COMPACT_TYPE_ID, PORTABLE_TYPE_ID,
+    GenericRecord, GenericRecordBuilder, GlobalSerializer, ObjectDataInput, ObjectDataOutput,
+    PartitionAware, Portable, PortableFactory, PortableReader, PortableSerializer, PortableWriter,
+    Schema, Serializable, SerializationConfig, COMPACT_TYPE_ID, PORTABLE_TYPE_ID,
 };
 
 #[cfg(feature = "serde")]
 pub use serialization::Serde;
+
+#[cfg(feature = "derive")]
+pub use hazelcast_derive::{HazelcastCompact, HazelcastPortable, IdentifiedDataSerializable};

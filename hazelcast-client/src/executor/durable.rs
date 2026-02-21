@@ -488,11 +488,14 @@ mod tests {
 
     #[test]
     fn test_select_partition_in_range() {
+        let config = crate::config::ClientConfigBuilder::new()
+            .add_address("127.0.0.1:5701".parse().unwrap())
+            .build()
+            .unwrap();
+        let cm = crate::connection::ConnectionManager::from_config(config);
         let service = DurableExecutorService {
             name: "test".to_string(),
-            connection_manager: Arc::new(unsafe {
-                std::mem::zeroed()
-            }),
+            connection_manager: Arc::new(cm),
         };
         for _ in 0..100 {
             let partition = service.select_partition();

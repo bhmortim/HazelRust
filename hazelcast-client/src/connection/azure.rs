@@ -8,7 +8,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use azure_core::auth::TokenCredential;
+use azure_core::credentials::TokenCredential;
 use azure_identity::DefaultAzureCredential;
 use hazelcast_core::{HazelcastError, Result};
 use reqwest::Client;
@@ -152,19 +152,17 @@ struct DefaultTokenProvider {
 }
 
 impl DefaultTokenProvider {
-    fn new() -> Self {
-        Self {
-            credential: Arc::new(DefaultAzureCredential::default()),
-        }
+    fn new() -> Result<Self> {
+        let credential = DefaultAzureCredential::new()
+            .map_err(|e| HazelcastError::Connection(format!("Failed to create Azure credential: {}", e)))?;
+        Ok(Self { credential })
     }
 }
 
 #[async_trait]
 impl AzureTokenProvider for DefaultTokenProvider {
     async fn get_token(&self) -> Result<String> {
-        let token_response = self
-            .credential
-            .get_token(&[AZURE_MANAGEMENT_SCOPE])
+        let token_response = TokenCredential::get_token(&*self.credential, &[AZURE_MANAGEMENT_SCOPE])
             .await
             .map_err(|e| HazelcastError::Connection(format!("Failed to get Azure token: {}", e)))?;
 
@@ -193,7 +191,7 @@ impl AzureDiscovery {
         Ok(Self {
             config,
             http_client: Box::new(ReqwestAzureClient::new()?),
-            token_provider: Box::new(DefaultTokenProvider::new()),
+            token_provider: Box::new(DefaultTokenProvider::new()?),
         })
     }
 
@@ -212,7 +210,7 @@ impl AzureDiscovery {
 
     async fn discover_from_vmss(&self) -> Result<Vec<SocketAddr>> {
         let scale_set_name = self.config.scale_set_name.as_ref().ok_or_else(|| {
-            HazelcastError::Config("scale_set_name required for VMSS discovery".into())
+            HazelcastError::Configuration("scale_set_name required for VMSS discovery".into())
         })?;
 
         let token = self.token_provider.get_token().await?;

@@ -17,6 +17,7 @@ const NOT_NULL_MARKER: i8 = 1;
 pub struct DefaultPortableWriter {
     class_def: ClassDefinition,
     fields: HashMap<String, Vec<u8>>,
+    lenient: bool,
 }
 
 impl DefaultPortableWriter {
@@ -25,6 +26,16 @@ impl DefaultPortableWriter {
         Self {
             class_def,
             fields: HashMap::new(),
+            lenient: false,
+        }
+    }
+
+    /// Creates a new writer that accepts any field without class definition validation.
+    pub(crate) fn new_lenient(class_def: ClassDefinition) -> Self {
+        Self {
+            class_def,
+            fields: HashMap::new(),
+            lenient: true,
         }
     }
 
@@ -34,17 +45,20 @@ impl DefaultPortableWriter {
     }
 
     fn write_field(&mut self, name: &str, expected_type: FieldType, data: Vec<u8>) -> Result<()> {
-        let field = self.class_def.field(name).ok_or_else(|| {
-            HazelcastError::Serialization(format!("Unknown field: {}", name))
-        })?;
-
-        if field.field_type() != expected_type {
-            return Err(HazelcastError::Serialization(format!(
-                "Field '{}' type mismatch: expected {:?}, got {:?}",
-                name,
-                field.field_type(),
-                expected_type
-            )));
+        if let Some(field) = self.class_def.field(name) {
+            if field.field_type() != expected_type {
+                return Err(HazelcastError::Serialization(format!(
+                    "Field '{}' type mismatch: expected {:?}, got {:?}",
+                    name,
+                    field.field_type(),
+                    expected_type
+                )));
+            }
+        } else if self.lenient {
+            let index = self.class_def.field_count() as i32;
+            self.class_def.add_field(FieldDefinition::new(name, expected_type, index));
+        } else {
+            return Err(HazelcastError::Serialization(format!("Unknown field: {}", name)));
         }
 
         self.fields.insert(name.to_string(), data);
@@ -147,7 +161,7 @@ impl PortableWriter for DefaultPortableWriter {
                 out.write_int(p.class_id())?;
 
                 let mut nested_writer =
-                    DefaultPortableWriter::new(ClassDefinition::new(p.factory_id(), p.class_id(), 0));
+                    DefaultPortableWriter::new_lenient(ClassDefinition::new(p.factory_id(), p.class_id(), 0));
                 p.write_portable(&mut nested_writer)?;
                 let nested_bytes = nested_writer.to_bytes();
                 out.write_int(nested_bytes.len() as i32)?;
@@ -323,7 +337,7 @@ impl PortableWriter for DefaultPortableWriter {
                     out.write_int(p.factory_id())?;
                     out.write_int(p.class_id())?;
 
-                    let mut nested_writer = DefaultPortableWriter::new(ClassDefinition::new(
+                    let mut nested_writer = DefaultPortableWriter::new_lenient(ClassDefinition::new(
                         p.factory_id(),
                         p.class_id(),
                         0,

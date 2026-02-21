@@ -316,11 +316,33 @@ pub trait Authenticator: Send + Sync {
     /// Standard types:
     /// - "" (empty) for simple username/password
     /// - "token" for token-based auth
+    /// - "kerberos" for Kerberos/GSSAPI auth
     fn auth_type(&self) -> &str;
 
     /// Called after receiving an authentication response to perform
     /// any post-authentication processing.
     async fn on_authenticated(&self, response: &AuthResponse) -> Result<(), AuthError>;
+
+    /// Returns whether this authenticator supports challenge-response authentication.
+    ///
+    /// Authenticators that support multi-step authentication flows (e.g., Kerberos)
+    /// should override this to return `true` and implement [`handle_challenge`](Self::handle_challenge).
+    fn supports_challenge_response(&self) -> bool {
+        false
+    }
+
+    /// Handles a challenge from the server during a multi-step authentication flow.
+    ///
+    /// This is called when the server sends a challenge token that the client
+    /// must respond to. The default implementation returns an `UnsupportedOperation` error.
+    ///
+    /// Authenticators that support challenge-response (e.g., Kerberos, NTLM) should
+    /// override both this method and [`supports_challenge_response`](Self::supports_challenge_response).
+    async fn handle_challenge(&self, _challenge: &[u8]) -> Result<Vec<u8>, AuthError> {
+        Err(AuthError::ProtocolError(
+            "challenge-response authentication is not supported by this authenticator".to_string(),
+        ))
+    }
 }
 
 /// Default authenticator implementation supporting username/password and token auth.
@@ -373,18 +395,18 @@ impl Authenticator for DefaultAuthenticator {
 }
 
 /// Writes an i32 in big-endian format.
-fn write_i32(output: &mut Vec<u8>, value: i32) {
+pub(crate) fn write_i32(output: &mut Vec<u8>, value: i32) {
     output.extend_from_slice(&value.to_be_bytes());
 }
 
 /// Writes a string with length prefix.
-fn write_string(output: &mut Vec<u8>, s: &str) {
+pub(crate) fn write_string(output: &mut Vec<u8>, s: &str) {
     write_i32(output, s.len() as i32);
     output.extend_from_slice(s.as_bytes());
 }
 
 /// Writes raw bytes with length prefix.
-fn write_bytes(output: &mut Vec<u8>, bytes: &[u8]) {
+pub(crate) fn write_bytes(output: &mut Vec<u8>, bytes: &[u8]) {
     write_i32(output, bytes.len() as i32);
     output.extend_from_slice(bytes);
 }
@@ -992,5 +1014,43 @@ mod tests {
         let auth = TokenAuthenticator::default();
         assert!(auth.validate_jwt);
         assert!(auth.reject_expired);
+    }
+
+    #[test]
+    fn test_default_authenticator_does_not_support_challenge_response() {
+        let auth = DefaultAuthenticator::new();
+        assert!(!auth.supports_challenge_response());
+    }
+
+    #[tokio::test]
+    async fn test_default_authenticator_handle_challenge_returns_error() {
+        let auth = DefaultAuthenticator::new();
+        let result = auth.handle_challenge(b"challenge-data").await;
+        assert!(result.is_err());
+        match result {
+            Err(AuthError::ProtocolError(msg)) => {
+                assert!(msg.contains("not supported"));
+            }
+            _ => panic!("expected ProtocolError"),
+        }
+    }
+
+    #[test]
+    fn test_token_authenticator_does_not_support_challenge_response() {
+        let auth = TokenAuthenticator::new();
+        assert!(!auth.supports_challenge_response());
+    }
+
+    #[tokio::test]
+    async fn test_token_authenticator_handle_challenge_returns_error() {
+        let auth = TokenAuthenticator::new();
+        let result = auth.handle_challenge(b"challenge").await;
+        assert!(result.is_err());
+        match result {
+            Err(AuthError::ProtocolError(msg)) => {
+                assert!(msg.contains("not supported"));
+            }
+            _ => panic!("expected ProtocolError"),
+        }
     }
 }

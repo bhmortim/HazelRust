@@ -20,7 +20,7 @@ async fn test_queue_offer_and_poll() {
         .await
         .expect("failed to connect");
     let queue_name = unique_name("test-queue");
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<String>(&queue_name);
 
     let offered = queue.offer("item1".to_string()).await.unwrap();
     assert!(offered);
@@ -43,7 +43,7 @@ async fn test_queue_fifo_order() {
         .await
         .expect("failed to connect");
     let queue_name = unique_name("test-queue-fifo");
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<String>(&queue_name);
 
     queue.offer("first".to_string()).await.unwrap();
     queue.offer("second".to_string()).await.unwrap();
@@ -66,7 +66,7 @@ async fn test_queue_peek() {
         .await
         .expect("failed to connect");
     let queue_name = unique_name("test-queue-peek");
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<String>(&queue_name);
 
     let empty_peek = queue.peek().await.unwrap();
     assert!(empty_peek.is_none());
@@ -97,7 +97,7 @@ async fn test_queue_size() {
         .await
         .expect("failed to connect");
     let queue_name = unique_name("test-queue-size");
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<String>(&queue_name);
 
     assert_eq!(queue.size().await.unwrap(), 0);
 
@@ -125,7 +125,7 @@ async fn test_queue_is_empty() {
         .await
         .expect("failed to connect");
     let queue_name = unique_name("test-queue-empty");
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<String>(&queue_name);
 
     assert!(queue.is_empty().await.unwrap());
 
@@ -147,7 +147,7 @@ async fn test_queue_with_integers() {
         .await
         .expect("failed to connect");
     let queue_name = unique_name("test-queue-int");
-    let queue = client.get_queue::<i64>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<i64>(&queue_name);
 
     queue.offer(42i64).await.unwrap();
     queue.offer(100i64).await.unwrap();
@@ -169,7 +169,7 @@ async fn test_queue_poll_timeout() {
         .await
         .expect("failed to connect");
     let queue_name = unique_name("test-queue-timeout");
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<String>(&queue_name);
 
     let start = std::time::Instant::now();
     let result = queue.poll_timeout(Duration::from_millis(500)).await.unwrap();
@@ -191,7 +191,7 @@ async fn test_queue_bulk_operations() {
         .await
         .expect("failed to connect");
     let queue_name = unique_name("test-queue-bulk");
-    let queue = client.get_queue::<i32>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<i32>(&queue_name);
 
     for i in 0..100 {
         queue.offer(i).await.unwrap();
@@ -229,9 +229,7 @@ async fn test_queue_concurrent_producers() {
         
         let handle = tokio::spawn(async move {
             let queue = client_clone
-                .get_queue::<String>(&queue_name_clone)
-                .await
-                .unwrap();
+                .get_queue::<String>(&queue_name_clone);
             
             for j in 0..20 {
                 queue.offer(format!("producer-{}-item-{}", i, j)).await.unwrap();
@@ -245,7 +243,7 @@ async fn test_queue_concurrent_producers() {
         handle.await.unwrap();
     }
 
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<String>(&queue_name);
     assert_eq!(queue.size().await.unwrap(), 100);
 
     while queue.poll().await.unwrap().is_some() {}
@@ -262,7 +260,7 @@ async fn test_queue_special_string_values() {
         .await
         .expect("failed to connect");
     let queue_name = unique_name("test-queue-special");
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<String>(&queue_name);
 
     let special_values = vec![
         String::new(),
@@ -294,7 +292,7 @@ async fn test_queue_clone_shares_state() {
         .await
         .expect("failed to connect");
     let queue_name = unique_name("test-queue-clone");
-    let queue1 = client.get_queue::<String>(&queue_name).await.unwrap();
+    let queue1 = client.get_queue::<String>(&queue_name);
     let queue2 = queue1.clone();
 
     queue1.offer("item1".to_string()).await.unwrap();

@@ -18,9 +18,9 @@ async fn test_client_reconnects_after_brief_disconnect() {
 
     let config = ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(common::DEFAULT_CLUSTER_ADDRESS)
+        .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .retry(|r| {
-            r.max_attempts(10)
+            r.max_retries(10)
                 .initial_backoff(Duration::from_millis(100))
                 .max_backoff(Duration::from_secs(1))
         })
@@ -29,7 +29,7 @@ async fn test_client_reconnects_after_brief_disconnect() {
 
     let client = HazelcastClient::new(config).await.expect("failed to connect");
     let map_name = unique_name("test-failover");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     map.put("key1".to_string(), "value1".to_string()).await.unwrap();
     let value = map.get(&"key1".to_string()).await.unwrap();
@@ -47,9 +47,9 @@ async fn test_operations_succeed_after_connection_restored() {
 
     let config = ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(common::DEFAULT_CLUSTER_ADDRESS)
+        .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .retry(|r| {
-            r.max_attempts(5)
+            r.max_retries(5)
                 .initial_backoff(Duration::from_millis(50))
         })
         .build()
@@ -57,7 +57,7 @@ async fn test_operations_succeed_after_connection_restored() {
 
     let client = HazelcastClient::new(config).await.expect("failed to connect");
     let map_name = unique_name("test-failover-ops");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     for i in 0..10 {
         map.put(format!("key{}", i), format!("value{}", i)).await.unwrap();
@@ -82,9 +82,9 @@ async fn test_concurrent_operations_during_reconnect() {
 
     let config = ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(common::DEFAULT_CLUSTER_ADDRESS)
+        .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .retry(|r| {
-            r.max_attempts(10)
+            r.max_retries(10)
                 .initial_backoff(Duration::from_millis(50))
                 .max_backoff(Duration::from_secs(2))
         })
@@ -101,7 +101,7 @@ async fn test_concurrent_operations_during_reconnect() {
         let map_name_clone = map_name.clone();
         
         let handle = tokio::spawn(async move {
-            let map = client_clone.get_map::<String, i32>(&map_name_clone).await.unwrap();
+            let map = client_clone.get_map::<String, i32>(&map_name_clone);
             
             for j in 0..20 {
                 let key = format!("key-{}-{}", i, j);
@@ -117,7 +117,7 @@ async fn test_concurrent_operations_during_reconnect() {
         handle.await.unwrap();
     }
 
-    let map = client.get_map::<String, i32>(&map_name).await.unwrap();
+    let map = client.get_map::<String, i32>(&map_name);
     map.clear().await.unwrap();
 }
 
@@ -130,7 +130,7 @@ async fn test_transaction_survives_brief_delay() {
 
     let config = ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(common::DEFAULT_CLUSTER_ADDRESS)
+        .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .build()
         .unwrap();
 
@@ -145,7 +145,7 @@ async fn test_transaction_survives_brief_delay() {
     txn.begin().await.unwrap();
 
     {
-        let txn_map = txn.get_map::<String, String>(&map_name);
+        let txn_map = txn.get_map::<String, String>(&map_name).unwrap();
         txn_map.put("key1".to_string(), "value1".to_string()).await.unwrap();
         
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -155,7 +155,7 @@ async fn test_transaction_survives_brief_delay() {
 
     txn.commit().await.unwrap();
 
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
     assert_eq!(map.get(&"key1".to_string()).await.unwrap(), Some("value1".to_string()));
     assert_eq!(map.get(&"key2".to_string()).await.unwrap(), Some("value2".to_string()));
 
@@ -178,14 +178,14 @@ async fn test_near_cache_survives_reconnect() {
 
     let config = ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(common::DEFAULT_CLUSTER_ADDRESS)
+        .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .add_near_cache_config(near_cache_config)
-        .retry(|r| r.max_attempts(5))
+        .retry(|r| r.max_retries(5))
         .build()
         .unwrap();
 
     let client = HazelcastClient::new(config).await.expect("failed to connect");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     map.put("key1".to_string(), "value1".to_string()).await.unwrap();
     let _ = map.get(&"key1".to_string()).await.unwrap();
@@ -208,8 +208,8 @@ async fn test_multiple_data_structures_after_reconnect() {
 
     let config = ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(common::DEFAULT_CLUSTER_ADDRESS)
-        .retry(|r| r.max_attempts(5))
+        .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
+        .retry(|r| r.max_retries(5))
         .build()
         .unwrap();
 
@@ -220,10 +220,10 @@ async fn test_multiple_data_structures_after_reconnect() {
     let set_name = unique_name("test-multi-set");
     let list_name = unique_name("test-multi-list");
 
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
-    let set = client.get_set::<String>(&set_name).await.unwrap();
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
+    let queue = client.get_queue::<String>(&queue_name);
+    let set = client.get_set::<String>(&set_name);
+    let list = client.get_list::<String>(&list_name);
 
     map.put("map-key".to_string(), "map-value".to_string()).await.unwrap();
     queue.offer("queue-item".to_string()).await.unwrap();
@@ -250,19 +250,19 @@ async fn test_retry_config_backoff() {
 
     let config = ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(common::DEFAULT_CLUSTER_ADDRESS)
+        .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .retry(|r| {
-            r.max_attempts(3)
+            r.max_retries(3)
                 .initial_backoff(Duration::from_millis(100))
                 .max_backoff(Duration::from_secs(1))
-                .backoff_multiplier(2.0)
+                .multiplier(2.0)
         })
         .build()
         .unwrap();
 
     let client = HazelcastClient::new(config).await.expect("failed to connect");
     let map_name = unique_name("test-retry-backoff");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     map.put("key".to_string(), "value".to_string()).await.unwrap();
     let value = map.get(&"key".to_string()).await.unwrap();
@@ -280,9 +280,9 @@ async fn test_client_handles_cluster_restart_gracefully() {
 
     let config = ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(common::DEFAULT_CLUSTER_ADDRESS)
+        .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .retry(|r| {
-            r.max_attempts(30)
+            r.max_retries(30)
                 .initial_backoff(Duration::from_millis(500))
                 .max_backoff(Duration::from_secs(5))
         })
@@ -291,7 +291,7 @@ async fn test_client_handles_cluster_restart_gracefully() {
 
     let client = HazelcastClient::new(config).await.expect("failed to connect");
     let map_name = unique_name("test-cluster-restart");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     map.put("before-restart".to_string(), "value".to_string()).await.unwrap();
 
@@ -310,13 +310,13 @@ async fn test_listener_stats_during_operations() {
 
     let config = ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(common::DEFAULT_CLUSTER_ADDRESS)
+        .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .build()
         .unwrap();
 
     let client = HazelcastClient::new(config).await.expect("failed to connect");
     let map_name = unique_name("test-listener-stats");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     let stats = map.listener_stats();
     let initial_messages = stats.messages_received();
@@ -340,9 +340,9 @@ async fn test_operations_with_high_latency_tolerance() {
 
     let config = ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(common::DEFAULT_CLUSTER_ADDRESS)
+        .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .retry(|r| {
-            r.max_attempts(5)
+            r.max_retries(5)
                 .initial_backoff(Duration::from_millis(200))
         })
         .build()
@@ -350,7 +350,7 @@ async fn test_operations_with_high_latency_tolerance() {
 
     let client = HazelcastClient::new(config).await.expect("failed to connect");
     let map_name = unique_name("test-latency");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
 
     for i in 0..5 {
         let start = std::time::Instant::now();

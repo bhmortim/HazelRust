@@ -9,8 +9,9 @@ use kube::api::ListParams;
 use kube::{Api, Client};
 use tracing::debug;
 
+use hazelcast_core::{HazelcastError, Result};
+
 use super::ClusterDiscovery;
-use crate::HazelcastClientError;
 
 /// Configuration for Kubernetes-based cluster discovery.
 #[derive(Debug, Clone, Default)]
@@ -88,14 +89,14 @@ pub trait K8sClientProvider: Send + Sync {
         &self,
         namespace: &str,
         label_selector: Option<&str>,
-    ) -> Result<Vec<DiscoveredPod>, HazelcastClientError>;
+    ) -> Result<Vec<DiscoveredPod>>;
 
     /// Gets endpoints for a service in the specified namespace.
     async fn get_service_endpoints(
         &self,
         namespace: &str,
         service_name: &str,
-    ) -> Result<Vec<DiscoveredEndpoint>, HazelcastClientError>;
+    ) -> Result<Vec<DiscoveredEndpoint>>;
 }
 
 /// Production Kubernetes client using kube-rs.
@@ -120,9 +121,9 @@ impl K8sClientProvider for KubeRsClient {
         &self,
         namespace: &str,
         label_selector: Option<&str>,
-    ) -> Result<Vec<DiscoveredPod>, HazelcastClientError> {
+    ) -> Result<Vec<DiscoveredPod>> {
         let client = Client::try_default().await.map_err(|e| {
-            HazelcastClientError::Connection(format!("Failed to create Kubernetes client: {}", e))
+            HazelcastError::Connection(format!("Failed to create Kubernetes client: {}", e))
         })?;
 
         let pods: Api<Pod> = Api::namespaced(client, namespace);
@@ -134,7 +135,7 @@ impl K8sClientProvider for KubeRsClient {
         };
 
         let pod_list = pods.list(&list_params).await.map_err(|e| {
-            HazelcastClientError::Connection(format!("Failed to list pods: {}", e))
+            HazelcastError::Connection(format!("Failed to list pods: {}", e))
         })?;
 
         let mut discovered = Vec::new();
@@ -155,14 +156,14 @@ impl K8sClientProvider for KubeRsClient {
         &self,
         namespace: &str,
         service_name: &str,
-    ) -> Result<Vec<DiscoveredEndpoint>, HazelcastClientError> {
+    ) -> Result<Vec<DiscoveredEndpoint>> {
         let client = Client::try_default().await.map_err(|e| {
-            HazelcastClientError::Connection(format!("Failed to create Kubernetes client: {}", e))
+            HazelcastError::Connection(format!("Failed to create Kubernetes client: {}", e))
         })?;
 
         let endpoints: Api<Endpoints> = Api::namespaced(client, namespace);
         let ep = endpoints.get(service_name).await.map_err(|e| {
-            HazelcastClientError::Connection(format!(
+            HazelcastError::Connection(format!(
                 "Failed to get endpoints for service '{}': {}",
                 service_name, e
             ))
@@ -253,9 +254,9 @@ impl KubernetesDiscovery {
         }
     }
 
-    async fn discover_from_service(&self) -> Result<Vec<SocketAddr>, HazelcastClientError> {
+    async fn discover_from_service(&self) -> Result<Vec<SocketAddr>> {
         let service_name = self.config.service_name.as_ref().ok_or_else(|| {
-            HazelcastClientError::Connection("Service name not configured".to_string())
+            HazelcastError::Connection("Service name not configured".to_string())
         })?;
 
         let endpoints = self
@@ -277,7 +278,7 @@ impl KubernetesDiscovery {
         Ok(addresses)
     }
 
-    async fn discover_from_pods(&self) -> Result<Vec<SocketAddr>, HazelcastClientError> {
+    async fn discover_from_pods(&self) -> Result<Vec<SocketAddr>> {
         let label_selector = self.build_label_selector();
         let pods = self
             .k8s_client
@@ -304,7 +305,7 @@ impl KubernetesDiscovery {
 
 #[async_trait]
 impl ClusterDiscovery for KubernetesDiscovery {
-    async fn discover(&self) -> Result<Vec<SocketAddr>, HazelcastClientError> {
+    async fn discover(&self) -> Result<Vec<SocketAddr>> {
         let addresses = if self.config.service_name.is_some() {
             self.discover_from_service().await?
         } else {
@@ -360,9 +361,9 @@ mod tests {
             &self,
             _namespace: &str,
             _label_selector: Option<&str>,
-        ) -> Result<Vec<DiscoveredPod>, HazelcastClientError> {
+        ) -> Result<Vec<DiscoveredPod>> {
             if self.should_error {
-                return Err(HazelcastClientError::Connection("Mock K8s API error".into()));
+                return Err(HazelcastError::Connection("Mock K8s API error".into()));
             }
             Ok(self.pods.lock().unwrap().clone())
         }
@@ -371,9 +372,9 @@ mod tests {
             &self,
             _namespace: &str,
             _service_name: &str,
-        ) -> Result<Vec<DiscoveredEndpoint>, HazelcastClientError> {
+        ) -> Result<Vec<DiscoveredEndpoint>> {
             if self.should_error {
-                return Err(HazelcastClientError::Connection("Mock K8s API error".into()));
+                return Err(HazelcastError::Connection("Mock K8s API error".into()));
             }
             Ok(self.endpoints.lock().unwrap().clone())
         }

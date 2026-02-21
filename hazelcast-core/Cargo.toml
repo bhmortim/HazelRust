@@ -15,6 +15,7 @@ categories = ["encoding", "network-programming"]
 default = []
 serde = ["dep:serde", "dep:bincode"]
 json = ["dep:serde_json"]
+derive = ["dep:hazelcast-derive"]
 
 [dependencies]
 tokio = { workspace = true }
@@ -26,3 +27,4 @@ tracing = { workspace = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 bincode = { version = "1.3", optional = true }
 serde_json = { version = "1.0", optional = true }
+hazelcast-derive = { path = "../hazelcast-derive", optional = true }

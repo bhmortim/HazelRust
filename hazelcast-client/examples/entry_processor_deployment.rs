@@ -46,7 +46,7 @@ use hazelcast_client::{
 };
 use hazelcast_client::config::ConfigError;
 use hazelcast_client::proxy::EntryProcessor;
-use hazelcast_core::serialization::{ObjectDataOutput, Serializable};
+use hazelcast_core::serialization::{DataOutput, Serializable};
 
 /// A Rust wrapper for the Java IncrementProcessor.
 ///
@@ -73,11 +73,11 @@ impl EntryProcessor for IncrementProcessor {
 }
 
 impl Serializable for IncrementProcessor {
-    fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
         // Serialize the class name for the cluster to instantiate
-        output.write_utf(&self.class_name)?;
+        output.write_string(&self.class_name)?;
         // Serialize the delta argument
-        output.write_i64(self.delta)?;
+        output.write_long(self.delta)?;
         Ok(())
     }
 }
