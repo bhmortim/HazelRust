@@ -405,6 +405,16 @@ const DEFAULT_RETRY_MULTIPLIER: f64 = 2.0;
 const DEFAULT_MAX_RETRIES: u32 = 10;
 /// Default jitter factor for retry backoff (±10%).
 const DEFAULT_RETRY_JITTER: f64 = 0.1;
+/// Default invocation timeout (120 seconds, matching Java client).
+const DEFAULT_INVOCATION_TIMEOUT: Duration = Duration::from_secs(120);
+/// Default max concurrent invocations (0 = unlimited).
+/// Note: The Java client defaults to 2^23 (8,388,608). In Rust, we default to 0
+/// (unlimited) since back-pressure is opt-in. Set a non-zero value to enable.
+const DEFAULT_MAX_CONCURRENT_INVOCATIONS: usize = 0;
+/// Default invocation retry count for retryable operations.
+const DEFAULT_INVOCATION_RETRY_COUNT: u32 = 3;
+/// Default pause between invocation retries (matches Java client's `invocation.retry.pause.millis`).
+const DEFAULT_INVOCATION_RETRY_PAUSE: Duration = Duration::from_secs(1);
 
 /// Configuration error returned when validation fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -428,6 +438,130 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+/// Socket-level configuration for TCP connections.
+///
+/// Controls low-level TCP socket options applied when connecting to cluster members.
+///
+/// # Example
+///
+/// ```ignore
+/// let socket_config = SocketConfig::builder()
+///     .tcp_nodelay(true)
+///     .keep_alive(true)
+///     .send_buffer_size(65536)
+///     .build();
+/// ```
+#[derive(Debug, Clone)]
+pub struct SocketConfig {
+    tcp_nodelay: bool,
+    keep_alive: bool,
+    send_buffer_size: Option<u32>,
+    recv_buffer_size: Option<u32>,
+    linger: Option<Duration>,
+}
+
+impl Default for SocketConfig {
+    fn default() -> Self {
+        Self {
+            tcp_nodelay: true,
+            keep_alive: true,
+            send_buffer_size: None,
+            recv_buffer_size: None,
+            linger: None,
+        }
+    }
+}
+
+impl SocketConfig {
+    /// Creates a new builder for socket configuration.
+    pub fn builder() -> SocketConfigBuilder {
+        SocketConfigBuilder::default()
+    }
+
+    /// Returns whether TCP_NODELAY is enabled (disables Nagle's algorithm).
+    pub fn tcp_nodelay(&self) -> bool {
+        self.tcp_nodelay
+    }
+
+    /// Returns whether TCP keep-alive is enabled.
+    pub fn keep_alive(&self) -> bool {
+        self.keep_alive
+    }
+
+    /// Returns the send buffer size in bytes, if configured.
+    pub fn send_buffer_size(&self) -> Option<u32> {
+        self.send_buffer_size
+    }
+
+    /// Returns the receive buffer size in bytes, if configured.
+    pub fn recv_buffer_size(&self) -> Option<u32> {
+        self.recv_buffer_size
+    }
+
+    /// Returns the linger duration, if configured.
+    pub fn linger(&self) -> Option<Duration> {
+        self.linger
+    }
+}
+
+/// Builder for [`SocketConfig`].
+#[derive(Debug, Clone, Default)]
+pub struct SocketConfigBuilder {
+    tcp_nodelay: Option<bool>,
+    keep_alive: Option<bool>,
+    send_buffer_size: Option<u32>,
+    recv_buffer_size: Option<u32>,
+    linger: Option<Duration>,
+}
+
+impl SocketConfigBuilder {
+    /// Sets whether TCP_NODELAY is enabled (default: true).
+    ///
+    /// When enabled, disables Nagle's algorithm for lower latency.
+    pub fn tcp_nodelay(mut self, enabled: bool) -> Self {
+        self.tcp_nodelay = Some(enabled);
+        self
+    }
+
+    /// Sets whether TCP keep-alive is enabled (default: true).
+    pub fn keep_alive(mut self, enabled: bool) -> Self {
+        self.keep_alive = Some(enabled);
+        self
+    }
+
+    /// Sets the TCP send buffer size in bytes.
+    pub fn send_buffer_size(mut self, size: u32) -> Self {
+        self.send_buffer_size = Some(size);
+        self
+    }
+
+    /// Sets the TCP receive buffer size in bytes.
+    pub fn recv_buffer_size(mut self, size: u32) -> Self {
+        self.recv_buffer_size = Some(size);
+        self
+    }
+
+    /// Sets the SO_LINGER duration.
+    ///
+    /// When set, the socket will wait up to this duration for unsent data
+    /// to be delivered when closing the connection.
+    pub fn linger(mut self, duration: Duration) -> Self {
+        self.linger = Some(duration);
+        self
+    }
+
+    /// Builds the socket configuration.
+    pub fn build(self) -> SocketConfig {
+        SocketConfig {
+            tcp_nodelay: self.tcp_nodelay.unwrap_or(true),
+            keep_alive: self.keep_alive.unwrap_or(true),
+            send_buffer_size: self.send_buffer_size,
+            recv_buffer_size: self.recv_buffer_size,
+            linger: self.linger,
+        }
+    }
+}
+
 /// Network configuration for cluster connections.
 #[derive(Clone)]
 pub struct NetworkConfig {
@@ -440,6 +574,7 @@ pub struct NetworkConfig {
     load_balancer: Arc<dyn LoadBalancer>,
     smart_routing: bool,
     reconnect_mode: ReconnectMode,
+    socket: SocketConfig,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
     #[cfg(feature = "azure")]
@@ -463,7 +598,8 @@ impl std::fmt::Debug for NetworkConfig {
             .field("wan_replication", &self.wan_replication)
             .field("load_balancer", &self.load_balancer)
             .field("smart_routing", &self.smart_routing)
-            .field("reconnect_mode", &self.reconnect_mode);
+            .field("reconnect_mode", &self.reconnect_mode)
+            .field("socket", &self.socket);
         #[cfg(feature = "aws")]
         s.field("aws_discovery", &self.aws_discovery);
         #[cfg(feature = "azure")]
@@ -569,6 +705,11 @@ impl NetworkConfig {
     pub fn reconnect_mode(&self) -> ReconnectMode {
         self.reconnect_mode
     }
+
+    /// Returns the socket configuration for TCP connections.
+    pub fn socket(&self) -> &SocketConfig {
+        &self.socket
+    }
 }
 
 impl Default for NetworkConfig {
@@ -583,6 +724,7 @@ impl Default for NetworkConfig {
             load_balancer: default_load_balancer(),
             smart_routing: true,
             reconnect_mode: ReconnectMode::default(),
+            socket: SocketConfig::default(),
             #[cfg(feature = "aws")]
             aws_discovery: None,
             #[cfg(feature = "azure")]
@@ -609,6 +751,7 @@ pub struct NetworkConfigBuilder {
     load_balancer: Option<Arc<dyn LoadBalancer>>,
     smart_routing: Option<bool>,
     reconnect_mode: Option<ReconnectMode>,
+    socket: SocketConfigBuilder,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
     #[cfg(feature = "azure")]
@@ -632,7 +775,8 @@ impl std::fmt::Debug for NetworkConfigBuilder {
             .field("wan_replication", &self.wan_replication)
             .field("load_balancer", &self.load_balancer.is_some())
             .field("smart_routing", &self.smart_routing)
-            .field("reconnect_mode", &self.reconnect_mode);
+            .field("reconnect_mode", &self.reconnect_mode)
+            .field("socket", &self.socket);
         #[cfg(feature = "aws")]
         s.field("aws_discovery", &self.aws_discovery);
         #[cfg(feature = "azure")]
@@ -751,6 +895,24 @@ impl NetworkConfigBuilder {
         self
     }
 
+    /// Configures socket settings using a builder function.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = NetworkConfigBuilder::new()
+    ///     .socket(|s| s.keep_alive(true).send_buffer_size(65536))
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn socket<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(SocketConfigBuilder) -> SocketConfigBuilder,
+    {
+        self.socket = f(self.socket);
+        self
+    }
+
     /// Adds a WAN replication configuration.
     ///
     /// WAN replication allows data to be replicated across multiple clusters
@@ -844,6 +1006,7 @@ impl NetworkConfigBuilder {
             load_balancer: self.load_balancer.unwrap_or_else(default_load_balancer),
             smart_routing: self.smart_routing.unwrap_or(true),
             reconnect_mode: self.reconnect_mode.unwrap_or_default(),
+            socket: self.socket.build(),
             #[cfg(feature = "aws")]
             aws_discovery: self.aws_discovery,
             #[cfg(feature = "azure")]
@@ -2094,6 +2257,12 @@ pub struct ClientConfig {
     logging: LoggingConfig,
     management_center: ManagementCenterConfig,
     user_code_deployment: Option<UserCodeDeploymentConfig>,
+    invocation_timeout: Duration,
+    max_concurrent_invocations: usize,
+    redo_operation: bool,
+    invocation_retry_count: u32,
+    invocation_retry_pause: Duration,
+    serialization: hazelcast_core::serialization::SerializationConfig,
 }
 
 impl ClientConfig {
@@ -2171,6 +2340,51 @@ impl ClientConfig {
     pub fn user_code_deployment(&self) -> Option<&UserCodeDeploymentConfig> {
         self.user_code_deployment.as_ref()
     }
+
+    /// Returns the invocation timeout duration.
+    ///
+    /// Operations that do not complete within this timeout will fail with
+    /// a `HazelcastError::Timeout` error.
+    pub fn invocation_timeout(&self) -> Duration {
+        self.invocation_timeout
+    }
+
+    /// Returns the maximum number of concurrent invocations.
+    ///
+    /// When greater than 0, limits the number of in-flight operations to prevent
+    /// overloading the cluster. Returns 0 for unlimited (default).
+    ///
+    /// Note: The Java client defaults to 2^23. In Rust, the default is 0 (unlimited)
+    /// since back-pressure is opt-in. Set a non-zero value to enable.
+    pub fn max_concurrent_invocations(&self) -> usize {
+        self.max_concurrent_invocations
+    }
+
+    /// Returns whether redo operation is enabled.
+    ///
+    /// When enabled, non-idempotent operations will also be retried on
+    /// transient connection failures.
+    pub fn redo_operation(&self) -> bool {
+        self.redo_operation
+    }
+
+    /// Returns the invocation retry count for retryable operations.
+    pub fn invocation_retry_count(&self) -> u32 {
+        self.invocation_retry_count
+    }
+
+    /// Returns the pause duration between invocation retries.
+    ///
+    /// This is a fixed pause applied between each retry attempt for retryable operations.
+    /// Default: 1 second (matching Java client's `invocation.retry.pause.millis`).
+    pub fn invocation_retry_pause(&self) -> Duration {
+        self.invocation_retry_pause
+    }
+
+    /// Returns the serialization configuration.
+    pub fn serialization(&self) -> &hazelcast_core::serialization::SerializationConfig {
+        &self.serialization
+    }
 }
 
 impl Default for ClientConfig {
@@ -2194,6 +2408,12 @@ pub struct ClientConfigBuilder {
     logging: LoggingConfigBuilder,
     management_center: ManagementCenterConfigBuilder,
     user_code_deployment: Option<UserCodeDeploymentConfig>,
+    invocation_timeout: Option<Duration>,
+    max_concurrent_invocations: Option<usize>,
+    redo_operation: Option<bool>,
+    invocation_retry_count: Option<u32>,
+    invocation_retry_pause: Option<Duration>,
+    serialization: Option<hazelcast_core::serialization::SerializationConfig>,
 }
 
 impl ClientConfigBuilder {
@@ -2430,6 +2650,68 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the invocation timeout duration.
+    ///
+    /// Operations that do not complete within this timeout will fail with
+    /// a `HazelcastError::Timeout` error. Default: 120 seconds.
+    pub fn invocation_timeout(mut self, timeout: Duration) -> Self {
+        self.invocation_timeout = Some(timeout);
+        self
+    }
+
+    /// Sets the maximum number of concurrent invocations for back-pressure.
+    ///
+    /// When set to a value greater than 0, limits the number of simultaneous
+    /// in-flight operations to prevent overloading the cluster. Set to 0 for
+    /// unlimited (default).
+    pub fn max_concurrent_invocations(mut self, max: usize) -> Self {
+        self.max_concurrent_invocations = Some(max);
+        self
+    }
+
+    /// Enables or disables redo operation.
+    ///
+    /// When enabled, even non-idempotent operations (like `put`, `remove`) will be
+    /// retried on transient connection failures. Default: false.
+    pub fn redo_operation(mut self, enabled: bool) -> Self {
+        self.redo_operation = Some(enabled);
+        self
+    }
+
+    /// Sets the invocation retry count for retryable operations.
+    ///
+    /// Idempotent operations (and all operations when `redo_operation` is enabled)
+    /// will be retried up to this many times on transient failures. Default: 3.
+    pub fn invocation_retry_count(mut self, count: u32) -> Self {
+        self.invocation_retry_count = Some(count);
+        self
+    }
+
+    /// Sets the pause duration between invocation retries.
+    ///
+    /// This is a fixed pause applied between each retry attempt for retryable operations.
+    /// Default: 1 second (matching Java client's `invocation.retry.pause.millis`).
+    pub fn invocation_retry_pause(mut self, pause: Duration) -> Self {
+        self.invocation_retry_pause = Some(pause);
+        self
+    }
+
+    /// Configures serialization settings.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_core::serialization::SerializationConfig;
+    ///
+    /// let config = ClientConfigBuilder::new()
+    ///     .serialization(SerializationConfig::new().portable_version(2))
+    ///     .build()?;
+    /// ```
+    pub fn serialization(mut self, config: hazelcast_core::serialization::SerializationConfig) -> Self {
+        self.serialization = Some(config);
+        self
+    }
+
     /// Builds the client configuration, returning an error if validation fails.
     pub fn build(self) -> Result<ClientConfig, ConfigError> {
         let cluster_name = self
@@ -2461,6 +2743,12 @@ impl ClientConfigBuilder {
             logging,
             management_center,
             user_code_deployment: self.user_code_deployment,
+            invocation_timeout: self.invocation_timeout.unwrap_or(DEFAULT_INVOCATION_TIMEOUT),
+            max_concurrent_invocations: self.max_concurrent_invocations.unwrap_or(DEFAULT_MAX_CONCURRENT_INVOCATIONS),
+            redo_operation: self.redo_operation.unwrap_or(false),
+            invocation_retry_count: self.invocation_retry_count.unwrap_or(DEFAULT_INVOCATION_RETRY_COUNT),
+            invocation_retry_pause: self.invocation_retry_pause.unwrap_or(DEFAULT_INVOCATION_RETRY_PAUSE),
+            serialization: self.serialization.unwrap_or_default(),
         })
     }
 }
