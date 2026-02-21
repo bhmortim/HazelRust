@@ -22,6 +22,7 @@ cloud = ["reqwest"]
 azure = ["azure_identity", "azure_core", "reqwest", "serde_json"]
 gcp = ["reqwest", "serde_json"]
 websocket = ["tokio-tungstenite", "url"]
+config-file = ["dep:serde_yaml", "dep:toml_crate", "serde_json"]
 
 [dependencies]
 hazelcast-core = { path = "../hazelcast-core", features = ["serde"] }
@@ -40,6 +41,11 @@ uuid = { version = "1.0", features = ["v4"] }
 rand = "0.8"
 base64 = "0.22"
 futures = "0.3"
+socket2 = "0.5"
+
+# Declarative config (optional, for YAML/TOML file config loading)
+serde_yaml = { version = "0.9", optional = true }
+toml_crate = { package = "toml", version = "0.8", optional = true }
 
 tokio-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2", optional = true }

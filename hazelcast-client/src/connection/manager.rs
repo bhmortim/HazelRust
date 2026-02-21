@@ -85,6 +85,11 @@ pub struct ConnectionManager {
     failover_config: Option<ClientFailoverConfig>,
     current_cluster_index: AtomicUsize,
     current_try_count: AtomicUsize,
+    invocation_timeout: std::time::Duration,
+    invocation_semaphore: Option<Arc<tokio::sync::Semaphore>>,
+    redo_operation: bool,
+    invocation_retry_count: u32,
+    invocation_retry_pause: std::time::Duration,
 }
 
 /// Calculates the next backoff duration with jitter applied.
@@ -122,6 +127,17 @@ impl ConnectionManager {
         let (partition_lost_sender, _) = broadcast::channel(32);
         let (shutdown, _) = tokio::sync::watch::channel(false);
 
+        let invocation_timeout = config.invocation_timeout();
+        let max_concurrent = config.max_concurrent_invocations();
+        let invocation_semaphore = if max_concurrent > 0 {
+            Some(Arc::new(tokio::sync::Semaphore::new(max_concurrent)))
+        } else {
+            None
+        };
+        let redo_operation = config.redo_operation();
+        let invocation_retry_count = config.invocation_retry_count();
+        let invocation_retry_pause = config.invocation_retry_pause();
+
         Self {
             config: Arc::new(config),
             discovery: Arc::new(discovery),
@@ -139,6 +155,11 @@ impl ConnectionManager {
             failover_config: None,
             current_cluster_index: AtomicUsize::new(0),
             current_try_count: AtomicUsize::new(0),
+            invocation_timeout,
+            invocation_semaphore,
+            redo_operation,
+            invocation_retry_count,
+            invocation_retry_pause,
         }
     }
 
@@ -172,6 +193,17 @@ impl ConnectionManager {
         let (partition_lost_sender, _) = broadcast::channel(32);
         let (shutdown, _) = tokio::sync::watch::channel(false);
 
+        let invocation_timeout = primary_config.invocation_timeout();
+        let max_concurrent = primary_config.max_concurrent_invocations();
+        let invocation_semaphore = if max_concurrent > 0 {
+            Some(Arc::new(tokio::sync::Semaphore::new(max_concurrent)))
+        } else {
+            None
+        };
+        let redo_operation = primary_config.redo_operation();
+        let invocation_retry_count = primary_config.invocation_retry_count();
+        let invocation_retry_pause = primary_config.invocation_retry_pause();
+
         Self {
             config: Arc::new(primary_config),
             discovery: Arc::new(discovery),
@@ -189,6 +221,11 @@ impl ConnectionManager {
             failover_config: Some(failover_config),
             current_cluster_index: AtomicUsize::new(0),
             current_try_count: AtomicUsize::new(0),
+            invocation_timeout,
+            invocation_semaphore,
+            redo_operation,
+            invocation_retry_count,
+            invocation_retry_pause,
         }
     }
 
@@ -1006,11 +1043,29 @@ impl ConnectionManager {
         partition_id: i32,
         message: hazelcast_core::ClientMessage,
     ) -> Result<hazelcast_core::ClientMessage> {
-        let address = self.get_connection_for_partition(partition_id).await?;
-        self.send_to(address, message).await?;
-        self.receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+        // Acquire back-pressure permit (if configured)
+        let _permit = match &self.invocation_semaphore {
+            Some(sem) => Some(sem.acquire().await.map_err(|_| {
+                HazelcastError::Connection("client is shutting down".to_string())
+            })?),
+            None => None,
+        };
+
+        let timeout_duration = self.invocation_timeout;
+        tokio::time::timeout(timeout_duration, async {
+            let address = self.get_connection_for_partition(partition_id).await?;
+            self.send_to(address, message).await?;
+            self.receive_from(address)
+                .await?
+                .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+        })
+        .await
+        .map_err(|_| {
+            HazelcastError::Timeout(format!(
+                "invocation on partition {} timed out after {:?}",
+                partition_id, timeout_duration
+            ))
+        })?
     }
 
     /// Invokes a request on any available connection and returns the response.
@@ -1026,14 +1081,32 @@ impl ConnectionManager {
         &self,
         message: hazelcast_core::ClientMessage,
     ) -> Result<hazelcast_core::ClientMessage> {
-        let addresses = self.connected_addresses().await;
-        let address = addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })?;
-        self.send_to(address, message).await?;
-        self.receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+        // Acquire back-pressure permit (if configured)
+        let _permit = match &self.invocation_semaphore {
+            Some(sem) => Some(sem.acquire().await.map_err(|_| {
+                HazelcastError::Connection("client is shutting down".to_string())
+            })?),
+            None => None,
+        };
+
+        let timeout_duration = self.invocation_timeout;
+        tokio::time::timeout(timeout_duration, async {
+            let addresses = self.connected_addresses().await;
+            let address = addresses.into_iter().next().ok_or_else(|| {
+                HazelcastError::Connection("no connections available".to_string())
+            })?;
+            self.send_to(address, message).await?;
+            self.receive_from(address)
+                .await?
+                .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+        })
+        .await
+        .map_err(|_| {
+            HazelcastError::Timeout(format!(
+                "invocation timed out after {:?}",
+                timeout_duration
+            ))
+        })?
     }
 
     /// Sends a request and returns the response, automatically routing based on partition ID.
@@ -1060,6 +1133,87 @@ impl ConnectionManager {
         message: hazelcast_core::ClientMessage,
     ) -> Result<hazelcast_core::ClientMessage> {
         self.send(message).await
+    }
+
+    /// Invokes a request on a specific partition with automatic retry for retryable errors.
+    ///
+    /// If `idempotent` is `true` or `redo_operation` is enabled in the config, the
+    /// invocation will be retried up to `invocation_retry_count` times on retryable
+    /// errors (connection failures, timeouts). A fixed pause of `invocation_retry_pause`
+    /// (default 1s, matching Java's `invocation.retry.pause.millis`) is applied between
+    /// each retry attempt.
+    ///
+    /// Non-retryable errors are returned immediately without retry.
+    pub async fn invoke_on_partition_with_retry(
+        &self,
+        partition_id: i32,
+        message: hazelcast_core::ClientMessage,
+        idempotent: bool,
+    ) -> Result<hazelcast_core::ClientMessage> {
+        let retryable = idempotent || self.redo_operation;
+        let max_attempts = if retryable { self.invocation_retry_count } else { 0 };
+        let mut last_err = None;
+        let retry_pause = self.invocation_retry_pause;
+
+        for attempt in 0..=max_attempts {
+            match self.invoke_on_partition(partition_id, message.clone()).await {
+                Ok(resp) => return Ok(resp),
+                Err(e) if e.is_retryable() && attempt < max_attempts => {
+                    tracing::debug!(
+                        attempt = attempt + 1,
+                        max_attempts = max_attempts,
+                        pause_ms = retry_pause.as_millis() as u64,
+                        error = %e,
+                        "retrying partition invocation"
+                    );
+                    tokio::time::sleep(retry_pause).await;
+                    last_err = Some(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Err(last_err.unwrap())
+    }
+
+    /// Invokes a request on a random connection with automatic retry for retryable errors.
+    ///
+    /// If `idempotent` is `true` or `redo_operation` is enabled in the config, the
+    /// invocation will be retried up to `invocation_retry_count` times on retryable
+    /// errors (connection failures, timeouts). A fixed pause of `invocation_retry_pause`
+    /// (default 1s, matching Java's `invocation.retry.pause.millis`) is applied between
+    /// each retry attempt.
+    ///
+    /// Non-retryable errors are returned immediately without retry.
+    pub async fn invoke_on_random_with_retry(
+        &self,
+        message: hazelcast_core::ClientMessage,
+        idempotent: bool,
+    ) -> Result<hazelcast_core::ClientMessage> {
+        let retryable = idempotent || self.redo_operation;
+        let max_attempts = if retryable { self.invocation_retry_count } else { 0 };
+        let mut last_err = None;
+        let retry_pause = self.invocation_retry_pause;
+
+        for attempt in 0..=max_attempts {
+            match self.invoke_on_random(message.clone()).await {
+                Ok(resp) => return Ok(resp),
+                Err(e) if e.is_retryable() && attempt < max_attempts => {
+                    tracing::debug!(
+                        attempt = attempt + 1,
+                        max_attempts = max_attempts,
+                        pause_ms = retry_pause.as_millis() as u64,
+                        error = %e,
+                        "retrying random invocation"
+                    );
+                    tokio::time::sleep(retry_pause).await;
+                    last_err = Some(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Err(last_err.unwrap())
     }
 
     /// Clears the partition table. Called during reconnection or cluster state reset.

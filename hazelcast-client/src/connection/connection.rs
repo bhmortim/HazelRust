@@ -147,18 +147,105 @@ impl Connection {
         self.last_write_at
     }
 
-    /// Establishes a new connection to the given address.
+    /// Establishes a new connection to the given address with default socket options.
     pub async fn connect(address: SocketAddr) -> Result<Self> {
-        let stream = TcpStream::connect(address).await.map_err(|e| {
-            HazelcastError::Connection(format!("failed to connect to {}: {}", address, e))
-        })?;
+        Self::connect_with_socket_config(address, &crate::config::SocketConfig::default()).await
+    }
 
-        stream.set_nodelay(true).map_err(|e| {
-            HazelcastError::Connection(format!("failed to set TCP_NODELAY: {}", e))
-        })?;
+    /// Establishes a new connection to the given address with custom socket options.
+    pub async fn connect_with_socket_config(
+        address: SocketAddr,
+        socket_config: &crate::config::SocketConfig,
+    ) -> Result<Self> {
+        let stream = Self::create_tcp_stream(address, socket_config).await?;
 
         tracing::debug!(address = %address, "established connection");
         Ok(Self::new(stream, address))
+    }
+
+    /// Creates a TCP stream with the configured socket options applied.
+    async fn create_tcp_stream(
+        address: SocketAddr,
+        socket_config: &crate::config::SocketConfig,
+    ) -> Result<TcpStream> {
+        use socket2::{Domain, Protocol, Socket, Type};
+
+        let domain = if address.is_ipv4() {
+            Domain::IPV4
+        } else {
+            Domain::IPV6
+        };
+
+        let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).map_err(|e| {
+            HazelcastError::Connection(format!("failed to create socket: {}", e))
+        })?;
+
+        socket.set_nodelay(socket_config.tcp_nodelay()).map_err(|e| {
+            HazelcastError::Connection(format!("failed to set TCP_NODELAY: {}", e))
+        })?;
+
+        socket.set_keepalive(socket_config.keep_alive()).map_err(|e| {
+            HazelcastError::Connection(format!("failed to set SO_KEEPALIVE: {}", e))
+        })?;
+
+        if let Some(size) = socket_config.send_buffer_size() {
+            socket.set_send_buffer_size(size as usize).map_err(|e| {
+                HazelcastError::Connection(format!("failed to set SO_SNDBUF: {}", e))
+            })?;
+        }
+
+        if let Some(size) = socket_config.recv_buffer_size() {
+            socket.set_recv_buffer_size(size as usize).map_err(|e| {
+                HazelcastError::Connection(format!("failed to set SO_RCVBUF: {}", e))
+            })?;
+        }
+
+        if let Some(linger) = socket_config.linger() {
+            socket.set_linger(Some(linger)).map_err(|e| {
+                HazelcastError::Connection(format!("failed to set SO_LINGER: {}", e))
+            })?;
+        }
+
+        // Set non-blocking before connecting for tokio compatibility
+        socket.set_nonblocking(true).map_err(|e| {
+            HazelcastError::Connection(format!("failed to set non-blocking: {}", e))
+        })?;
+
+        socket.connect(&address.into()).or_else(|e| {
+            // Non-blocking connect returns WouldBlock/InProgress, which is expected
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.raw_os_error() == Some(10035) // WSAEWOULDBLOCK on Windows
+                || e.raw_os_error() == Some(115)   // EINPROGRESS on Linux
+            {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }).map_err(|e| {
+            HazelcastError::Connection(format!("failed to connect to {}: {}", address, e))
+        })?;
+
+        let std_stream: std::net::TcpStream = socket.into();
+        let stream = TcpStream::from_std(std_stream).map_err(|e| {
+            HazelcastError::Connection(format!("failed to convert to tokio TcpStream: {}", e))
+        })?;
+
+        // Wait for the connection to actually complete
+        stream.writable().await.map_err(|e| {
+            HazelcastError::Connection(format!("failed to connect to {}: {}", address, e))
+        })?;
+
+        // Check for connection error
+        if let Some(err) = stream.take_error().map_err(|e| {
+            HazelcastError::Connection(format!("failed to check connection status: {}", e))
+        })? {
+            return Err(HazelcastError::Connection(format!(
+                "failed to connect to {}: {}",
+                address, err
+            )));
+        }
+
+        Ok(stream)
     }
 
     /// Establishes a new TLS connection to the given address.
@@ -168,18 +255,24 @@ impl Connection {
         tls_config: &TlsConfig,
         server_name: Option<&str>,
     ) -> Result<Self> {
-        use std::io::BufReader;
-        use std::sync::Arc;
-        use tokio_rustls::rustls::{ClientConfig, RootCertStore};
-        use tokio_rustls::TlsConnector;
+        Self::connect_tls_with_socket_config(
+            address,
+            tls_config,
+            server_name,
+            &crate::config::SocketConfig::default(),
+        )
+        .await
+    }
 
-        let stream = TcpStream::connect(address).await.map_err(|e| {
-            HazelcastError::Connection(format!("failed to connect to {}: {}", address, e))
-        })?;
-
-        stream.set_nodelay(true).map_err(|e| {
-            HazelcastError::Connection(format!("failed to set TCP_NODELAY: {}", e))
-        })?;
+    /// Establishes a new TLS connection with custom socket options.
+    #[cfg(feature = "tls")]
+    pub async fn connect_tls_with_socket_config(
+        address: SocketAddr,
+        tls_config: &TlsConfig,
+        server_name: Option<&str>,
+        socket_config: &crate::config::SocketConfig,
+    ) -> Result<Self> {
+        let stream = Self::create_tcp_stream(address, socket_config).await?;
 
         let tls_stream = Self::perform_tls_handshake(stream, address, tls_config, server_name).await?;
 
