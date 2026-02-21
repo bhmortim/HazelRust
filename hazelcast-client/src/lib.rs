@@ -123,6 +123,7 @@
 //! | `kerberos` | Kerberos/GSSAPI authentication |
 //! | `kafka` | Kafka connectors for Jet pipelines |
 //! | `websocket` | WebSocket transport |
+//! | `config-file` | Declarative configuration from YAML/TOML files |
 
 #![warn(missing_docs)]
 
@@ -130,6 +131,7 @@ pub mod cache;
 pub mod cluster;
 mod client;
 pub mod config;
+pub mod config_file;
 pub mod connection;
 pub mod deployment;
 pub mod diagnostics;
@@ -138,6 +140,7 @@ pub mod jet;
 pub mod listener;
 #[cfg(feature = "metrics")]
 pub mod metrics;
+pub mod pipeline;
 pub mod proxy;
 pub mod query;
 pub mod security;
@@ -156,11 +159,14 @@ pub use executor::{
 pub use config::{
     ClientConfig, ClientConfigBuilder, ConfigError, DiagnosticsConfig, DiagnosticsConfigBuilder,
     NetworkConfig, NetworkConfigBuilder, PermissionAction, Permissions, QuorumConfig,
-    QuorumConfigBuilder, QuorumFunction, QuorumType, RetryConfig, RetryConfigBuilder,
-    RoutingMode, SecurityConfig, SecurityConfigBuilder, WanReplicationConfig,
-    WanReplicationConfigBuilder, WanReplicationRef, WanReplicationRefBuilder,
+    QuorumConfigBuilder, QuorumFunction, QuorumType, ReconnectMode, RetryConfig, RetryConfigBuilder,
+    RoutingMode, SecurityConfig, SecurityConfigBuilder, SocketConfig, SocketConfigBuilder,
+    WanReplicationConfig, WanReplicationConfigBuilder, WanReplicationRef, WanReplicationRefBuilder,
     WanTargetClusterConfig, WanTargetClusterConfigBuilder,
 };
+pub use config_file::{FileConfig, FileNetworkConfig, FileRetryConfig, FileSocketConfig};
+#[cfg(feature = "config-file")]
+pub use config_file::load_config;
 pub use diagnostics::{OperationTracker, SlowOperationDetector};
 #[cfg(feature = "metrics")]
 pub use metrics::{
@@ -174,6 +180,8 @@ pub use connection::{
     StaticAddressDiscovery,
 };
 pub use hazelcast_core as core;
+pub use hazelcast_core::PartitionAware;
+pub use pipeline::InvocationPipeline;
 pub use listener::{
     BoxedEntryListener, BoxedItemListener, EntryListener, FnEntryListener, FnEntryListenerBuilder,
     FnItemListener, ItemEvent, ItemEventType, ItemListener, ItemListenerConfig, LifecycleEvent,

@@ -25,6 +25,7 @@ websocket = ["tokio-tungstenite", "url"]
 eureka = ["reqwest"]
 kerberos = []
 tower = ["dep:tower"]
+config-file = ["dep:serde_yaml", "dep:toml_crate", "serde_json"]
 
 [dependencies]
 hazelcast-core = { path = "../hazelcast-core", features = ["serde"] }
@@ -44,6 +45,11 @@ rand = "0.8"
 base64 = "0.22"
 futures = "0.3"
 toml = "0.8"
+socket2 = "0.5"
+
+# Declarative config (optional, for YAML/TOML file config loading)
+serde_yaml = { version = "0.9", optional = true }
+toml_crate = { package = "toml", version = "0.8", optional = true }
 
 tokio-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2", optional = true }

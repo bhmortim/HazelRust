@@ -669,7 +669,7 @@ where
         message.add_frame(Self::long_frame(-1)); // TTL: no expiry
         message.add_frame(Self::long_frame(-1)); // Max idle: no expiry
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -710,7 +710,7 @@ where
         message.add_frame(Self::data_frame(&value_data));
         message.add_frame(Self::long_frame(-1)); // TTL: no expiry
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -749,7 +749,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -791,7 +791,7 @@ where
         message.add_frame(Self::data_frame(&old_value_data));
         message.add_frame(Self::data_frame(&new_value_data));
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -819,7 +819,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -859,7 +859,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -869,6 +869,124 @@ where
         self.check_quorum(true).await?;
         let key_data = Self::serialize_value(key)?;
         let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_CONTAINS_KEY, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+
+        let response = self.invoke_on_partition(partition_id, message).await?;
+        Self::decode_bool_response(&response)
+    }
+
+    /// Retrieves the value associated with the given key, using an explicit partition key
+    /// to determine routing.
+    ///
+    /// This is useful for co-locating related data on the same partition. The `partition_key`
+    /// is serialized and its hash is used for routing instead of the key's own hash.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Route both "user:123:profile" and "user:123:settings" to the same partition
+    /// let profile = map.get_with_partition_key(&"user:123:profile".into(), &"user:123".to_string()).await?;
+    /// ```
+    pub async fn get_with_partition_key(
+        &self,
+        key: &K,
+        partition_key: &impl Serializable,
+    ) -> Result<Option<V>> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+        self.stats_tracker.record_get();
+        let key_data = Self::serialize_value(key)?;
+        let pk_data = Self::serialize_value(partition_key)?;
+        let partition_id = compute_partition_hash(&pk_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_GET, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+
+        let response = self.invoke_on_partition(partition_id, message).await?;
+        Self::decode_nullable_response(&response)
+    }
+
+    /// Associates the specified value with the specified key, using an explicit partition key
+    /// to determine routing.
+    ///
+    /// This is useful for co-locating related data on the same partition.
+    ///
+    /// Returns the previous value associated with the key, or `None` if there was no mapping.
+    pub async fn put_with_partition_key(
+        &self,
+        key: K,
+        value: V,
+        partition_key: &impl Serializable,
+    ) -> Result<Option<V>> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        self.stats_tracker.record_put();
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+        let pk_data = Self::serialize_value(partition_key)?;
+        let partition_id = compute_partition_hash(&pk_data);
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
+        message.add_frame(Self::long_frame(-1)); // Max idle: no expiry
+
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        Self::decode_nullable_response(&response)
+    }
+
+    /// Removes the mapping for the specified key, using an explicit partition key
+    /// to determine routing.
+    ///
+    /// Returns the previous value associated with the key, or `None` if there was no mapping.
+    pub async fn remove_with_partition_key(
+        &self,
+        key: &K,
+        partition_key: &impl Serializable,
+    ) -> Result<Option<V>> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+        self.stats_tracker.record_remove();
+        let key_data = Self::serialize_value(key)?;
+        let pk_data = Self::serialize_value(partition_key)?;
+        let partition_id = compute_partition_hash(&pk_data);
+
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        Self::decode_nullable_response(&response)
+    }
+
+    /// Returns `true` if this map contains a mapping for the specified key, using an explicit
+    /// partition key to determine routing.
+    pub async fn contains_key_with_partition_key(
+        &self,
+        key: &K,
+        partition_key: &impl Serializable,
+    ) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+        let key_data = Self::serialize_value(key)?;
+        let pk_data = Self::serialize_value(partition_key)?;
+        let partition_id = compute_partition_hash(&pk_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_CONTAINS_KEY, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1049,7 +1167,7 @@ where
             message.add_frame(Self::data_frame(&value_data));
         }
 
-        self.invoke_on_random(message).await?;
+        self.invoke_on_random_mutating(message).await?;
         Ok(())
     }
 
@@ -1129,7 +1247,7 @@ where
             message.add_frame(Self::data_frame(&value_data));
         }
 
-        self.invoke_on_random(message).await?;
+        self.invoke_on_random_mutating(message).await?;
         Ok(())
     }
 
@@ -1272,7 +1390,7 @@ where
             message.add_frame(Self::string_frame(&self.name));
             message.add_frame(Self::data_frame(&key_data));
 
-            self.invoke_on_partition(partition_id, message).await?;
+            self.invoke_on_partition_mutating(partition_id, message).await?;
         }
 
         Ok(())
@@ -1317,7 +1435,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        self.invoke_on_random(message).await?;
+        self.invoke_on_random_mutating(message).await?;
         Ok(())
     }
 
@@ -1336,7 +1454,7 @@ where
         let mut message = ClientMessage::create_for_encode(MAP_CLEAR, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
-        self.invoke_on_random(message).await?;
+        self.invoke_on_random_mutating(message).await?;
         Ok(())
     }
 
@@ -1368,7 +1486,7 @@ where
         message.add_frame(Self::long_frame(-1)); // TTL: indefinite
         message.add_frame(Self::invocation_uid_frame());
 
-        self.invoke_on_partition(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
     }
 
@@ -1403,7 +1521,7 @@ where
         message.add_frame(Self::long_frame(timeout_ms));
         message.add_frame(Self::invocation_uid_frame());
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1428,7 +1546,7 @@ where
         message.add_frame(Self::long_frame(self.thread_id));
         message.add_frame(Self::invocation_uid_frame());
 
-        self.invoke_on_partition(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
     }
 
@@ -1475,7 +1593,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::invocation_uid_frame());
 
-        self.invoke_on_partition(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
     }
 
@@ -1517,7 +1635,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::long_frame(self.thread_id));
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1547,7 +1665,7 @@ where
         let mut message = ClientMessage::create_for_encode(MAP_EVICT_ALL, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
-        self.invoke_on_random(message).await?;
+        self.invoke_on_random_mutating(message).await?;
         Ok(())
     }
 
@@ -1573,7 +1691,7 @@ where
         let mut message = ClientMessage::create_for_encode(MAP_FLUSH, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
-        self.invoke_on_random(message).await?;
+        self.invoke_on_random_mutating(message).await?;
         Ok(())
     }
 
@@ -1642,7 +1760,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::long_frame(ttl_ms));
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1699,7 +1817,7 @@ where
         message.add_frame(Self::long_frame(self.thread_id));
         message.add_frame(Self::long_frame(timeout_ms));
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1748,7 +1866,7 @@ where
         message.add_frame(Self::long_frame(-1)); // TTL: no expiry
         message.add_frame(Self::long_frame(max_idle_ms));
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -1809,7 +1927,7 @@ where
         message.add_frame(Self::long_frame(ttl_ms));
         message.add_frame(Self::long_frame(max_idle_ms));
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -1871,7 +1989,7 @@ where
         message.add_frame(Self::long_frame(ttl_ms));
         message.add_frame(Self::long_frame(max_idle_ms));
 
-        self.invoke_on_partition(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
     }
 
@@ -1923,7 +2041,7 @@ where
         message.add_frame(Self::long_frame(self.thread_id));
         message.add_frame(Self::long_frame(ttl_ms));
 
-        self.invoke_on_partition(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
     }
 
@@ -1947,12 +2065,26 @@ where
         Frame::with_content(buf)
     }
 
+    /// Invokes a read (idempotent) operation on a specific partition with automatic retry.
     async fn invoke_on_partition(&self, partition_id: i32, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_partition(partition_id, message).await
+        self.connection_manager.invoke_on_partition_with_retry(partition_id, message, true).await
     }
 
+    /// Invokes a write (non-idempotent) operation on a specific partition with automatic retry.
+    ///
+    /// Non-idempotent operations are only retried when `redo_operation` is enabled in the config.
+    async fn invoke_on_partition_mutating(&self, partition_id: i32, message: ClientMessage) -> Result<ClientMessage> {
+        self.connection_manager.invoke_on_partition_with_retry(partition_id, message, false).await
+    }
+
+    /// Invokes a read (idempotent) operation on a random connection with automatic retry.
     async fn invoke_on_random(&self, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_random(message).await
+        self.connection_manager.invoke_on_random_with_retry(message, true).await
+    }
+
+    /// Invokes a write (non-idempotent) operation on a random connection with automatic retry.
+    async fn invoke_on_random_mutating(&self, message: ClientMessage) -> Result<ClientMessage> {
+        self.connection_manager.invoke_on_random_with_retry(message, false).await
     }
 
     fn decode_nullable_response<T: Deserializable>(response: &ClientMessage) -> Result<Option<T>> {
@@ -2725,7 +2857,7 @@ where
         message.add_frame(Self::data_frame(&processor_data));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_partition(partition_id, message).await?;
+        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response::<E::Output>(&response)
     }
 
@@ -2782,7 +2914,7 @@ where
             message.add_frame(Self::data_frame(&key_data));
         }
 
-        let response = self.invoke_on_random(message).await?;
+        let response = self.invoke_on_random_mutating(message).await?;
         self.decode_entry_processor_results::<E::Output>(&response)
     }
 
@@ -2851,7 +2983,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&processor_data));
 
-        let response = self.invoke_on_random(message).await?;
+        let response = self.invoke_on_random_mutating(message).await?;
         self.decode_entry_processor_results::<E::Output>(&response)
     }
 
@@ -2903,7 +3035,7 @@ where
         message.add_frame(Self::data_frame(&processor_data));
         message.add_frame(Self::data_frame(&predicate_data));
 
-        let response = self.invoke_on_random(message).await?;
+        let response = self.invoke_on_random_mutating(message).await?;
         self.decode_entry_processor_results::<E::Output>(&response)
     }
 
@@ -3041,7 +3173,7 @@ where
             message.add_frame(Self::bool_frame(false)); // no bitmap options
         }
 
-        self.invoke_on_random(message).await?;
+        self.invoke_on_random_mutating(message).await?;
         Ok(())
     }
 
@@ -4361,7 +4493,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&interceptor_data));
 
-        let response = self.invoke_on_random(message).await?;
+        let response = self.invoke_on_random_mutating(message).await?;
         Self::decode_string_response(&response)
     }
 
@@ -4406,7 +4538,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::bool_frame(replace_existing));
 
-        self.invoke_on_random(message).await?;
+        self.invoke_on_random_mutating(message).await?;
         Ok(())
     }
 
@@ -4763,7 +4895,7 @@ where
             message.add_frame(Self::data_frame(&key_data));
         }
 
-        self.invoke_on_random(message).await?;
+        self.invoke_on_random_mutating(message).await?;
         Ok(())
     }
 
@@ -4792,7 +4924,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::string_frame(id));
 
-        let response = self.invoke_on_random(message).await?;
+        let response = self.invoke_on_random_mutating(message).await?;
         Self::decode_bool_response(&response)
     }
 
