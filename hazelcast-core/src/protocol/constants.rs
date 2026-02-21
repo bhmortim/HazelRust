@@ -992,6 +992,43 @@ pub const VECTOR_COLLECTION_SET: i32 = 0x230A00;
 /// VectorCollection optimize request.
 pub const VECTOR_COLLECTION_OPTIMIZE: i32 = 0x230B00;
 
+// Transactional MultiMap operations
+
+/// Transactional MultiMap put request.
+pub const TXN_MULTIMAP_PUT: i32 = 0x0F0100;
+
+/// Transactional MultiMap get request.
+pub const TXN_MULTIMAP_GET: i32 = 0x0F0200;
+
+/// Transactional MultiMap remove request.
+pub const TXN_MULTIMAP_REMOVE: i32 = 0x0F0300;
+
+/// Transactional MultiMap remove entry request.
+pub const TXN_MULTIMAP_REMOVE_ENTRY: i32 = 0x0F0400;
+
+/// Transactional MultiMap size request.
+pub const TXN_MULTIMAP_SIZE: i32 = 0x0F0500;
+
+/// Transactional MultiMap value count request.
+pub const TXN_MULTIMAP_VALUE_COUNT: i32 = 0x0F0600;
+
+// Continuous Query Cache operations
+
+/// Continuous query cache create with value request.
+pub const CONTINUOUS_QUERY_CACHE_CREATE_WITH_VALUE: i32 = 0x140100;
+
+/// Continuous query cache set read cursor request.
+pub const CONTINUOUS_QUERY_CACHE_SET_READ_CURSOR: i32 = 0x140200;
+
+/// Continuous query cache destroy request.
+pub const CONTINUOUS_QUERY_CACHE_DESTROY: i32 = 0x140300;
+
+/// Continuous query cache add listener request.
+pub const CONTINUOUS_QUERY_ADD_LISTENER: i32 = 0x140400;
+
+/// Continuous query cache remove listener request.
+pub const CONTINUOUS_QUERY_REMOVE_LISTENER: i32 = 0x140500;
+
 // Protocol version constants
 
 /// Client protocol version.

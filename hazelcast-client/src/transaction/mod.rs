@@ -342,6 +342,25 @@ impl TransactionContext {
         ))
     }
 
+    /// Returns a transactional multimap proxy for the given name.
+    ///
+    /// All operations on the returned multimap will participate in this transaction.
+    ///
+    /// Returns an error if the transaction is not active.
+    pub fn get_multimap<K, V>(&self, name: &str) -> Result<TransactionalMultiMap<K, V>>
+    where
+        K: Serializable + Deserializable + Send + Sync,
+        V: Serializable + Deserializable + Send + Sync,
+    {
+        self.ensure_active("get_multimap")?;
+        Ok(TransactionalMultiMap::new(
+            name.to_string(),
+            Arc::clone(&self.connection_manager),
+            self.txn_id,
+            self.thread_id,
+        ))
+    }
+
     /// Ensures the transaction is in the `Active` state, returning an error if not.
     fn ensure_active(&self, operation: &str) -> Result<()> {
         if self.state != TransactionState::Active {
@@ -475,6 +494,25 @@ fn txn_decode_bool_response(response: &ClientMessage) -> Result<bool> {
             "response frame too short for bool field".to_string(),
         ))
     }
+}
+
+/// Decodes a collection (Vec) of deserialized values from response frames.
+fn txn_decode_collection_response<T: Deserializable>(
+    response: &ClientMessage,
+) -> Result<Vec<T>> {
+    let frames = response.frames();
+    let mut result = Vec::new();
+    for frame in frames.iter().skip(1) {
+        if frame.flags & IS_NULL_FLAG != 0 || frame.content.is_empty() {
+            continue;
+        }
+        if frame.flags & END_FLAG != 0 {
+            break;
+        }
+        let mut input = ObjectDataInput::new(&frame.content);
+        result.push(T::deserialize(&mut input)?);
+    }
+    Ok(result)
 }
 
 /// Decodes an i32 value from the initial frame of a response message.
@@ -910,6 +948,141 @@ where
 
         let response = txn_invoke(&self.connection_manager, message).await?;
         txn_decode_int_response(&response).map(|v| v as usize)
+    }
+}
+
+// ============================================================================
+// TransactionalMultiMap
+// ============================================================================
+
+/// A transactional proxy for a Hazelcast MultiMap.
+///
+/// All operations on this proxy participate in the enclosing transaction.
+/// Changes are only visible to other clients after the transaction is committed.
+pub struct TransactionalMultiMap<K, V> {
+    name: String,
+    connection_manager: Arc<ConnectionManager>,
+    txn_id: Uuid,
+    thread_id: i64,
+    _phantom: PhantomData<fn() -> (K, V)>,
+}
+
+impl<K, V> TransactionalMultiMap<K, V>
+where
+    K: Serializable + Deserializable + Send + Sync,
+    V: Serializable + Deserializable + Send + Sync,
+{
+    fn new(
+        name: String,
+        connection_manager: Arc<ConnectionManager>,
+        txn_id: Uuid,
+        thread_id: i64,
+    ) -> Self {
+        Self {
+            name,
+            connection_manager,
+            txn_id,
+            thread_id,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Stores a key-value pair in the multimap.
+    ///
+    /// Returns `true` if the pair was added (i.e., the value was not already
+    /// associated with the key).
+    pub async fn put(&self, key: K, value: V) -> Result<bool> {
+        let key_data = txn_serialize_value(&key)?;
+        let value_data = txn_serialize_value(&value)?;
+
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_PUT);
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
+        message.add_frame(txn_data_frame(&value_data));
+
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_bool_response(&response)
+    }
+
+    /// Returns all values associated with the given key.
+    pub async fn get(&self, key: &K) -> Result<Vec<V>> {
+        let key_data = txn_serialize_value(key)?;
+
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_GET);
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
+
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_collection_response(&response)
+    }
+
+    /// Removes all values associated with the given key.
+    ///
+    /// Returns the collection of removed values.
+    pub async fn remove(&self, key: &K) -> Result<Vec<V>> {
+        let key_data = txn_serialize_value(key)?;
+
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_REMOVE);
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
+
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_collection_response(&response)
+    }
+
+    /// Removes a single key-value pair from the multimap.
+    ///
+    /// Returns `true` if the pair was removed.
+    pub async fn remove_entry(&self, key: &K, value: &V) -> Result<bool> {
+        let key_data = txn_serialize_value(key)?;
+        let value_data = txn_serialize_value(value)?;
+
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_REMOVE_ENTRY);
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
+        message.add_frame(txn_data_frame(&value_data));
+
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_bool_response(&response)
+    }
+
+    /// Returns the number of values associated with the given key.
+    pub async fn value_count(&self, key: &K) -> Result<i32> {
+        let key_data = txn_serialize_value(key)?;
+
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_VALUE_COUNT);
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+        message.add_frame(txn_data_frame(&key_data));
+
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_int_response(&response)
+    }
+
+    /// Returns the total number of key-value pairs in the multimap.
+    pub async fn size(&self) -> Result<i32> {
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_SIZE);
+        message.add_frame(txn_string_frame(&self.name));
+        message.add_frame(txn_uuid_frame(self.txn_id));
+        message.add_frame(txn_long_frame(self.thread_id));
+
+        let response = txn_invoke(&self.connection_manager, message).await?;
+        txn_decode_int_response(&response)
     }
 }
 
