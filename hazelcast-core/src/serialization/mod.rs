@@ -29,7 +29,7 @@ pub use portable::{
     PORTABLE_TYPE_ID,
 };
 pub use json::{HazelcastJsonValue, JSON_TYPE_ID};
-pub use traits::{Deserializable, Serializable};
+pub use traits::{Deserializable, PartitionAware, Serializable};
 
 #[cfg(feature = "serde")]
 pub use self::serde::Serde;
@@ -39,32 +39,35 @@ use std::sync::Arc;
 
 use crate::Result;
 
+/// A global serializer used as the last-resort fallback for types that don't
+/// match any other serialization strategy.
+///
+/// Register a global serializer via [`SerializationConfig`] to handle custom
+/// types that aren't covered by Compact, Portable, IdentifiedDataSerializable,
+/// or serde.
+pub trait GlobalSerializer: Send + Sync {
+    /// Returns the type ID for the global serializer.
+    fn type_id(&self) -> i32;
+
+    /// Serializes a value to the output stream.
+    fn serialize(
+        &self,
+        output: &mut ObjectDataOutput,
+        value: &dyn std::any::Any,
+    ) -> crate::Result<()>;
+
+    /// Deserializes a value from the input stream.
+    fn deserialize(
+        &self,
+        input: &mut ObjectDataInput,
+    ) -> crate::Result<Box<dyn std::any::Any + Send>>;
+}
+
 /// Trait for custom serializers that can serialize/deserialize arbitrary types.
 ///
 /// Custom serializers are identified by a unique type ID and provide raw byte-level
 /// serialization. They are used when the built-in serialization formats (Portable,
 /// Compact, serde) are not suitable.
-///
-/// # Example
-///
-/// ```ignore
-/// use hazelcast_core::serialization::{CustomSerializer, ObjectDataInput, ObjectDataOutput};
-///
-/// struct MySerializer;
-///
-/// impl CustomSerializer for MySerializer {
-///     fn type_id(&self) -> i32 { 1000 }
-///
-///     fn write(&self, output: &mut ObjectDataOutput, data: &[u8]) -> hazelcast_core::Result<()> {
-///         output.write_bytes(data);
-///         Ok(())
-///     }
-///
-///     fn read(&self, input: &mut ObjectDataInput) -> hazelcast_core::Result<Vec<u8>> {
-///         input.read_remaining_bytes()
-///     }
-/// }
-/// ```
 pub trait CustomSerializer: Send + Sync {
     /// Returns the unique type ID for this serializer.
     ///
@@ -83,20 +86,12 @@ pub trait CustomSerializer: Send + Sync {
 ///
 /// Allows registering custom serializers, a global fallback serializer,
 /// and configuring Portable serialization version.
-///
-/// # Example
-///
-/// ```ignore
-/// use hazelcast_core::serialization::SerializationConfig;
-///
-/// let config = SerializationConfig::new()
-///     .portable_version(2)
-///     .global_serializer(MyGlobalSerializer);
-/// ```
 pub struct SerializationConfig {
     custom_serializers: HashMap<i32, Arc<dyn CustomSerializer>>,
     global_serializer: Option<Arc<dyn CustomSerializer>>,
     portable_version: i32,
+    /// Whether to check class definition errors (default: true).
+    pub check_class_def_errors: bool,
 }
 
 impl Default for SerializationConfig {
@@ -105,6 +100,7 @@ impl Default for SerializationConfig {
             custom_serializers: HashMap::new(),
             global_serializer: None,
             portable_version: 0,
+            check_class_def_errors: true,
         }
     }
 }
@@ -115,6 +111,7 @@ impl std::fmt::Debug for SerializationConfig {
             .field("custom_serializer_count", &self.custom_serializers.len())
             .field("has_global_serializer", &self.global_serializer.is_some())
             .field("portable_version", &self.portable_version)
+            .field("check_class_def_errors", &self.check_class_def_errors)
             .finish()
     }
 }
@@ -125,6 +122,7 @@ impl Clone for SerializationConfig {
             custom_serializers: self.custom_serializers.clone(),
             global_serializer: self.global_serializer.clone(),
             portable_version: self.portable_version,
+            check_class_def_errors: self.check_class_def_errors,
         }
     }
 }
@@ -155,6 +153,12 @@ impl SerializationConfig {
     /// Sets the Portable serialization version.
     pub fn portable_version(mut self, version: i32) -> Self {
         self.portable_version = version;
+        self
+    }
+
+    /// Sets whether to check class definition errors.
+    pub fn with_check_class_def_errors(mut self, check: bool) -> Self {
+        self.check_class_def_errors = check;
         self
     }
 

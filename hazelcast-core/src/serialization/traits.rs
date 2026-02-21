@@ -234,6 +234,40 @@ impl<T: Deserializable> Deserializable for Option<T> {
 }
 
 // ============================================================================
+// PartitionAware support for data affinity / co-location
+// ============================================================================
+
+/// Trait for keys that should be co-located with a specific partition key.
+///
+/// When a type implements `PartitionAware`, the Hazelcast client uses the
+/// partition key (instead of the raw key) to determine which cluster member
+/// owns the data. This enables co-location of related data on the same
+/// partition for efficient local operations.
+///
+/// # Example
+///
+/// ```ignore
+/// struct OrderKey {
+///     customer_id: String,
+///     order_id: i64,
+/// }
+///
+/// impl PartitionAware for OrderKey {
+///     type PartitionKey = String;
+///     fn partition_key(&self) -> &String {
+///         &self.customer_id  // all orders for a customer go to the same partition
+///     }
+/// }
+/// ```
+pub trait PartitionAware {
+    /// The type of the partition key used for routing.
+    type PartitionKey: Serializable;
+
+    /// Returns the partition key that determines data placement.
+    fn partition_key(&self) -> &Self::PartitionKey;
+}
+
+// ============================================================================
 // Collection serialization helpers
 // ============================================================================
 

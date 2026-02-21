@@ -7,7 +7,7 @@
 //!
 //! Requires a Hazelcast cluster running on localhost:5701.
 
-use hazelcast_client::{ClientConfig, HazelcastClient};
+use hazelcast_client::{ClientConfig, HazelcastClient, SqlStatement, SqlValue};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,10 +19,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = HazelcastClient::new(config).await?;
 
     // Create mapping for the employees map
-    let sql = client.get_sql();
+    let sql = client.sql();
 
     // Create the mapping (required for SQL access)
-    sql.execute(
+    sql.execute(SqlStatement::new(
         r#"
         CREATE OR REPLACE MAPPING employees (
             __key BIGINT,
@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             'valueFormat' = 'json-flat'
         )
         "#,
-    )
+    ))
     .await?;
 
     println!("Created SQL mapping for 'employees' map\n");
@@ -52,10 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     for (id, name, dept, salary) in &employees {
-        sql.execute(&format!(
+        sql.execute(SqlStatement::new(format!(
             "INSERT INTO employees VALUES ({}, '{}', '{}', {})",
             id, name, dept, salary
-        ))
+        )))
         .await?;
     }
 
@@ -63,38 +63,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Query 1: Select all
     println!("--- All Employees ---");
-    let result = sql
-        .execute("SELECT __key, name, department, salary FROM employees ORDER BY __key")
+    let mut result = sql
+        .execute(SqlStatement::new(
+            "SELECT __key, name, department, salary FROM employees ORDER BY __key",
+        ))
         .await?;
 
-    for row in result.rows() {
-        println!(
-            "  [{:>2}] {} ({}) - ${}",
-            row.get::<i64>("__key")?,
-            row.get::<String>("name")?,
-            row.get::<String>("department")?,
-            row.get::<i64>("salary")?
-        );
+    while let Some(row) = result.next_row().await? {
+        let key = row.get_by_name("__key").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let name = row.get_by_name("name").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let dept = row.get_by_name("department").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let salary = row.get_by_name("salary").map(|v| format!("{:?}", v)).unwrap_or_default();
+        println!("  {} {} ({}) - {}", key, name, dept, salary);
     }
 
     // Query 2: Filter by department
     println!("\n--- Engineering Department ---");
-    let result = sql
-        .execute("SELECT name, salary FROM employees WHERE department = 'Engineering' ORDER BY salary DESC")
+    let mut result = sql
+        .execute(SqlStatement::new(
+            "SELECT name, salary FROM employees WHERE department = 'Engineering' ORDER BY salary DESC",
+        ))
         .await?;
 
-    for row in result.rows() {
-        println!(
-            "  {} - ${}",
-            row.get::<String>("name")?,
-            row.get::<i64>("salary")?
-        );
+    while let Some(row) = result.next_row().await? {
+        let name = row.get_by_name("name").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let salary = row.get_by_name("salary").map(|v| format!("{:?}", v)).unwrap_or_default();
+        println!("  {} - {}", name, salary);
     }
 
     // Query 3: Aggregation
     println!("\n--- Department Statistics ---");
-    let result = sql
-        .execute(
+    let mut result = sql
+        .execute(SqlStatement::new(
             r#"
             SELECT
                 department,
@@ -105,35 +105,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             GROUP BY department
             ORDER BY avg_salary DESC
             "#,
-        )
+        ))
         .await?;
 
-    for row in result.rows() {
-        println!(
-            "  {}: {} employees, avg ${:.0}, max ${}",
-            row.get::<String>("department")?,
-            row.get::<i64>("employee_count")?,
-            row.get::<f64>("avg_salary")?,
-            row.get::<i64>("max_salary")?
-        );
+    while let Some(row) = result.next_row().await? {
+        let dept = row.get_by_name("department").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let count = row.get_by_name("employee_count").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let avg = row.get_by_name("avg_salary").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let max = row.get_by_name("max_salary").map(|v| format!("{:?}", v)).unwrap_or_default();
+        println!("  {}: {} employees, avg {}, max {}", dept, count, avg, max);
     }
 
     // Query 4: High earners
     println!("\n--- High Earners (salary > $80,000) ---");
-    let result = sql
-        .execute("SELECT name, salary FROM employees WHERE salary > 80000 ORDER BY salary DESC")
+    let mut result = sql
+        .execute(SqlStatement::new(
+            "SELECT name, salary FROM employees WHERE salary > 80000 ORDER BY salary DESC",
+        ))
         .await?;
 
-    for row in result.rows() {
-        println!(
-            "  {} - ${}",
-            row.get::<String>("name")?,
-            row.get::<i64>("salary")?
-        );
+    while let Some(row) = result.next_row().await? {
+        let name = row.get_by_name("name").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let salary = row.get_by_name("salary").map(|v| format!("{:?}", v)).unwrap_or_default();
+        println!("  {} - {}", name, salary);
     }
 
     // Clean up
-    sql.execute("DROP MAPPING IF EXISTS employees").await?;
+    sql.execute(SqlStatement::new("DROP MAPPING IF EXISTS employees"))
+        .await?;
     let map = client.get_map::<i64, String>("employees");
     map.clear().await?;
     client.shutdown().await?;

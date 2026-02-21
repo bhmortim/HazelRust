@@ -8,10 +8,10 @@ use uuid::Uuid;
 
 use crate::cluster::{
     CPSessionManagementService, CPSubsystemManagementService, ClusterService, LifecycleService,
-    PartitionService,
+    PartitionService, SplitBrainProtectionService,
 };
 use crate::config::ClientConfig;
-use crate::connection::ConnectionManager;
+use crate::connection::{ConnectionEvent, ConnectionManager, DataConnectionService};
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};
 use crate::executor::ExecutorService;
 use crate::jet::JetService;
@@ -24,7 +24,7 @@ use crate::listener::{
 use crate::proxy::{
     AtomicLong, AtomicReference, CPMap, CardinalityEstimator, CountDownLatch, FencedLock,
     FlakeIdGenerator, ICache, IList, IMap, IQueue, ISet, ITopic, MultiMap, PNCounter,
-    ReliableTopic, ReplicatedMap, Ringbuffer, Semaphore,
+    ReliableTopic, ReplicatedMap, Ringbuffer, Semaphore, VectorCollection,
 };
 use crate::sql::SqlService;
 use crate::transaction::{TransactionContext, TransactionOptions, XATransaction, Xid};
@@ -138,6 +138,49 @@ impl std::fmt::Debug for MigrationListenerState {
     }
 }
 
+/// Listener for connection lifecycle events.
+///
+/// Implement this trait to receive notifications when connections to
+/// cluster members are opened or closed.
+///
+/// # Example
+///
+/// ```ignore
+/// use hazelcast_client::client::{ConnectionListener, ConnectionEvent};
+///
+/// struct MyConnectionListener;
+///
+/// impl ConnectionListener for MyConnectionListener {
+///     fn connection_opened(&self, event: &ConnectionEvent) {
+///         println!("Connection opened: {:?}", event);
+///     }
+///
+///     fn connection_closed(&self, event: &ConnectionEvent) {
+///         println!("Connection closed: {:?}", event);
+///     }
+/// }
+/// ```
+pub trait ConnectionListener: Send + Sync {
+    /// Called when a new connection to a cluster member is established.
+    fn connection_opened(&self, event: &ConnectionEvent);
+
+    /// Called when a connection to a cluster member is closed.
+    fn connection_closed(&self, event: &ConnectionEvent);
+}
+
+/// Internal state for managing connection listeners.
+struct ConnectionListenerState {
+    listeners: std::collections::HashMap<ListenerId, (Arc<dyn ConnectionListener>, ListenerRegistration)>,
+}
+
+impl std::fmt::Debug for ConnectionListenerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionListenerState")
+            .field("listener_count", &self.listeners.len())
+            .finish()
+    }
+}
+
 /// The main entry point for connecting to a Hazelcast cluster.
 ///
 /// `HazelcastClient` manages connections to cluster members and provides
@@ -174,6 +217,8 @@ pub struct HazelcastClient {
     client_state_listeners: RwLock<ClientStateListenerState>,
     partition_lost_listeners: RwLock<PartitionLostListenerState>,
     migration_listeners: RwLock<MigrationListenerState>,
+    connection_listeners: RwLock<ConnectionListenerState>,
+    user_context: Arc<RwLock<std::collections::HashMap<String, Box<dyn std::any::Any + Send + Sync>>>>,
 }
 
 impl HazelcastClient {
@@ -216,6 +261,10 @@ impl HazelcastClient {
             migration_listeners: RwLock::new(MigrationListenerState {
                 listeners: std::collections::HashMap::new(),
             }),
+            connection_listeners: RwLock::new(ConnectionListenerState {
+                listeners: std::collections::HashMap::new(),
+            }),
+            user_context: Arc::new(RwLock::new(std::collections::HashMap::new())),
         })
     }
 
@@ -553,6 +602,39 @@ impl HazelcastClient {
         V: Serializable + Deserializable + Send + Sync,
     {
         ICache::new(name.to_string(), Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns a distributed vector collection proxy for the given name.
+    ///
+    /// The vector collection proxy supports storing documents with associated vectors
+    /// and performing similarity searches using configurable distance metrics.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `K`: The key type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    /// - `V`: The value type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::proxy::{VectorDocument, VectorValue};
+    /// use std::collections::HashMap;
+    ///
+    /// let collection = client.get_vector_collection::<String, String>("my-vectors");
+    ///
+    /// let mut vectors = HashMap::new();
+    /// vectors.insert("embedding".to_string(), VectorValue::Dense(vec![0.1, 0.2, 0.3]));
+    /// let doc = VectorDocument::new("document text".to_string(), vectors);
+    ///
+    /// collection.put("doc-1".to_string(), doc).await?;
+    /// let results = collection.search_near_vector("embedding", vec![0.1, 0.2, 0.3], 10).await?;
+    /// ```
+    pub fn get_vector_collection<K, V>(&self, name: &str) -> VectorCollection<K, V>
+    where
+        K: Serializable + Deserializable + Send + Sync,
+        V: Serializable + Deserializable + Send + Sync,
+    {
+        VectorCollection::new(name.to_string(), Arc::clone(&self.connection_manager))
     }
 
     /// Returns a distributed CardinalityEstimator proxy for the given name.
@@ -922,6 +1004,59 @@ impl HazelcastClient {
     /// ```
     pub fn cp_session_management(&self) -> CPSessionManagementService {
         CPSessionManagementService::new(Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns the split-brain protection service for checking quorum status.
+    ///
+    /// The split-brain protection service allows checking whether a quorum of
+    /// cluster members is present for a given data structure, as configured by
+    /// `QuorumConfig` entries in the client configuration.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let sbp = client.split_brain_protection();
+    ///
+    /// // Check if quorum is present for a map
+    /// if sbp.is_quorum_present("my-map").await {
+    ///     println!("Quorum present, safe to operate");
+    /// }
+    ///
+    /// // List all configured quorum names
+    /// let names = sbp.get_quorum_names();
+    /// for name in &names {
+    ///     println!("Quorum: {}", name);
+    /// }
+    /// ```
+    pub fn split_brain_protection(&self) -> SplitBrainProtectionService {
+        SplitBrainProtectionService::new(Arc::clone(&self.connection_manager))
+    }
+
+    /// Returns the data connection service for querying external data source configurations.
+    ///
+    /// The data connection service provides access to named connection configurations
+    /// that Hazelcast uses to communicate with external systems (databases, message
+    /// queues, object stores, etc.).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let dc_service = client.data_connection_service();
+    ///
+    /// // Get a specific data connection config
+    /// if let Some(config) = dc_service.get_config("my-postgres").await? {
+    ///     println!("Type: {}", config.connection_type());
+    ///     println!("Shared: {}", config.is_shared());
+    /// }
+    ///
+    /// // List all data connections
+    /// let configs = dc_service.list_configs().await?;
+    /// for config in configs {
+    ///     println!("{}: {}", config.name(), config.connection_type());
+    /// }
+    /// ```
+    pub fn data_connection_service(&self) -> DataConnectionService {
+        DataConnectionService::new(Arc::clone(&self.connection_manager))
     }
 
     /// Subscribes to cluster membership events.
@@ -1558,6 +1693,195 @@ impl HazelcastClient {
     /// This is primarily used internally by proxies to record operation counts.
     pub fn statistics_collector(&self) -> &Arc<StatisticsCollector> {
         &self.statistics_collector
+    }
+
+    /// Adds a connection listener.
+    ///
+    /// The listener will be notified when connections to cluster members are
+    /// opened or closed.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener` - The connection listener to add
+    ///
+    /// # Returns
+    ///
+    /// A `ListenerId` that can be used to remove the listener later.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::client::ConnectionListener;
+    /// use hazelcast_client::connection::ConnectionEvent;
+    ///
+    /// struct MyConnectionListener;
+    ///
+    /// impl ConnectionListener for MyConnectionListener {
+    ///     fn connection_opened(&self, event: &ConnectionEvent) {
+    ///         println!("Opened: {:?}", event);
+    ///     }
+    ///     fn connection_closed(&self, event: &ConnectionEvent) {
+    ///         println!("Closed: {:?}", event);
+    ///     }
+    /// }
+    ///
+    /// let listener_id = client.add_connection_listener(MyConnectionListener).await?;
+    /// ```
+    pub async fn add_connection_listener<L>(&self, listener: L) -> Result<ListenerId>
+    where
+        L: ConnectionListener + 'static,
+    {
+        let listener_id = ListenerId::new();
+        let registration = ListenerRegistration::new(listener_id);
+        let listener_arc: Arc<dyn ConnectionListener> = Arc::new(listener);
+
+        let mut rx = self.connection_manager.subscribe();
+        let listener_clone = Arc::clone(&listener_arc);
+        let active_flag = registration.active_flag();
+
+        tokio::spawn(async move {
+            while active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                match rx.recv().await {
+                    Ok(event) => {
+                        if !active_flag.load(std::sync::atomic::Ordering::Acquire) {
+                            break;
+                        }
+                        match &event {
+                            ConnectionEvent::Connected { .. } => {
+                                listener_clone.connection_opened(&event);
+                            }
+                            ConnectionEvent::Disconnected { .. } => {
+                                listener_clone.connection_closed(&event);
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        {
+            let mut state = self
+                .connection_listeners
+                .write()
+                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+            state.listeners.insert(listener_id, (listener_arc, registration));
+        }
+
+        tracing::debug!(listener_id = %listener_id, "added connection listener");
+        Ok(listener_id)
+    }
+
+    /// Removes a connection listener.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener_id` - The ID of the listener to remove
+    ///
+    /// # Returns
+    ///
+    /// `true` if the listener was found and removed, `false` otherwise.
+    pub async fn remove_connection_listener(&self, listener_id: ListenerId) -> Result<bool> {
+        let removed = {
+            let mut state = self
+                .connection_listeners
+                .write()
+                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+
+            if let Some((_, registration)) = state.listeners.remove(&listener_id) {
+                registration.deactivate();
+                true
+            } else {
+                false
+            }
+        };
+
+        if removed {
+            tracing::debug!(listener_id = %listener_id, "removed connection listener");
+        }
+
+        Ok(removed)
+    }
+
+    /// Returns a reference to the user context map.
+    ///
+    /// The user context allows storing arbitrary application-specific data
+    /// alongside the client instance. This is useful for associating
+    /// metadata, configuration objects, or shared state with the client.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the thread-safe user context map.
+    pub fn get_user_context(&self) -> &Arc<RwLock<std::collections::HashMap<String, Box<dyn std::any::Any + Send + Sync>>>> {
+        &self.user_context
+    }
+
+    /// Sets a value in the user context map.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `T`: The value type, must be `Send + Sync + 'static`
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to store the value under
+    /// * `value` - The value to store
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// client.set_user_context_value("app.name", "my-service".to_string());
+    /// client.set_user_context_value("app.started_at", std::time::Instant::now());
+    /// ```
+    pub fn set_user_context_value<T: Send + Sync + 'static>(
+        &self,
+        key: impl Into<String>,
+        value: T,
+    ) {
+        if let Ok(mut ctx) = self.user_context.write() {
+            ctx.insert(key.into(), Box::new(value));
+        }
+    }
+
+    /// Retrieves a value from the user context map.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `T`: The expected value type, must be `Send + Sync + 'static`
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to look up
+    ///
+    /// # Returns
+    ///
+    /// `Some(&T)` if the key exists and the value matches the requested type,
+    /// `None` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// client.set_user_context_value("counter", 42u64);
+    ///
+    /// if let Some(counter) = client.get_user_context_value::<u64>("counter") {
+    ///     println!("Counter: {}", counter);
+    /// }
+    /// ```
+    pub fn get_user_context_value<T: Send + Sync + 'static>(&self, key: &str) -> Option<T>
+    where
+        T: Clone,
+    {
+        if let Ok(ctx) = self.user_context.read() {
+            ctx.get(key).and_then(|v| v.downcast_ref::<T>()).cloned()
+        } else {
+            None
+        }
     }
 
     /// Shuts down the client and closes all connections.

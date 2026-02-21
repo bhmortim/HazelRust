@@ -573,7 +573,11 @@ pub struct NetworkConfig {
     wan_replication: Vec<WanReplicationConfig>,
     load_balancer: Arc<dyn LoadBalancer>,
     smart_routing: bool,
+    routing_mode: RoutingMode,
     reconnect_mode: ReconnectMode,
+    backup_ack_to_client_enabled: bool,
+    outbound_ports: Vec<u16>,
+    outbound_port_definitions: Vec<String>,
     socket: SocketConfig,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
@@ -598,7 +602,11 @@ impl std::fmt::Debug for NetworkConfig {
             .field("wan_replication", &self.wan_replication)
             .field("load_balancer", &self.load_balancer)
             .field("smart_routing", &self.smart_routing)
+            .field("routing_mode", &self.routing_mode)
             .field("reconnect_mode", &self.reconnect_mode)
+            .field("backup_ack_to_client_enabled", &self.backup_ack_to_client_enabled)
+            .field("outbound_ports", &self.outbound_ports)
+            .field("outbound_port_definitions", &self.outbound_port_definitions)
             .field("socket", &self.socket);
         #[cfg(feature = "aws")]
         s.field("aws_discovery", &self.aws_discovery);
@@ -696,6 +704,16 @@ impl NetworkConfig {
         self.smart_routing
     }
 
+    /// Returns the routing mode for client operations.
+    ///
+    /// Controls how the client routes operations to cluster members:
+    /// - `AllMembers`: Connect to all members (default, equivalent to smart routing)
+    /// - `SingleMember`: Connect to a single member only (unisocket mode)
+    /// - `MultiMember`: Connect to a subset of members
+    pub fn routing_mode(&self) -> &RoutingMode {
+        &self.routing_mode
+    }
+
     /// Returns the reconnection mode.
     ///
     /// Controls how the client handles lost connections:
@@ -704,6 +722,28 @@ impl NetworkConfig {
     /// - `Async`: Asynchronous reconnection in background
     pub fn reconnect_mode(&self) -> ReconnectMode {
         self.reconnect_mode
+    }
+
+    /// Returns whether backup acknowledgment to client is enabled.
+    ///
+    /// When enabled, the client waits for backup acknowledgments before
+    /// completing mutation operations, providing stronger consistency guarantees.
+    pub fn backup_ack_to_client_enabled(&self) -> bool {
+        self.backup_ack_to_client_enabled
+    }
+
+    /// Returns the configured outbound ports.
+    ///
+    /// When configured, the client will use only these ports for outgoing connections.
+    pub fn outbound_ports(&self) -> &[u16] {
+        &self.outbound_ports
+    }
+
+    /// Returns the outbound port definitions (port ranges as strings).
+    ///
+    /// Port definitions can include ranges like "34000-35000" or individual ports.
+    pub fn outbound_port_definitions(&self) -> &[String] {
+        &self.outbound_port_definitions
     }
 
     /// Returns the socket configuration for TCP connections.
@@ -723,7 +763,11 @@ impl Default for NetworkConfig {
             wan_replication: Vec::new(),
             load_balancer: default_load_balancer(),
             smart_routing: true,
+            routing_mode: RoutingMode::default(),
             reconnect_mode: ReconnectMode::default(),
+            backup_ack_to_client_enabled: false,
+            outbound_ports: Vec::new(),
+            outbound_port_definitions: Vec::new(),
             socket: SocketConfig::default(),
             #[cfg(feature = "aws")]
             aws_discovery: None,
@@ -750,7 +794,11 @@ pub struct NetworkConfigBuilder {
     wan_replication: Vec<WanReplicationConfig>,
     load_balancer: Option<Arc<dyn LoadBalancer>>,
     smart_routing: Option<bool>,
+    routing_mode: Option<RoutingMode>,
     reconnect_mode: Option<ReconnectMode>,
+    backup_ack_to_client_enabled: Option<bool>,
+    outbound_ports: Vec<u16>,
+    outbound_port_definitions: Vec<String>,
     socket: SocketConfigBuilder,
     #[cfg(feature = "aws")]
     aws_discovery: Option<AwsDiscoveryConfig>,
@@ -775,7 +823,11 @@ impl std::fmt::Debug for NetworkConfigBuilder {
             .field("wan_replication", &self.wan_replication)
             .field("load_balancer", &self.load_balancer.is_some())
             .field("smart_routing", &self.smart_routing)
+            .field("routing_mode", &self.routing_mode)
             .field("reconnect_mode", &self.reconnect_mode)
+            .field("backup_ack_to_client_enabled", &self.backup_ack_to_client_enabled)
+            .field("outbound_ports", &self.outbound_ports)
+            .field("outbound_port_definitions", &self.outbound_port_definitions)
             .field("socket", &self.socket);
         #[cfg(feature = "aws")]
         s.field("aws_discovery", &self.aws_discovery);
@@ -986,6 +1038,82 @@ impl NetworkConfigBuilder {
         self
     }
 
+    /// Sets the routing mode for client operations.
+    ///
+    /// Controls how the client routes operations to cluster members:
+    /// - `RoutingMode::AllMembers`: Connect to all members (default)
+    /// - `RoutingMode::SingleMember`: Connect to a single member only
+    /// - `RoutingMode::MultiMember { member_count }`: Connect to a subset of members
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use hazelcast_client::config::{NetworkConfigBuilder, RoutingMode};
+    ///
+    /// let config = NetworkConfigBuilder::new()
+    ///     .routing_mode(RoutingMode::MultiMember { member_count: 3 })
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn routing_mode(mut self, mode: RoutingMode) -> Self {
+        self.routing_mode = Some(mode);
+        self
+    }
+
+    /// Enables or disables backup acknowledgment to client.
+    ///
+    /// When enabled, the client waits for backup acknowledgments before
+    /// completing mutation operations, providing stronger consistency guarantees.
+    /// Defaults to `false`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = NetworkConfigBuilder::new()
+    ///     .backup_ack_to_client_enabled(true)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn backup_ack_to_client_enabled(mut self, enabled: bool) -> Self {
+        self.backup_ack_to_client_enabled = Some(enabled);
+        self
+    }
+
+    /// Adds an outbound port for client connections.
+    ///
+    /// When configured, the client will use only these ports for outgoing connections.
+    pub fn add_outbound_port(mut self, port: u16) -> Self {
+        self.outbound_ports.push(port);
+        self
+    }
+
+    /// Sets the outbound ports for client connections, replacing any previously configured.
+    ///
+    /// When configured, the client will use only these ports for outgoing connections.
+    pub fn outbound_ports(mut self, ports: impl IntoIterator<Item = u16>) -> Self {
+        self.outbound_ports = ports.into_iter().collect();
+        self
+    }
+
+    /// Adds an outbound port definition (port range as a string).
+    ///
+    /// Port definitions can include ranges like "34000-35000" or individual ports like "5701".
+    pub fn add_outbound_port_definition(mut self, definition: impl Into<String>) -> Self {
+        self.outbound_port_definitions.push(definition.into());
+        self
+    }
+
+    /// Sets the outbound port definitions, replacing any previously configured.
+    ///
+    /// Port definitions can include ranges like "34000-35000" or individual ports like "5701".
+    pub fn outbound_port_definitions(
+        mut self,
+        definitions: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.outbound_port_definitions = definitions.into_iter().collect();
+        self
+    }
+
     /// Builds the network configuration.
     pub fn build(self) -> Result<NetworkConfig, ConfigError> {
         let addresses = if self.addresses.is_empty() {
@@ -1005,7 +1133,11 @@ impl NetworkConfigBuilder {
             wan_replication: self.wan_replication,
             load_balancer: self.load_balancer.unwrap_or_else(default_load_balancer),
             smart_routing: self.smart_routing.unwrap_or(true),
+            routing_mode: self.routing_mode.unwrap_or_default(),
             reconnect_mode: self.reconnect_mode.unwrap_or_default(),
+            backup_ack_to_client_enabled: self.backup_ack_to_client_enabled.unwrap_or(false),
+            outbound_ports: self.outbound_ports,
+            outbound_port_definitions: self.outbound_port_definitions,
             socket: self.socket.build(),
             #[cfg(feature = "aws")]
             aws_discovery: self.aws_discovery,
@@ -1823,6 +1955,56 @@ impl ReconnectMode {
     }
 }
 
+/// Routing mode for client operations.
+///
+/// Controls how the client routes operations to cluster members.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoutingMode {
+    /// Connect to all members. Operations are routed to the member that owns
+    /// the partition for the operation's key (smart routing).
+    AllMembers,
+    /// Connect to a single member only. All operations go through one connection
+    /// (unisocket mode).
+    SingleMember,
+    /// Connect to a subset of members. The client maintains connections to the
+    /// specified number of members and routes operations among them.
+    MultiMember {
+        /// The number of members to connect to.
+        member_count: usize,
+    },
+}
+
+impl Default for RoutingMode {
+    fn default() -> Self {
+        RoutingMode::AllMembers
+    }
+}
+
+impl RoutingMode {
+    /// Returns `true` if this mode connects to all cluster members.
+    pub fn is_all_members(&self) -> bool {
+        matches!(self, RoutingMode::AllMembers)
+    }
+
+    /// Returns `true` if this mode connects to a single member only.
+    pub fn is_single_member(&self) -> bool {
+        matches!(self, RoutingMode::SingleMember)
+    }
+
+    /// Returns `true` if this mode connects to a subset of members.
+    pub fn is_multi_member(&self) -> bool {
+        matches!(self, RoutingMode::MultiMember { .. })
+    }
+
+    /// Returns the member count for multi-member mode, or `None` for other modes.
+    pub fn member_count(&self) -> Option<usize> {
+        match self {
+            RoutingMode::MultiMember { member_count } => Some(*member_count),
+            _ => None,
+        }
+    }
+}
+
 /// Log level configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LogLevel {
@@ -2353,9 +2535,6 @@ impl ClientConfig {
     ///
     /// When greater than 0, limits the number of in-flight operations to prevent
     /// overloading the cluster. Returns 0 for unlimited (default).
-    ///
-    /// Note: The Java client defaults to 2^23. In Rust, the default is 0 (unlimited)
-    /// since back-pressure is opt-in. Set a non-zero value to enable.
     pub fn max_concurrent_invocations(&self) -> usize {
         self.max_concurrent_invocations
     }
@@ -2374,9 +2553,6 @@ impl ClientConfig {
     }
 
     /// Returns the pause duration between invocation retries.
-    ///
-    /// This is a fixed pause applied between each retry attempt for retryable operations.
-    /// Default: 1 second (matching Java client's `invocation.retry.pause.millis`).
     pub fn invocation_retry_pause(&self) -> Duration {
         self.invocation_retry_pause
     }
@@ -2384,6 +2560,109 @@ impl ClientConfig {
     /// Returns the serialization configuration.
     pub fn serialization(&self) -> &hazelcast_core::serialization::SerializationConfig {
         &self.serialization
+    }
+
+    /// Parses a `ClientConfig` from a TOML string.
+    ///
+    /// The TOML schema mirrors the builder API. Only simple, serializable
+    /// fields are supported; trait-object fields (custom authenticators,
+    /// load balancers, etc.) must still be set programmatically after parsing.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if the TOML is malformed or validation fails.
+    pub fn from_toml_str(toml_str: &str) -> std::result::Result<Self, ConfigError> {
+        let raw: TomlClientConfig =
+            toml::from_str(toml_str).map_err(|e| ConfigError::new(format!("TOML parse error: {}", e)))?;
+        raw.into_client_config()
+    }
+
+    /// Parses a `ClientConfig` from a TOML file on disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if the file cannot be read or the TOML is invalid.
+    pub fn from_file(path: impl AsRef<std::path::Path>) -> std::result::Result<Self, ConfigError> {
+        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
+            ConfigError::new(format!(
+                "failed to read config file '{}': {}",
+                path.as_ref().display(),
+                e
+            ))
+        })?;
+        Self::from_toml_str(&content)
+    }
+
+}
+
+/// Intermediate TOML-friendly structure for deserializing client configuration.
+#[derive(serde::Deserialize)]
+struct TomlClientConfig {
+    cluster_name: Option<String>,
+    instance_name: Option<String>,
+    labels: Option<Vec<String>>,
+    network: Option<TomlNetworkConfig>,
+    retry: Option<TomlRetryConfig>,
+    security: Option<TomlSecurityConfig>,
+}
+
+#[derive(serde::Deserialize)]
+struct TomlNetworkConfig {
+    addresses: Option<Vec<String>>,
+    connection_timeout_ms: Option<u64>,
+    heartbeat_interval_ms: Option<u64>,
+    smart_routing: Option<bool>,
+}
+
+#[derive(serde::Deserialize)]
+struct TomlRetryConfig {
+    initial_backoff_ms: Option<u64>,
+    max_backoff_ms: Option<u64>,
+    multiplier: Option<f64>,
+    max_retries: Option<u32>,
+    jitter: Option<f64>,
+}
+
+#[derive(serde::Deserialize)]
+struct TomlSecurityConfig {
+    username: Option<String>,
+    password: Option<String>,
+    token: Option<String>,
+}
+
+impl TomlClientConfig {
+    fn into_client_config(self) -> std::result::Result<ClientConfig, ConfigError> {
+        let mut builder = ClientConfigBuilder::new();
+        if let Some(name) = self.cluster_name { builder = builder.cluster_name(name); }
+        if let Some(name) = self.instance_name { builder = builder.instance_name(name); }
+        if let Some(labels) = self.labels { builder = builder.with_labels(labels); }
+
+        if let Some(net) = self.network {
+            if let Some(addrs) = net.addresses {
+                let parsed: std::result::Result<Vec<SocketAddr>, _> = addrs.iter().map(|s| s.parse::<SocketAddr>()).collect();
+                let addr_vec = parsed.map_err(|e| ConfigError::new(format!("invalid network address: {}", e)))?;
+                builder = builder.addresses(addr_vec);
+            }
+            if let Some(ms) = net.connection_timeout_ms { builder = builder.connection_timeout(Duration::from_millis(ms)); }
+            if let Some(ms) = net.heartbeat_interval_ms { builder = builder.network(|n| n.heartbeat_interval(Duration::from_millis(ms))); }
+            if let Some(smart) = net.smart_routing { builder = builder.network(|n| n.smart_routing(smart)); }
+        }
+
+        if let Some(retry) = self.retry {
+            if let Some(ms) = retry.initial_backoff_ms { builder = builder.retry(|r| r.initial_backoff(Duration::from_millis(ms))); }
+            if let Some(ms) = retry.max_backoff_ms { builder = builder.retry(|r| r.max_backoff(Duration::from_millis(ms))); }
+            if let Some(mult) = retry.multiplier { builder = builder.retry(|r| r.multiplier(mult)); }
+            if let Some(max) = retry.max_retries { builder = builder.retry(|r| r.max_retries(max)); }
+            if let Some(jitter) = retry.jitter { builder = builder.retry(|r| r.jitter(jitter)); }
+        }
+
+        if let Some(sec) = self.security {
+            if let Some(username) = sec.username { builder = builder.security(|s| s.username(username)); }
+            if let Some(password) = sec.password { builder = builder.security(|s| s.password(password)); }
+            if let Some(token) = sec.token { builder = builder.security(|s| s.token(token)); }
+        }
+
+        builder.build()
     }
 }
 
@@ -2713,6 +2992,12 @@ impl ClientConfigBuilder {
     }
 
     /// Builds the client configuration, returning an error if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if:
+    /// - `cluster_name` is empty
+    /// - Network, retry, security, diagnostics, or management center validation fails
     pub fn build(self) -> Result<ClientConfig, ConfigError> {
         let cluster_name = self
             .cluster_name

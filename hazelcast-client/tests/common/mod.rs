@@ -24,7 +24,7 @@ pub fn unique_name(prefix: &str) -> String {
 pub fn default_config() -> ClientConfig {
     ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(DEFAULT_CLUSTER_ADDRESS)
+        .add_address(DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .build()
         .expect("failed to build config")
 }
@@ -32,9 +32,9 @@ pub fn default_config() -> ClientConfig {
 pub fn config_with_retry() -> ClientConfig {
     ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(DEFAULT_CLUSTER_ADDRESS)
+        .add_address(DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .retry(|r| {
-            r.max_attempts(5)
+            r.max_retries(5)
                 .initial_backoff(Duration::from_millis(100))
                 .max_backoff(Duration::from_secs(2))
         })
@@ -51,7 +51,7 @@ pub fn config_with_near_cache(map_name: &str) -> ClientConfig {
 
     ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(DEFAULT_CLUSTER_ADDRESS)
+        .add_address(DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
         .add_near_cache_config(near_cache)
         .build()
         .expect("failed to build config")
@@ -60,9 +60,9 @@ pub fn config_with_near_cache(map_name: &str) -> ClientConfig {
 pub fn multi_member_config() -> ClientConfig {
     ClientConfigBuilder::new()
         .cluster_name("dev")
-        .address(DEFAULT_CLUSTER_ADDRESS)
-        .address(SECONDARY_CLUSTER_ADDRESS)
-        .address(TERTIARY_CLUSTER_ADDRESS)
+        .add_address(DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
+        .add_address(SECONDARY_CLUSTER_ADDRESS.parse().unwrap())
+        .add_address(TERTIARY_CLUSTER_ADDRESS.parse().unwrap())
         .build()
         .expect("failed to build config")
 }
@@ -164,24 +164,20 @@ impl TestCleanup {
 
     pub async fn cleanup(&self) {
         for name in &self.map_names {
-            if let Ok(map) = self.client.get_map::<String, String>(name).await {
-                let _ = map.clear().await;
-            }
+            let map = self.client.get_map::<String, String>(name);
+            let _ = map.clear().await;
         }
         for name in &self.queue_names {
-            if let Ok(queue) = self.client.get_queue::<String>(name).await {
-                while queue.poll().await.ok().flatten().is_some() {}
-            }
+            let queue = self.client.get_queue::<String>(name);
+            while queue.poll().await.ok().flatten().is_some() {}
         }
         for name in &self.set_names {
-            if let Ok(set) = self.client.get_set::<String>(name).await {
-                let _ = set.clear().await;
-            }
+            let set = self.client.get_set::<String>(name);
+            let _ = set.clear().await;
         }
         for name in &self.list_names {
-            if let Ok(list) = self.client.get_list::<String>(name).await {
-                let _ = list.clear().await;
-            }
+            let list = self.client.get_list::<String>(name);
+            let _ = list.clear().await;
         }
     }
 }

@@ -10,8 +10,6 @@ use hazelcast_client::{ClientConfigBuilder, HazelcastClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
-
     println!("=== Hazelcast Client Basic Usage Example ===\n");
 
     let config = ClientConfigBuilder::new()

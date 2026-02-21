@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use hazelcast_client::{ClientConfig, HazelcastClient};
-use hazelcast_core::serialization::ObjectDataOutput;
+use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
 use hazelcast_core::{Result, Serializable};
 
 /// A simple callable task that echoes a message.
@@ -25,9 +25,9 @@ impl EchoTask {
 }
 
 impl Serializable for EchoTask {
-    fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
-        output.write_utf("com.hazelcast.test.EchoTask")?;
-        output.write_utf(&self.message)?;
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+        output.write_string("com.hazelcast.test.EchoTask")?;
+        output.write_string(&self.message)?;
         Ok(())
     }
 }
@@ -45,9 +45,9 @@ impl FactorialTask {
 }
 
 impl Serializable for FactorialTask {
-    fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
-        output.write_utf("com.hazelcast.test.FactorialTask")?;
-        output.write_i32(self.n)?;
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+        output.write_string("com.hazelcast.test.FactorialTask")?;
+        output.write_int(self.n)?;
         Ok(())
     }
 }
@@ -67,9 +67,9 @@ impl SleepTask {
 }
 
 impl Serializable for SleepTask {
-    fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
-        output.write_utf("com.hazelcast.test.SleepTask")?;
-        output.write_i64(self.millis)?;
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+        output.write_string("com.hazelcast.test.SleepTask")?;
+        output.write_long(self.millis)?;
         Ok(())
     }
 }
@@ -97,7 +97,7 @@ async fn test_executor_service_creation() {
     };
 
     let executor = client.get_executor_service("test-executor");
-    println!("Created executor service: {:?}", executor);
+    println!("Created executor service: {}", executor.name());
 
     let _ = client.shutdown().await;
 }
@@ -174,9 +174,9 @@ async fn test_multiple_executor_services() {
     let default_executor = client.get_executor_service("default");
 
     println!("Created 3 executor services");
-    println!("  executor-1: {:?}", executor1);
-    println!("  executor-2: {:?}", executor2);
-    println!("  default: {:?}", default_executor);
+    println!("  executor-1: {}", executor1.name());
+    println!("  executor-2: {}", executor2.name());
+    println!("  default: {}", default_executor.name());
 
     let _ = client.shutdown().await;
 }

@@ -43,6 +43,60 @@ pub trait EntryProcessor: Serializable + Send + Sync {
     type Output: Deserializable;
 }
 
+/// Marker trait for entry processors that can be offloaded to a separate thread pool.
+///
+/// When an entry processor implements `Offloadable`, it signals to the Hazelcast cluster
+/// that the processor can be executed on a configurable executor instead of the
+/// partition thread. This is useful for long-running entry processors that would
+/// otherwise block partition operations.
+///
+/// The executor name defaults to `"hz:offloadable"` but can be overridden by
+/// implementing `get_executor_name()`.
+///
+/// # Example
+///
+/// ```ignore
+/// struct HeavyProcessor { /* ... */ }
+///
+/// impl EntryProcessor for HeavyProcessor {
+///     type Output = String;
+/// }
+///
+/// impl Offloadable for HeavyProcessor {
+///     // Uses default executor name "hz:offloadable"
+/// }
+/// ```
+pub trait Offloadable: EntryProcessor {
+    /// Returns the name of the executor to offload processing to.
+    ///
+    /// Defaults to `"hz:offloadable"`.
+    fn get_executor_name(&self) -> &str {
+        "hz:offloadable"
+    }
+}
+
+/// Marker trait for entry processors that only read entry data without modifying it.
+///
+/// When an entry processor implements `ReadOnly`, the Hazelcast cluster may optimize
+/// execution by skipping write locks and backup replication, significantly improving
+/// throughput for read-only operations.
+///
+/// A `ReadOnly` entry processor must not modify the entry. If it does, the behavior
+/// is undefined and may lead to data inconsistency.
+///
+/// # Example
+///
+/// ```ignore
+/// struct ReadValueProcessor;
+///
+/// impl EntryProcessor for ReadValueProcessor {
+///     type Output = String;
+/// }
+///
+/// impl ReadOnly for ReadValueProcessor {}
+/// ```
+pub trait ReadOnly: EntryProcessor {}
+
 /// Result of executing an entry processor on multiple entries.
 #[derive(Debug, Clone)]
 pub struct EntryProcessorResult<K, R> {
@@ -107,6 +161,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hazelcast_core::serialization::{DataInput, DataOutput};
 
     struct TestProcessor {
         value: i32,
@@ -117,16 +172,16 @@ mod tests {
     }
 
     impl Serializable for TestProcessor {
-        fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
-            output.write_i32(self.value)?;
+        fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+            output.write_int(self.value)?;
             Ok(())
         }
     }
 
     impl Deserializable for TestProcessor {
-        fn deserialize(input: &mut ObjectDataInput) -> Result<Self> {
+        fn deserialize<R: DataInput>(input: &mut R) -> Result<Self> {
             Ok(Self {
-                value: input.read_i32()?,
+                value: input.read_int()?,
             })
         }
     }
@@ -143,20 +198,20 @@ mod tests {
     }
 
     impl Serializable for MultiFieldProcessor {
-        fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
-            output.write_i32(self.operation)?;
-            output.write_i64(self.delta)?;
-            output.write_f64(self.multiplier)?;
+        fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+            output.write_int(self.operation)?;
+            output.write_long(self.delta)?;
+            output.write_double(self.multiplier)?;
             Ok(())
         }
     }
 
     impl Deserializable for MultiFieldProcessor {
-        fn deserialize(input: &mut ObjectDataInput) -> Result<Self> {
+        fn deserialize<R: DataInput>(input: &mut R) -> Result<Self> {
             Ok(Self {
-                operation: input.read_i32()?,
-                delta: input.read_i64()?,
-                multiplier: input.read_f64()?,
+                operation: input.read_int()?,
+                delta: input.read_long()?,
+                multiplier: input.read_double()?,
             })
         }
     }
@@ -169,19 +224,19 @@ mod tests {
     }
 
     impl Serializable for MultiFieldResult {
-        fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
-            output.write_i64(self.old_value)?;
-            output.write_i64(self.new_value)?;
+        fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+            output.write_long(self.old_value)?;
+            output.write_long(self.new_value)?;
             output.write_bool(self.success)?;
             Ok(())
         }
     }
 
     impl Deserializable for MultiFieldResult {
-        fn deserialize(input: &mut ObjectDataInput) -> Result<Self> {
+        fn deserialize<R: DataInput>(input: &mut R) -> Result<Self> {
             Ok(Self {
-                old_value: input.read_i64()?,
-                new_value: input.read_i64()?,
+                old_value: input.read_long()?,
+                new_value: input.read_long()?,
                 success: input.read_bool()?,
             })
         }
@@ -198,20 +253,20 @@ mod tests {
     }
 
     impl Serializable for StringFieldProcessor {
-        fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
+        fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
             output.write_string(&self.name)?;
             output.write_string(&self.prefix)?;
-            output.write_i32(self.count)?;
+            output.write_int(self.count)?;
             Ok(())
         }
     }
 
     impl Deserializable for StringFieldProcessor {
-        fn deserialize(input: &mut ObjectDataInput) -> Result<Self> {
+        fn deserialize<R: DataInput>(input: &mut R) -> Result<Self> {
             Ok(Self {
                 name: input.read_string()?,
                 prefix: input.read_string()?,
-                count: input.read_i32()?,
+                count: input.read_int()?,
             })
         }
     }

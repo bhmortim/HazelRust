@@ -869,6 +869,12 @@ pub const CACHE_GET_AND_REPLACE: i32 = 0x130E00;
 /// Cache size request.
 pub const CACHE_SIZE: i32 = 0x130F00;
 
+/// Cache invoke request (entry processor).
+pub const CACHE_INVOKE: i32 = 0x131300;
+
+/// Cache invoke all request (entry processor on all keys).
+pub const CACHE_INVOKE_ALL: i32 = 0x131400;
+
 /// Cache event journal subscribe request.
 pub const CACHE_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x131500;
 
@@ -950,3 +956,46 @@ pub const CP_SUBSYSTEM_PROMOTE_TO_CP_MEMBER: i32 = 0x1E0500;
 
 /// CP Subsystem remove CP member request.
 pub const CP_SUBSYSTEM_REMOVE_CP_MEMBER: i32 = 0x1E0600;
+
+// VectorCollection operations
+
+/// VectorCollection put request.
+pub const VECTOR_COLLECTION_PUT: i32 = 0x230100;
+
+/// VectorCollection get request.
+pub const VECTOR_COLLECTION_GET: i32 = 0x230200;
+
+/// VectorCollection remove request.
+pub const VECTOR_COLLECTION_REMOVE: i32 = 0x230300;
+
+/// VectorCollection search near vector request.
+pub const VECTOR_COLLECTION_SEARCH_NEAR_VECTOR: i32 = 0x230400;
+
+/// VectorCollection put all request.
+pub const VECTOR_COLLECTION_PUT_ALL: i32 = 0x230500;
+
+/// VectorCollection clear request.
+pub const VECTOR_COLLECTION_CLEAR: i32 = 0x230600;
+
+/// VectorCollection size request.
+pub const VECTOR_COLLECTION_SIZE: i32 = 0x230700;
+
+/// VectorCollection delete request.
+pub const VECTOR_COLLECTION_DELETE: i32 = 0x230800;
+
+/// VectorCollection put if absent request.
+pub const VECTOR_COLLECTION_PUT_IF_ABSENT: i32 = 0x230900;
+
+/// VectorCollection set request.
+pub const VECTOR_COLLECTION_SET: i32 = 0x230A00;
+
+/// VectorCollection optimize request.
+pub const VECTOR_COLLECTION_OPTIMIZE: i32 = 0x230B00;
+
+// Protocol version constants
+
+/// Client protocol version.
+pub const CLIENT_PROTOCOL_VERSION: u8 = 2;
+
+/// Minimum supported protocol version.
+pub const MIN_SUPPORTED_PROTOCOL_VERSION: u8 = 1;

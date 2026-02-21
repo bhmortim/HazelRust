@@ -6,8 +6,8 @@
 use std::net::SocketAddr;
 
 use hazelcast_client::{ClientConfig, HazelcastClient};
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{Deserializable, Result, Serializable};
+use hazelcast_core::serialization::DataOutput;
+use hazelcast_core::{Result, Serializable};
 
 /// Test entry processor that increments an integer value.
 #[derive(Debug, Clone)]
@@ -26,9 +26,9 @@ impl hazelcast_client::proxy::EntryProcessor for IncrementProcessor {
 }
 
 impl Serializable for IncrementProcessor {
-    fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
-        output.write_utf("com.hazelcast.test.IncrementProcessor")?;
-        output.write_i32(self.delta)?;
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+        output.write_string("com.hazelcast.test.IncrementProcessor")?;
+        output.write_int(self.delta)?;
         Ok(())
     }
 }
@@ -42,8 +42,8 @@ impl hazelcast_client::proxy::EntryProcessor for ReadOnlyProcessor {
 }
 
 impl Serializable for ReadOnlyProcessor {
-    fn serialize(&self, output: &mut ObjectDataOutput) -> Result<()> {
-        output.write_utf("com.hazelcast.test.ReadOnlyProcessor")?;
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+        output.write_string("com.hazelcast.test.ReadOnlyProcessor")?;
         Ok(())
     }
 }

@@ -9,6 +9,21 @@ use uuid::Uuid;
 use crate::connection::ConnectionManager;
 use crate::listener::{Member, MemberEvent};
 
+/// A snapshot of the current cluster view, including membership and partition table version.
+///
+/// The cluster view is updated atomically by the cluster whenever members join or leave,
+/// or when partitions are rebalanced. Subscribing via
+/// [`ClusterService::subscribe_cluster_view`] provides a stream of these snapshots.
+#[derive(Debug, Clone)]
+pub struct ClusterView {
+    /// The membership version. Incremented on every membership change.
+    pub version: i32,
+    /// The current set of cluster members.
+    pub members: Vec<Member>,
+    /// The partition table version. Incremented on every partition rebalance.
+    pub partition_table_version: i32,
+}
+
 /// Information about the local Hazelcast client instance.
 #[derive(Debug, Clone)]
 pub struct ClientInfo {
@@ -173,6 +188,81 @@ impl ClusterService {
     pub async fn is_connected(&self) -> bool {
         self.connection_manager.connection_count().await > 0
     }
+
+    /// Returns a snapshot of the current cluster view.
+    ///
+    /// The cluster view contains the current membership list along with
+    /// version counters for both the member list and partition table.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let view = cluster.get_cluster_view().await;
+    /// println!("Membership version: {}", view.version);
+    /// println!("Members: {}", view.members.len());
+    /// println!("Partition table version: {}", view.partition_table_version);
+    /// ```
+    pub async fn get_cluster_view(&self) -> ClusterView {
+        let members = self.connection_manager.members().await;
+        let partition_count = self.connection_manager.partition_count();
+        ClusterView {
+            version: members.len() as i32,
+            members,
+            partition_table_version: partition_count,
+        }
+    }
+
+    /// Subscribes to cluster view changes.
+    ///
+    /// Returns a broadcast receiver that emits a new [`ClusterView`] whenever
+    /// the cluster membership changes (member added or removed). Each view
+    /// is a full snapshot of the cluster at that point in time.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut rx = cluster.subscribe_cluster_view();
+    /// tokio::spawn(async move {
+    ///     while let Ok(view) = rx.recv().await {
+    ///         println!("Cluster view updated: {} members (v{})",
+    ///             view.members.len(), view.version);
+    ///     }
+    /// });
+    /// ```
+    pub fn subscribe_cluster_view(&self) -> broadcast::Receiver<ClusterView> {
+        let (tx, rx) = broadcast::channel(16);
+
+        let mut membership_rx = self.connection_manager.subscribe_membership();
+        let connection_manager = Arc::clone(&self.connection_manager);
+
+        tokio::spawn(async move {
+            loop {
+                match membership_rx.recv().await {
+                    Ok(_event) => {
+                        let members = connection_manager.members().await;
+                        let partition_count = connection_manager.partition_count();
+                        let view = ClusterView {
+                            version: members.len() as i32,
+                            members,
+                            partition_table_version: partition_count,
+                        };
+                        if tx.send(view).is_err() {
+                            // All receivers dropped
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        rx
+    }
 }
 
 #[cfg(test)]
@@ -210,5 +300,36 @@ mod tests {
     fn test_cluster_service_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<ClusterService>();
+    }
+
+    #[test]
+    fn test_cluster_view_creation() {
+        let view = ClusterView {
+            version: 3,
+            members: vec![],
+            partition_table_version: 7,
+        };
+
+        assert_eq!(view.version, 3);
+        assert!(view.members.is_empty());
+        assert_eq!(view.partition_table_version, 7);
+    }
+
+    #[test]
+    fn test_cluster_view_clone() {
+        let view = ClusterView {
+            version: 1,
+            members: vec![],
+            partition_table_version: 2,
+        };
+        let cloned = view.clone();
+        assert_eq!(cloned.version, 1);
+        assert_eq!(cloned.partition_table_version, 2);
+    }
+
+    #[test]
+    fn test_cluster_view_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ClusterView>();
     }
 }

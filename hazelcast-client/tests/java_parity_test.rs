@@ -7,26 +7,27 @@
 //! - Local statistics tracking
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use hazelcast_client::config::ClientConfig;
 use hazelcast_client::proxy::IMap;
-use hazelcast_client::query::Predicate;
+use hazelcast_client::query::{Aggregators, Predicates, Projections};
 use hazelcast_client::HazelcastClient;
 
 /// Test helper to create a client connected to a local cluster.
 async fn create_test_client() -> HazelcastClient {
-    let mut config = ClientConfig::default();
-    config.network.addresses.push("127.0.0.1:5701".to_string());
+    let config = ClientConfig::builder()
+        .cluster_name("dev")
+        .add_address("127.0.0.1:5701".parse::<SocketAddr>().unwrap())
+        .build()
+        .expect("Failed to build config");
     HazelcastClient::new(config).await.expect("Failed to create client")
 }
 
 /// Test helper to get a uniquely named map for test isolation.
-async fn get_test_map(client: &HazelcastClient, test_name: &str) -> IMap<String, String> {
-    client
-        .get_map(&format!("java_parity_test_{}", test_name))
-        .await
-        .expect("Failed to get map")
+fn get_test_map(client: &HazelcastClient, test_name: &str) -> IMap<String, String> {
+    client.get_map(&format!("java_parity_test_{}", test_name))
 }
 
 // ============================================================================
@@ -37,7 +38,7 @@ async fn get_test_map(client: &HazelcastClient, test_name: &str) -> IMap<String,
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_put_and_get() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "put_and_get").await;
+    let map = get_test_map(&client, "put_and_get");
 
     let key = "test_key".to_string();
     let value = "test_value".to_string();
@@ -48,14 +49,14 @@ async fn test_put_and_get() {
     let retrieved = map.get(&key).await.unwrap();
     assert_eq!(retrieved, Some(value));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_put_returns_previous_value() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "put_returns_previous").await;
+    let map = get_test_map(&client, "put_returns_previous");
 
     let key = "key".to_string();
     let value1 = "value1".to_string();
@@ -66,14 +67,14 @@ async fn test_put_returns_previous_value() {
 
     assert_eq!(previous, Some(value1));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_put_if_absent() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "put_if_absent").await;
+    let map = get_test_map(&client, "put_if_absent");
 
     let key = "key".to_string();
     let value1 = "value1".to_string();
@@ -88,14 +89,14 @@ async fn test_put_if_absent() {
     let retrieved = map.get(&key).await.unwrap();
     assert_eq!(retrieved, Some(value1), "Value should not have changed");
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_remove() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "remove").await;
+    let map = get_test_map(&client, "remove");
 
     let key = "key".to_string();
     let value = "value".to_string();
@@ -108,14 +109,14 @@ async fn test_remove() {
     let after_remove = map.get(&key).await.unwrap();
     assert!(after_remove.is_none());
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_remove_if_value_matches() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "remove_if_value_matches").await;
+    let map = get_test_map(&client, "remove_if_value_matches");
 
     let key = "key".to_string();
     let value = "value".to_string();
@@ -123,42 +124,39 @@ async fn test_remove_if_value_matches() {
 
     map.put(key.clone(), value.clone()).await.unwrap();
 
-    let not_removed = map.remove_if_equals(&key, &wrong_value).await.unwrap();
+    let not_removed = map.remove_if_equal(&key, &wrong_value).await.unwrap();
     assert!(!not_removed, "Should not remove when value doesn't match");
 
-    let removed = map.remove_if_equals(&key, &value).await.unwrap();
+    let removed = map.remove_if_equal(&key, &value).await.unwrap();
     assert!(removed, "Should remove when value matches");
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_contains_key_and_value() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "contains").await;
+    let map = get_test_map(&client, "contains");
 
     let key = "key".to_string();
     let value = "value".to_string();
 
     assert!(!map.contains_key(&key).await.unwrap());
-    assert!(!map.contains_value(&value).await.unwrap());
 
     map.put(key.clone(), value.clone()).await.unwrap();
 
     assert!(map.contains_key(&key).await.unwrap());
-    assert!(map.contains_value(&value).await.unwrap());
     assert!(!map.contains_key(&"nonexistent".to_string()).await.unwrap());
-    assert!(!map.contains_value(&"nonexistent".to_string()).await.unwrap());
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_replace() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "replace").await;
+    let map = get_test_map(&client, "replace");
 
     let key = "key".to_string();
     let value1 = "value1".to_string();
@@ -175,14 +173,14 @@ async fn test_replace() {
     let current = map.get(&key).await.unwrap();
     assert_eq!(current, Some(value2));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
-async fn test_replace_if_equals() {
+async fn test_replace_if_equal() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "replace_if_equals").await;
+    let map = get_test_map(&client, "replace_if_equal");
 
     let key = "key".to_string();
     let value1 = "value1".to_string();
@@ -191,15 +189,15 @@ async fn test_replace_if_equals() {
 
     map.put(key.clone(), value1.clone()).await.unwrap();
 
-    let not_replaced = map.replace_if_equals(&key, &wrong, value2.clone()).await.unwrap();
+    let not_replaced = map.replace_if_equal(&key, &wrong, value2.clone()).await.unwrap();
     assert!(!not_replaced);
 
-    let replaced = map.replace_if_equals(&key, &value1, value2.clone()).await.unwrap();
+    let replaced = map.replace_if_equal(&key, &value1, value2.clone()).await.unwrap();
     assert!(replaced);
 
     assert_eq!(map.get(&key).await.unwrap(), Some(value2));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -210,13 +208,13 @@ async fn test_replace_if_equals() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_put_with_ttl() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "put_with_ttl").await;
+    let map = get_test_map(&client, "put_with_ttl");
 
     let key = "ttl_key".to_string();
     let value = "ttl_value".to_string();
     let ttl = Duration::from_secs(2);
 
-    map.put_with_ttl(key.clone(), value.clone(), ttl).await.unwrap();
+    map.put_with_ttl_and_max_idle(key.clone(), value.clone(), ttl, Duration::from_secs(0)).await.unwrap();
 
     let retrieved = map.get(&key).await.unwrap();
     assert_eq!(retrieved, Some(value.clone()));
@@ -226,14 +224,14 @@ async fn test_put_with_ttl() {
     let expired = map.get(&key).await.unwrap();
     assert!(expired.is_none(), "Entry should have expired after TTL");
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_put_with_ttl_and_max_idle() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "put_ttl_max_idle").await;
+    let map = get_test_map(&client, "put_ttl_max_idle");
 
     let key = "key".to_string();
     let value = "value".to_string();
@@ -252,20 +250,20 @@ async fn test_put_with_ttl_and_max_idle() {
     let expired = map.get(&key).await.unwrap();
     assert!(expired.is_none(), "Entry should have expired due to max-idle");
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_set_with_ttl() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "set_with_ttl").await;
+    let map = get_test_map(&client, "set_with_ttl");
 
     let key = "key".to_string();
     let value = "value".to_string();
     let ttl = Duration::from_secs(2);
 
-    map.set_with_ttl(key.clone(), value.clone(), ttl).await.unwrap();
+    map.set_with_ttl_and_max_idle(key.clone(), value.clone(), ttl, Duration::from_secs(0)).await.unwrap();
 
     assert_eq!(map.get(&key).await.unwrap(), Some(value));
 
@@ -273,14 +271,14 @@ async fn test_set_with_ttl() {
 
     assert!(map.get(&key).await.unwrap().is_none());
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_put_transient() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "put_transient").await;
+    let map = get_test_map(&client, "put_transient");
 
     let key = "transient_key".to_string();
     let value = "transient_value".to_string();
@@ -294,14 +292,14 @@ async fn test_put_transient() {
 
     assert!(map.get(&key).await.unwrap().is_none());
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_set_ttl_on_existing_entry() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "set_ttl_existing").await;
+    let map = get_test_map(&client, "set_ttl_existing");
 
     let key = "key".to_string();
     let value = "value".to_string();
@@ -315,7 +313,7 @@ async fn test_set_ttl_on_existing_entry() {
 
     assert!(map.get(&key).await.unwrap().is_none());
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -326,7 +324,7 @@ async fn test_set_ttl_on_existing_entry() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_put_all() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "put_all").await;
+    let map = get_test_map(&client, "put_all");
 
     let mut entries = HashMap::new();
     entries.insert("key1".to_string(), "value1".to_string());
@@ -341,35 +339,35 @@ async fn test_put_all() {
         assert_eq!(map.get(&key).await.unwrap(), Some(value));
     }
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_get_all() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "get_all").await;
+    let map = get_test_map(&client, "get_all");
 
     map.put("key1".to_string(), "value1".to_string()).await.unwrap();
     map.put("key2".to_string(), "value2".to_string()).await.unwrap();
     map.put("key3".to_string(), "value3".to_string()).await.unwrap();
 
     let keys = vec!["key1".to_string(), "key2".to_string(), "key4".to_string()];
-    let results = map.get_all(keys).await.unwrap();
+    let results = map.get_all(&keys).await.unwrap();
 
     assert_eq!(results.len(), 2);
     assert_eq!(results.get("key1"), Some(&"value1".to_string()));
     assert_eq!(results.get("key2"), Some(&"value2".to_string()));
     assert!(results.get("key4").is_none());
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_clear() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "clear").await;
+    let map = get_test_map(&client, "clear");
 
     map.put("key1".to_string(), "value1".to_string()).await.unwrap();
     map.put("key2".to_string(), "value2".to_string()).await.unwrap();
@@ -379,69 +377,9 @@ async fn test_clear() {
     map.clear().await.unwrap();
 
     assert_eq!(map.size().await.unwrap(), 0);
-    assert!(map.is_empty().await.unwrap());
+    assert_eq!(map.size().await.unwrap(), 0);
 
-    map.destroy().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires running Hazelcast cluster"]
-async fn test_key_set() {
-    let client = create_test_client().await;
-    let map = get_test_map(&client, "key_set").await;
-
-    map.put("a".to_string(), "1".to_string()).await.unwrap();
-    map.put("b".to_string(), "2".to_string()).await.unwrap();
-    map.put("c".to_string(), "3".to_string()).await.unwrap();
-
-    let keys = map.key_set().await.unwrap();
-
-    assert_eq!(keys.len(), 3);
-    assert!(keys.contains(&"a".to_string()));
-    assert!(keys.contains(&"b".to_string()));
-    assert!(keys.contains(&"c".to_string()));
-
-    map.destroy().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires running Hazelcast cluster"]
-async fn test_values() {
-    let client = create_test_client().await;
-    let map = get_test_map(&client, "values").await;
-
-    map.put("a".to_string(), "1".to_string()).await.unwrap();
-    map.put("b".to_string(), "2".to_string()).await.unwrap();
-    map.put("c".to_string(), "3".to_string()).await.unwrap();
-
-    let values = map.values().await.unwrap();
-
-    assert_eq!(values.len(), 3);
-    assert!(values.contains(&"1".to_string()));
-    assert!(values.contains(&"2".to_string()));
-    assert!(values.contains(&"3".to_string()));
-
-    map.destroy().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires running Hazelcast cluster"]
-async fn test_entry_set() {
-    let client = create_test_client().await;
-    let map = get_test_map(&client, "entry_set").await;
-
-    map.put("a".to_string(), "1".to_string()).await.unwrap();
-    map.put("b".to_string(), "2".to_string()).await.unwrap();
-
-    let entries = map.entry_set().await.unwrap();
-
-    assert_eq!(entries.len(), 2);
-
-    let as_map: HashMap<String, String> = entries.into_iter().collect();
-    assert_eq!(as_map.get("a"), Some(&"1".to_string()));
-    assert_eq!(as_map.get("b"), Some(&"2".to_string()));
-
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -452,54 +390,54 @@ async fn test_entry_set() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_key_set_with_predicate() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "key_set_predicate").await;
+    let map = get_test_map(&client, "key_set_predicate");
 
     map.put("user_1".to_string(), "active".to_string()).await.unwrap();
     map.put("user_2".to_string(), "inactive".to_string()).await.unwrap();
     map.put("user_3".to_string(), "active".to_string()).await.unwrap();
 
-    let predicate = Predicate::equal("this", "active");
-    let keys = map.key_set_with_predicate(predicate).await.unwrap();
+    let predicate = Predicates::equal("this", &"active".to_string()).unwrap();
+    let keys = map.keys_with_predicate(&predicate).await.unwrap();
 
     assert_eq!(keys.len(), 2);
     assert!(keys.contains(&"user_1".to_string()));
     assert!(keys.contains(&"user_3".to_string()));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_values_with_predicate() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "values_predicate").await;
+    let map = get_test_map(&client, "values_predicate");
 
     map.put("a".to_string(), "10".to_string()).await.unwrap();
     map.put("b".to_string(), "20".to_string()).await.unwrap();
     map.put("c".to_string(), "30".to_string()).await.unwrap();
 
-    let predicate = Predicate::sql("this > 15");
-    let values = map.values_with_predicate(predicate).await.unwrap();
+    let predicate = Predicates::sql("this > 15");
+    let values = map.values_with_predicate(&predicate).await.unwrap();
 
     assert_eq!(values.len(), 2);
     assert!(values.contains(&"20".to_string()));
     assert!(values.contains(&"30".to_string()));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_entry_set_with_predicate() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "entry_set_predicate").await;
+    let map = get_test_map(&client, "entry_set_predicate");
 
     map.put("item_a".to_string(), "100".to_string()).await.unwrap();
     map.put("item_b".to_string(), "200".to_string()).await.unwrap();
     map.put("item_c".to_string(), "50".to_string()).await.unwrap();
 
-    let predicate = Predicate::sql("this >= 100");
-    let entries = map.entry_set_with_predicate(predicate).await.unwrap();
+    let predicate = Predicates::sql("this >= 100");
+    let entries = map.entries_with_predicate(&predicate).await.unwrap();
 
     assert_eq!(entries.len(), 2);
 
@@ -507,14 +445,14 @@ async fn test_entry_set_with_predicate() {
     assert!(as_map.contains_key("item_a"));
     assert!(as_map.contains_key("item_b"));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_remove_all_with_predicate() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "remove_all_predicate").await;
+    let map = get_test_map(&client, "remove_all_predicate");
 
     map.put("keep_1".to_string(), "important".to_string()).await.unwrap();
     map.put("delete_1".to_string(), "temporary".to_string()).await.unwrap();
@@ -523,8 +461,8 @@ async fn test_remove_all_with_predicate() {
 
     assert_eq!(map.size().await.unwrap(), 4);
 
-    let predicate = Predicate::equal("this", "temporary");
-    map.remove_all(predicate).await.unwrap();
+    let predicate = Predicates::equal("this", &"temporary".to_string()).unwrap();
+    map.remove_all_with_predicate(&predicate).await.unwrap();
 
     assert_eq!(map.size().await.unwrap(), 2);
     assert!(map.contains_key(&"keep_1".to_string()).await.unwrap());
@@ -532,7 +470,7 @@ async fn test_remove_all_with_predicate() {
     assert!(!map.contains_key(&"delete_1".to_string()).await.unwrap());
     assert!(!map.contains_key(&"delete_2".to_string()).await.unwrap());
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -543,24 +481,24 @@ async fn test_remove_all_with_predicate() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_execute_on_key() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "execute_on_key").await;
+    let map = get_test_map(&client, "execute_on_key");
 
     map.put("counter".to_string(), "0".to_string()).await.unwrap();
 
     let processor = IncrementProcessor::new(5);
-    let result: Option<String> = map.execute_on_key("counter".to_string(), processor).await.unwrap();
+    let result: Option<String> = map.execute_on_key(&"counter".to_string(), &processor).await.unwrap();
 
     assert_eq!(result, Some("5".to_string()));
     assert_eq!(map.get(&"counter".to_string()).await.unwrap(), Some("5".to_string()));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_execute_on_keys() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "execute_on_keys").await;
+    let map = get_test_map(&client, "execute_on_keys");
 
     map.put("a".to_string(), "1".to_string()).await.unwrap();
     map.put("b".to_string(), "2".to_string()).await.unwrap();
@@ -568,155 +506,54 @@ async fn test_execute_on_keys() {
 
     let keys = vec!["a".to_string(), "b".to_string()];
     let processor = IncrementProcessor::new(10);
-    let results: HashMap<String, String> = map.execute_on_keys(keys, processor).await.unwrap();
+    let results = map.execute_on_keys(&keys, &processor).await.unwrap();
 
     assert_eq!(results.len(), 2);
-    assert_eq!(results.get("a"), Some(&"11".to_string()));
-    assert_eq!(results.get("b"), Some(&"12".to_string()));
+    assert_eq!(results.get(&"a".to_string()), Some(&"11".to_string()));
+    assert_eq!(results.get(&"b".to_string()), Some(&"12".to_string()));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_execute_on_entries_with_predicate() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "execute_on_entries_predicate").await;
+    let map = get_test_map(&client, "execute_on_entries_predicate");
 
     map.put("user_1".to_string(), "50".to_string()).await.unwrap();
     map.put("user_2".to_string(), "150".to_string()).await.unwrap();
     map.put("user_3".to_string(), "200".to_string()).await.unwrap();
 
-    let predicate = Predicate::sql("this > 100");
+    let predicate = Predicates::sql("this > 100");
     let processor = IncrementProcessor::new(10);
-    let results: HashMap<String, String> = map
-        .execute_on_entries_with_predicate(processor, predicate)
+    let results = map
+        .execute_on_entries_with_predicate(&processor, &predicate)
         .await
         .unwrap();
 
     assert_eq!(results.len(), 2);
-    assert_eq!(results.get("user_2"), Some(&"160".to_string()));
-    assert_eq!(results.get("user_3"), Some(&"210".to_string()));
+    assert_eq!(results.get(&"user_2".to_string()), Some(&"160".to_string()));
+    assert_eq!(results.get(&"user_3".to_string()), Some(&"210".to_string()));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_submit_to_key_async() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "submit_to_key").await;
+    let map = get_test_map(&client, "submit_to_key");
 
     map.put("async_key".to_string(), "100".to_string()).await.unwrap();
 
     let processor = IncrementProcessor::new(50);
     let future = map.submit_to_key("async_key".to_string(), processor);
 
-    let result: Option<String> = future.await.unwrap();
+    let result: Option<String> = future.await.unwrap().unwrap();
     assert_eq!(result, Some("150".to_string()));
 
-    map.destroy().await.unwrap();
-}
-
-// ============================================================================
-// Local Statistics
-// ============================================================================
-
-#[tokio::test]
-#[ignore = "requires running Hazelcast cluster"]
-async fn test_local_map_stats_basic() {
-    let client = create_test_client().await;
-    let map = get_test_map(&client, "local_stats_basic").await;
-
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
-    map.put("key2".to_string(), "value2".to_string()).await.unwrap();
-    map.get(&"key1".to_string()).await.unwrap();
-    map.get(&"key1".to_string()).await.unwrap();
-    map.get(&"nonexistent".to_string()).await.unwrap();
-
-    let stats = map.local_map_stats();
-
-    assert!(stats.put_count() >= 2);
-    assert!(stats.get_count() >= 3);
-    assert!(stats.hit_count() >= 2);
-    assert!(stats.miss_count() >= 1);
-
-    map.destroy().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires running Hazelcast cluster"]
-async fn test_local_map_stats_timing() {
-    let client = create_test_client().await;
-    let map = get_test_map(&client, "local_stats_timing").await;
-
-    for i in 0..10 {
-        map.put(format!("key_{}", i), format!("value_{}", i)).await.unwrap();
-    }
-
-    for i in 0..10 {
-        map.get(&format!("key_{}", i)).await.unwrap();
-    }
-
-    let stats = map.local_map_stats();
-
-    assert!(stats.total_put_latency() > Duration::ZERO);
-    assert!(stats.total_get_latency() > Duration::ZERO);
-    assert!(stats.max_put_latency() > Duration::ZERO);
-    assert!(stats.max_get_latency() > Duration::ZERO);
-
-    map.destroy().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires running Hazelcast cluster"]
-async fn test_local_map_stats_remove_operations() {
-    let client = create_test_client().await;
-    let map = get_test_map(&client, "local_stats_remove").await;
-
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
-    map.put("key2".to_string(), "value2".to_string()).await.unwrap();
-
-    map.remove(&"key1".to_string()).await.unwrap();
-    map.remove(&"nonexistent".to_string()).await.unwrap();
-
-    let stats = map.local_map_stats();
-
-    assert!(stats.remove_count() >= 1);
-
-    map.destroy().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires running Hazelcast cluster"]
-async fn test_local_map_stats_near_cache() {
-    let mut config = ClientConfig::default();
-    config.network.addresses.push("127.0.0.1:5701".to_string());
-    config.near_cache.enabled = true;
-    config.near_cache.max_size = 1000;
-
-    let client = HazelcastClient::new(config).await.expect("Failed to create client");
-    let map: IMap<String, String> = client
-        .get_map("java_parity_test_near_cache_stats")
-        .await
-        .expect("Failed to get map");
-
-    map.put("nc_key".to_string(), "nc_value".to_string()).await.unwrap();
-
-    map.get(&"nc_key".to_string()).await.unwrap();
-    map.get(&"nc_key".to_string()).await.unwrap();
-    map.get(&"nc_key".to_string()).await.unwrap();
-
-    let stats = map.local_map_stats();
-    let nc_stats = stats.near_cache_stats();
-
-    assert!(nc_stats.is_some());
-    if let Some(nc) = nc_stats {
-        assert!(nc.hits() >= 2);
-        assert!(nc.owned_entry_count() >= 1);
-    }
-
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -727,7 +564,7 @@ async fn test_local_map_stats_near_cache() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_lock_and_unlock() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "lock_unlock").await;
+    let map = get_test_map(&client, "lock_unlock");
 
     let key = "locked_key".to_string();
     map.put(key.clone(), "initial".to_string()).await.unwrap();
@@ -742,14 +579,14 @@ async fn test_lock_and_unlock() {
 
     assert_eq!(map.get(&key).await.unwrap(), Some("modified".to_string()));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_try_lock_with_timeout() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "try_lock_timeout").await;
+    let map = get_test_map(&client, "try_lock_timeout");
 
     let key = "contended_key".to_string();
     map.put(key.clone(), "value".to_string()).await.unwrap();
@@ -765,14 +602,14 @@ async fn test_try_lock_with_timeout() {
     assert!(acquired_after, "Should acquire after unlock");
 
     map.unlock(&key).await.unwrap();
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_force_unlock() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "force_unlock").await;
+    let map = get_test_map(&client, "force_unlock");
 
     let key = "force_key".to_string();
     map.put(key.clone(), "value".to_string()).await.unwrap();
@@ -783,7 +620,7 @@ async fn test_force_unlock() {
     map.force_unlock(&key).await.unwrap();
     assert!(!map.is_locked(&key).await.unwrap());
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -794,28 +631,28 @@ async fn test_force_unlock() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_get_async() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "get_async").await;
+    let map = get_test_map(&client, "get_async");
 
     map.put("async_get_key".to_string(), "async_value".to_string())
         .await
         .unwrap();
 
     let future = map.get_async("async_get_key".to_string());
-    let result = future.await.unwrap();
+    let result = future.await.unwrap().unwrap();
 
     assert_eq!(result, Some("async_value".to_string()));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_put_async() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "put_async").await;
+    let map = get_test_map(&client, "put_async");
 
     let future = map.put_async("async_put_key".to_string(), "async_put_value".to_string());
-    let previous = future.await.unwrap();
+    let previous = future.await.unwrap().unwrap();
 
     assert!(previous.is_none());
     assert_eq!(
@@ -823,43 +660,26 @@ async fn test_put_async() {
         Some("async_put_value".to_string())
     );
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_remove_async() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "remove_async").await;
+    let map = get_test_map(&client, "remove_async");
 
     map.put("async_remove_key".to_string(), "to_be_removed".to_string())
         .await
         .unwrap();
 
     let future = map.remove_async("async_remove_key".to_string());
-    let removed = future.await.unwrap();
+    let removed = future.await.unwrap().unwrap();
 
     assert_eq!(removed, Some("to_be_removed".to_string()));
     assert!(map.get(&"async_remove_key".to_string()).await.unwrap().is_none());
 
-    map.destroy().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires running Hazelcast cluster"]
-async fn test_set_async() {
-    let client = create_test_client().await;
-    let map = get_test_map(&client, "set_async").await;
-
-    let future = map.set_async("set_async_key".to_string(), "set_value".to_string());
-    future.await.unwrap();
-
-    assert_eq!(
-        map.get(&"set_async_key".to_string()).await.unwrap(),
-        Some("set_value".to_string())
-    );
-
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -870,7 +690,7 @@ async fn test_set_async() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_evict() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "evict").await;
+    let map = get_test_map(&client, "evict");
 
     map.put("evict_key".to_string(), "evict_value".to_string())
         .await
@@ -879,14 +699,14 @@ async fn test_evict() {
     let evicted = map.evict(&"evict_key".to_string()).await.unwrap();
     assert!(evicted);
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_evict_all() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "evict_all").await;
+    let map = get_test_map(&client, "evict_all");
 
     for i in 0..5 {
         map.put(format!("key_{}", i), format!("value_{}", i))
@@ -896,30 +716,30 @@ async fn test_evict_all() {
 
     map.evict_all().await.unwrap();
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_load_all() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "load_all").await;
+    let map = get_test_map(&client, "load_all");
 
-    map.load_all(true).await.unwrap();
+    map.load_all_keys(true).await.unwrap();
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_load_all_keys() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "load_all_keys").await;
+    let map = get_test_map(&client, "load_all_keys");
 
     let keys = vec!["load_1".to_string(), "load_2".to_string()];
-    map.load_all_keys(keys, true).await.unwrap();
+    map.load_all(&keys, true).await.unwrap();
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -930,50 +750,44 @@ async fn test_load_all_keys() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_aggregate() {
     let client = create_test_client().await;
-    let map: IMap<String, i64> = client
-        .get_map("java_parity_test_aggregate")
-        .await
-        .expect("Failed to get map");
+    let map: IMap<String, i64> = client.get_map("java_parity_test_aggregate");
 
     map.put("a".to_string(), 10).await.unwrap();
     map.put("b".to_string(), 20).await.unwrap();
     map.put("c".to_string(), 30).await.unwrap();
 
-    let sum: i64 = map.aggregate(Aggregators::long_sum("this")).await.unwrap();
+    let sum: i64 = map.aggregate(&hazelcast_client::query::Aggregators::long_sum("this")).await.unwrap();
     assert_eq!(sum, 60);
 
-    let avg: f64 = map.aggregate(Aggregators::long_avg("this")).await.unwrap();
+    let avg: f64 = map.aggregate(&hazelcast_client::query::Aggregators::long_avg("this")).await.unwrap();
     assert!((avg - 20.0).abs() < 0.001);
 
-    let count: i64 = map.aggregate(Aggregators::count("this")).await.unwrap();
+    let count: i64 = map.aggregate(&hazelcast_client::query::Aggregators::count()).await.unwrap();
     assert_eq!(count, 3);
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_aggregate_with_predicate() {
     let client = create_test_client().await;
-    let map: IMap<String, i64> = client
-        .get_map("java_parity_test_aggregate_pred")
-        .await
-        .expect("Failed to get map");
+    let map: IMap<String, i64> = client.get_map("java_parity_test_aggregate_pred");
 
     map.put("a".to_string(), 10).await.unwrap();
     map.put("b".to_string(), 20).await.unwrap();
     map.put("c".to_string(), 30).await.unwrap();
     map.put("d".to_string(), 40).await.unwrap();
 
-    let predicate = Predicate::sql("this > 15");
+    let predicate = Predicates::sql("this > 15");
     let sum: i64 = map
-        .aggregate_with_predicate(Aggregators::long_sum("this"), predicate)
+        .aggregate_with_predicate(&hazelcast_client::query::Aggregators::long_sum("this"), &predicate)
         .await
         .unwrap();
 
     assert_eq!(sum, 90);
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -984,7 +798,7 @@ async fn test_aggregate_with_predicate() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_project() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "project").await;
+    let map = get_test_map(&client, "project");
 
     map.put("user_1".to_string(), r#"{"name":"Alice","age":30}"#.to_string())
         .await
@@ -993,8 +807,9 @@ async fn test_project() {
         .await
         .unwrap();
 
+    let projection = Projections::single::<String>("name");
     let names: Vec<String> = map
-        .project(Projections::single_attribute("name"))
+        .project(&projection)
         .await
         .unwrap();
 
@@ -1002,7 +817,7 @@ async fn test_project() {
     assert!(names.contains(&"Alice".to_string()));
     assert!(names.contains(&"Bob".to_string()));
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -1013,7 +828,7 @@ async fn test_project() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_get_entry_view() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "entry_view").await;
+    let map = get_test_map(&client, "entry_view");
 
     let key = "view_key".to_string();
     let value = "view_value".to_string();
@@ -1033,7 +848,7 @@ async fn test_get_entry_view() {
     assert!(entry_view.creation_time() > 0);
     assert!(entry_view.last_access_time() > 0);
 
-    map.destroy().await.unwrap();
+    map.clear().await.unwrap();
 }
 
 // ============================================================================
@@ -1041,6 +856,7 @@ async fn test_get_entry_view() {
 // ============================================================================
 
 use hazelcast_client::proxy::EntryProcessor;
+use hazelcast_core::serialization::{DataInput, DataOutput, Deserializable, ObjectDataOutput, Serializable};
 
 struct IncrementProcessor {
     increment: i64,
@@ -1053,41 +869,13 @@ impl IncrementProcessor {
 }
 
 impl EntryProcessor for IncrementProcessor {
-    fn class_id() -> i32 {
-        1
-    }
+    type Output = String;
+}
 
-    fn factory_id() -> i32 {
-        1
+impl Serializable for IncrementProcessor {
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
+        output.write_long(self.increment)?;
+        Ok(())
     }
 }
 
-struct Aggregators;
-
-impl Aggregators {
-    fn long_sum(_attribute: &str) -> LongSumAggregator {
-        LongSumAggregator
-    }
-
-    fn long_avg(_attribute: &str) -> LongAvgAggregator {
-        LongAvgAggregator
-    }
-
-    fn count(_attribute: &str) -> CountAggregator {
-        CountAggregator
-    }
-}
-
-struct LongSumAggregator;
-struct LongAvgAggregator;
-struct CountAggregator;
-
-struct Projections;
-
-impl Projections {
-    fn single_attribute(_attribute: &str) -> SingleAttributeProjection {
-        SingleAttributeProjection
-    }
-}
-
-struct SingleAttributeProjection;

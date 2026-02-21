@@ -20,7 +20,7 @@ async fn test_set_add_and_contains() {
         .await
         .expect("failed to connect");
     let set_name = unique_name("test-set");
-    let set = client.get_set::<String>(&set_name).await.unwrap();
+    let set = client.get_set::<String>(&set_name);
 
     assert!(!set.contains(&"item1".to_string()).await.unwrap());
 
@@ -43,7 +43,7 @@ async fn test_set_add_duplicate() {
         .await
         .expect("failed to connect");
     let set_name = unique_name("test-set-dup");
-    let set = client.get_set::<String>(&set_name).await.unwrap();
+    let set = client.get_set::<String>(&set_name);
 
     let first_add = set.add("item1".to_string()).await.unwrap();
     assert!(first_add);
@@ -67,7 +67,7 @@ async fn test_set_remove() {
         .await
         .expect("failed to connect");
     let set_name = unique_name("test-set-remove");
-    let set = client.get_set::<String>(&set_name).await.unwrap();
+    let set = client.get_set::<String>(&set_name);
 
     set.add("item1".to_string()).await.unwrap();
     assert!(set.contains(&"item1".to_string()).await.unwrap());
@@ -94,7 +94,7 @@ async fn test_set_size() {
         .await
         .expect("failed to connect");
     let set_name = unique_name("test-set-size");
-    let set = client.get_set::<String>(&set_name).await.unwrap();
+    let set = client.get_set::<String>(&set_name);
 
     assert_eq!(set.size().await.unwrap(), 0);
 
@@ -124,7 +124,7 @@ async fn test_set_is_empty() {
         .await
         .expect("failed to connect");
     let set_name = unique_name("test-set-empty");
-    let set = client.get_set::<String>(&set_name).await.unwrap();
+    let set = client.get_set::<String>(&set_name);
 
     assert!(set.is_empty().await.unwrap());
 
@@ -146,7 +146,7 @@ async fn test_set_clear() {
         .await
         .expect("failed to connect");
     let set_name = unique_name("test-set-clear");
-    let set = client.get_set::<String>(&set_name).await.unwrap();
+    let set = client.get_set::<String>(&set_name);
 
     for i in 0..10 {
         set.add(format!("item-{}", i)).await.unwrap();
@@ -169,7 +169,7 @@ async fn test_set_with_integers() {
         .await
         .expect("failed to connect");
     let set_name = unique_name("test-set-int");
-    let set = client.get_set::<i64>(&set_name).await.unwrap();
+    let set = client.get_set::<i64>(&set_name);
 
     set.add(42i64).await.unwrap();
     set.add(-100i64).await.unwrap();
@@ -196,7 +196,7 @@ async fn test_set_bulk_operations() {
         .await
         .expect("failed to connect");
     let set_name = unique_name("test-set-bulk");
-    let set = client.get_set::<i32>(&set_name).await.unwrap();
+    let set = client.get_set::<i32>(&set_name);
 
     for i in 0..100 {
         set.add(i).await.unwrap();
@@ -233,9 +233,7 @@ async fn test_set_concurrent_operations() {
         
         let handle = tokio::spawn(async move {
             let set = client_clone
-                .get_set::<i32>(&set_name_clone)
-                .await
-                .unwrap();
+                .get_set::<i32>(&set_name_clone);
             
             for j in 0..10 {
                 set.add(i * 10 + j).await.unwrap();
@@ -249,7 +247,7 @@ async fn test_set_concurrent_operations() {
         handle.await.unwrap();
     }
 
-    let set = client.get_set::<i32>(&set_name).await.unwrap();
+    let set = client.get_set::<i32>(&set_name);
     assert_eq!(set.size().await.unwrap(), 100);
 
     set.clear().await.unwrap();
@@ -266,7 +264,7 @@ async fn test_set_special_string_values() {
         .await
         .expect("failed to connect");
     let set_name = unique_name("test-set-special");
-    let set = client.get_set::<String>(&set_name).await.unwrap();
+    let set = client.get_set::<String>(&set_name);
 
     let special_values = vec![
         String::new(),
@@ -301,7 +299,7 @@ async fn test_set_clone_shares_state() {
         .await
         .expect("failed to connect");
     let set_name = unique_name("test-set-clone");
-    let set1 = client.get_set::<String>(&set_name).await.unwrap();
+    let set1 = client.get_set::<String>(&set_name);
     let set2 = set1.clone();
 
     set1.add("item1".to_string()).await.unwrap();

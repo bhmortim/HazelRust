@@ -40,7 +40,7 @@ async fn test_cluster_connectivity() {
         .expect("failed to connect to cluster");
     
     let map_name = unique_name("connectivity-test");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
     
     map.put("test-key".to_string(), "test-value".to_string()).await.unwrap();
     let value = map.get(&"test-key".to_string()).await.unwrap();
@@ -66,8 +66,8 @@ async fn test_multiple_clients() {
     
     let map_name = unique_name("multi-client-test");
     
-    let map1 = client1.get_map::<String, String>(&map_name).await.unwrap();
-    let map2 = client2.get_map::<String, String>(&map_name).await.unwrap();
+    let map1 = client1.get_map::<String, String>(&map_name);
+    let map2 = client2.get_map::<String, String>(&map_name);
     
     map1.put("key1".to_string(), "from-client1".to_string()).await.unwrap();
     
@@ -96,8 +96,8 @@ async fn test_data_structure_isolation() {
     let map1_name = unique_name("isolation-map1");
     let map2_name = unique_name("isolation-map2");
     
-    let map1 = client.get_map::<String, String>(&map1_name).await.unwrap();
-    let map2 = client.get_map::<String, String>(&map2_name).await.unwrap();
+    let map1 = client.get_map::<String, String>(&map1_name);
+    let map2 = client.get_map::<String, String>(&map2_name);
     
     map1.put("shared-key".to_string(), "map1-value".to_string()).await.unwrap();
     map2.put("shared-key".to_string(), "map2-value".to_string()).await.unwrap();
@@ -131,10 +131,10 @@ async fn test_cross_data_structure_operations() {
     let set_name = unique_name("cross-ds-set");
     let list_name = unique_name("cross-ds-list");
     
-    let map = client.get_map::<String, i32>(&map_name).await.unwrap();
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
-    let set = client.get_set::<String>(&set_name).await.unwrap();
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let map = client.get_map::<String, i32>(&map_name);
+    let queue = client.get_queue::<String>(&queue_name);
+    let set = client.get_set::<String>(&set_name);
+    let list = client.get_list::<String>(&list_name);
     
     map.put("counter".to_string(), 0).await.unwrap();
     
@@ -171,33 +171,33 @@ async fn test_serialization_types() {
         .expect("failed to connect");
     
     let i32_map_name = unique_name("ser-i32");
-    let i32_map = client.get_map::<String, i32>(&i32_map_name).await.unwrap();
+    let i32_map = client.get_map::<String, i32>(&i32_map_name);
     i32_map.put("key".to_string(), i32::MAX).await.unwrap();
     assert_eq!(i32_map.get(&"key".to_string()).await.unwrap(), Some(i32::MAX));
     i32_map.clear().await.unwrap();
     
     let i64_map_name = unique_name("ser-i64");
-    let i64_map = client.get_map::<String, i64>(&i64_map_name).await.unwrap();
+    let i64_map = client.get_map::<String, i64>(&i64_map_name);
     i64_map.put("key".to_string(), i64::MAX).await.unwrap();
     assert_eq!(i64_map.get(&"key".to_string()).await.unwrap(), Some(i64::MAX));
     i64_map.clear().await.unwrap();
     
     let f32_map_name = unique_name("ser-f32");
-    let f32_map = client.get_map::<String, f32>(&f32_map_name).await.unwrap();
+    let f32_map = client.get_map::<String, f32>(&f32_map_name);
     f32_map.put("key".to_string(), std::f32::consts::PI).await.unwrap();
     let value = f32_map.get(&"key".to_string()).await.unwrap().unwrap();
     assert!((value - std::f32::consts::PI).abs() < f32::EPSILON);
     f32_map.clear().await.unwrap();
     
     let f64_map_name = unique_name("ser-f64");
-    let f64_map = client.get_map::<String, f64>(&f64_map_name).await.unwrap();
+    let f64_map = client.get_map::<String, f64>(&f64_map_name);
     f64_map.put("key".to_string(), std::f64::consts::E).await.unwrap();
     let value = f64_map.get(&"key".to_string()).await.unwrap().unwrap();
     assert!((value - std::f64::consts::E).abs() < f64::EPSILON);
     f64_map.clear().await.unwrap();
     
     let bool_map_name = unique_name("ser-bool");
-    let bool_map = client.get_map::<String, bool>(&bool_map_name).await.unwrap();
+    let bool_map = client.get_map::<String, bool>(&bool_map_name);
     bool_map.put("true".to_string(), true).await.unwrap();
     bool_map.put("false".to_string(), false).await.unwrap();
     assert_eq!(bool_map.get(&"true".to_string()).await.unwrap(), Some(true));
@@ -217,7 +217,7 @@ async fn test_empty_operations() {
         .expect("failed to connect");
     
     let map_name = unique_name("empty-map");
-    let map = client.get_map::<String, String>(&map_name).await.unwrap();
+    let map = client.get_map::<String, String>(&map_name);
     
     assert_eq!(map.size().await.unwrap(), 0);
     assert_eq!(map.get(&"nonexistent".to_string()).await.unwrap(), None);
@@ -225,7 +225,7 @@ async fn test_empty_operations() {
     assert!(!map.contains_key(&"nonexistent".to_string()).await.unwrap());
     
     let queue_name = unique_name("empty-queue");
-    let queue = client.get_queue::<String>(&queue_name).await.unwrap();
+    let queue = client.get_queue::<String>(&queue_name);
     
     assert_eq!(queue.size().await.unwrap(), 0);
     assert!(queue.is_empty().await.unwrap());
@@ -233,14 +233,14 @@ async fn test_empty_operations() {
     assert_eq!(queue.peek().await.unwrap(), None);
     
     let set_name = unique_name("empty-set");
-    let set = client.get_set::<String>(&set_name).await.unwrap();
+    let set = client.get_set::<String>(&set_name);
     
     assert_eq!(set.size().await.unwrap(), 0);
     assert!(set.is_empty().await.unwrap());
     assert!(!set.contains(&"nonexistent".to_string()).await.unwrap());
     
     let list_name = unique_name("empty-list");
-    let list = client.get_list::<String>(&list_name).await.unwrap();
+    let list = client.get_list::<String>(&list_name);
     
     assert_eq!(list.size().await.unwrap(), 0);
     assert!(list.is_empty().await.unwrap());

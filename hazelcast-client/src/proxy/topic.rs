@@ -730,6 +730,8 @@ mod tests {
             receive_count: 25,
             last_publish_time: None,
             last_receive_time: None,
+            publish_latency: LatencyStats::default(),
+            receive_latency: LatencyStats::default(),
         };
         assert_eq!(stats.total_operations(), 35);
     }

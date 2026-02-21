@@ -1097,9 +1097,9 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "deranged"
-version = "0.5.6"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc3dc5ad92c2e2d1c193bbbbdf2ea477cb81331de4f3103f267ca18368b988c4"
+checksum = "2163a0e204a148662b6b6816d4b5d5668a5f2f8df498ccbd5cd0e864e78fecba"
 dependencies = [
  "powerfmt",
  "serde_core",
@@ -1580,6 +1580,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "socket2 0.5.10",
+ "tempfile",
  "testcontainers",
  "testcontainers-modules",
  "thiserror 1.0.69",
@@ -1589,6 +1590,7 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "toml",
+ "tower 0.5.3",
  "tracing",
  "url",
  "uuid",
@@ -1602,12 +1604,22 @@ dependencies = [
  "async-trait",
  "bincode",
  "bytes",
+ "hazelcast-derive",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "hazelcast-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

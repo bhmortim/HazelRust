@@ -30,6 +30,13 @@ pub enum InMemoryFormat {
     /// Store entries as deserialized objects. Faster access, but higher
     /// memory usage and requires the value type to be `Clone`.
     Object,
+    /// Store entries in the same format as the cluster member's native memory.
+    ///
+    /// This format avoids serialization/deserialization overhead by keeping
+    /// entries in the internal representation used by the Hazelcast cluster.
+    /// It is most useful when the near-cache is tightly integrated with the
+    /// member's storage engine.
+    Native,
 }
 
 /// Eviction policy for near-cache when max size is reached.
@@ -143,6 +150,7 @@ pub struct NearCacheConfig {
     invalidate_on_change: bool,
     serialize_keys: bool,
     preload_config: PreloadConfig,
+    cache_local_entries: bool,
 }
 
 impl NearCacheConfig {
@@ -197,6 +205,17 @@ impl NearCacheConfig {
         self.serialize_keys
     }
 
+    /// Returns whether entries owned by the local member should be cached.
+    ///
+    /// When `true`, entries that are owned by the local member (in embedded mode)
+    /// are also cached in the near-cache. This can improve read performance
+    /// even for local entries by avoiding map-level locking.
+    ///
+    /// Default is `false`.
+    pub fn cache_local_entries(&self) -> bool {
+        self.cache_local_entries
+    }
+
     /// Returns the preload configuration.
     pub fn preload_config(&self) -> &PreloadConfig {
         &self.preload_config
@@ -227,6 +246,7 @@ pub struct NearCacheConfigBuilder {
     invalidate_on_change: Option<bool>,
     serialize_keys: Option<bool>,
     preload_config: Option<PreloadConfig>,
+    cache_local_entries: Option<bool>,
 }
 
 impl NearCacheConfigBuilder {
@@ -242,6 +262,7 @@ impl NearCacheConfigBuilder {
             invalidate_on_change: None,
             serialize_keys: None,
             preload_config: None,
+            cache_local_entries: None,
         }
     }
 
@@ -319,6 +340,18 @@ impl NearCacheConfigBuilder {
         self
     }
 
+    /// Sets whether entries owned by the local member should be cached.
+    ///
+    /// When `true`, entries that are owned by the local member (in embedded mode)
+    /// are also cached in the near-cache. This can improve read performance
+    /// even for local entries by avoiding map-level locking.
+    ///
+    /// Default is `false`.
+    pub fn cache_local_entries(mut self, cache: bool) -> Self {
+        self.cache_local_entries = Some(cache);
+        self
+    }
+
     /// Builds the near-cache configuration.
     ///
     /// # Errors
@@ -346,6 +379,7 @@ impl NearCacheConfigBuilder {
             invalidate_on_change: self.invalidate_on_change.unwrap_or(true),
             serialize_keys: self.serialize_keys.unwrap_or(true),
             preload_config: self.preload_config.unwrap_or_default(),
+            cache_local_entries: self.cache_local_entries.unwrap_or(false),
         })
     }
 }

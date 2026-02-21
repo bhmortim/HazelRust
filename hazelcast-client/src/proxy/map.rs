@@ -5016,6 +5016,15 @@ mod tests {
     use crate::cache::EvictionPolicy;
     use std::time::Duration;
 
+    /// Helper to create a ConnectionManager from a socket address for tests.
+    fn make_cm_from_addr(addr: std::net::SocketAddr) -> crate::connection::ConnectionManager {
+        let config = crate::config::ClientConfigBuilder::new()
+            .add_address(addr)
+            .build()
+            .unwrap();
+        crate::connection::ConnectionManager::from_config(config)
+    }
+
     #[test]
     fn test_imap_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
@@ -5179,19 +5188,19 @@ mod tests {
 
     #[test]
     fn test_imap_has_near_cache() {
-        use crate::connection::ConnectionManager;
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = ConnectionManager::new(vec![addr]);
+        let cm1 = Arc::new(make_cm_from_addr(addr));
 
-        let map_without: IMap<String, String> = IMap::new("test".to_string(), Arc::new(cm.clone()));
+        let map_without: IMap<String, String> = IMap::new("test".to_string(), cm1);
         assert!(!map_without.has_near_cache());
         assert!(map_without.near_cache_stats().is_none());
 
+        let cm2 = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map_with: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), Arc::new(cm), config);
+            IMap::new_with_near_cache("test".to_string(), cm2, config);
         assert!(map_with.has_near_cache());
         assert!(map_with.near_cache_stats().is_some());
     }
@@ -5202,7 +5211,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -5220,7 +5229,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
         let stats = map.local_stats();
@@ -5240,7 +5249,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -5255,7 +5264,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let map1: IMap<String, String> = IMap::new("test".to_string(), cm);
         let map2 = map1.clone();
 
@@ -5268,7 +5277,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map1: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -5291,7 +5300,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -5306,7 +5315,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -5417,7 +5426,7 @@ mod tests {
 
         impl Serializable for TestProcessor {
             fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
-                output.write_i32(self.increment)?;
+                output.write_int(self.increment)?;
                 Ok(())
             }
         }
@@ -5589,7 +5598,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -5603,7 +5612,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
         assert!(!map.is_near_cache_invalidation_active());
@@ -5615,7 +5624,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map1: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -5636,7 +5645,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
         assert!(!map.has_near_cache());
@@ -5651,7 +5660,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -5666,7 +5675,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let _cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let _cm = Arc::new(make_cm_from_addr(addr));
 
         let entries: HashMap<String, String> = HashMap::new();
         assert!(entries.is_empty());
@@ -5678,7 +5687,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let _cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let _cm = Arc::new(make_cm_from_addr(addr));
 
         let keys: Vec<String> = Vec::new();
         assert!(keys.is_empty());
@@ -5690,7 +5699,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let _cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let _cm = Arc::new(make_cm_from_addr(addr));
 
         let entries: HashMap<String, String> = HashMap::new();
         assert!(entries.is_empty());
@@ -5702,7 +5711,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let _cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let _cm = Arc::new(make_cm_from_addr(addr));
 
         let keys: Vec<String> = Vec::new();
         assert!(keys.is_empty());
@@ -5938,10 +5947,10 @@ mod tests {
         let predicate_data = predicate.to_predicate_data().unwrap();
         assert!(!predicate_data.is_empty());
 
-        let and_predicate = Predicates::and(
-            Predicates::greater_than("age", &18i32).unwrap(),
-            Predicates::less_than("age", &65i32).unwrap(),
-        );
+        let and_predicate = Predicates::and(vec![
+            Box::new(Predicates::greater_than("age", &18i32).unwrap()),
+            Box::new(Predicates::less_than("age", &65i32).unwrap()),
+        ]);
         let and_data = and_predicate.to_predicate_data().unwrap();
         assert!(!and_data.is_empty());
     }
@@ -5952,7 +5961,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -5982,7 +5991,7 @@ mod tests {
             type Output = i32;
         }
         impl Serializable for TestProcessor {
-            fn serialize(&self, _output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(&self, _output: &mut W) -> hazelcast_core::Result<()> {
                 Ok(())
             }
         }
@@ -6016,7 +6025,7 @@ mod tests {
             type Output = i32;
         }
         impl Serializable for TestProcessor {
-            fn serialize(&self, _output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(&self, _output: &mut W) -> hazelcast_core::Result<()> {
                 Ok(())
             }
         }
@@ -6042,7 +6051,7 @@ mod tests {
 
         impl Serializable for IncrementProcessor {
             fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
-                output.write_i32(self.delta)?;
+                output.write_int(self.delta)?;
                 Ok(())
             }
         }
@@ -6052,7 +6061,7 @@ mod tests {
         processor.serialize(&mut output).unwrap();
         let processor_bytes = output.into_bytes();
         assert_eq!(processor_bytes.len(), 4);
-        assert_eq!(i32::from_le_bytes(processor_bytes[..4].try_into().unwrap()), 5);
+        assert_eq!(i32::from_be_bytes(processor_bytes[..4].try_into().unwrap()), 5);
 
         use crate::query::Predicates;
         let predicate = Predicates::sql("status = 'active'");
@@ -6633,7 +6642,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -6647,7 +6656,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -6661,7 +6670,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -6698,7 +6707,7 @@ mod tests {
         }
 
         impl Serializable for TestInterceptor {
-            fn serialize(&self, _output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(&self, _output: &mut W) -> hazelcast_core::Result<()> {
                 Ok(())
             }
         }
@@ -7014,7 +7023,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -7028,7 +7037,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -7042,7 +7051,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -7056,7 +7065,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -7435,7 +7444,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -7449,7 +7458,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
         let map: IMap<String, String> =
             IMap::new_with_near_cache("test".to_string(), cm, config);
@@ -7589,8 +7598,8 @@ mod tests {
         impl Deserializable for ProcessorResult {
             fn deserialize<R: DataInput>(input: &mut R) -> hazelcast_core::Result<Self> {
                 Ok(Self {
-                    old_value: input.read_i32()?,
-                    new_value: input.read_i32()?,
+                    old_value: input.read_int()?,
+                    new_value: input.read_int()?,
                 })
             }
         }
@@ -7605,7 +7614,7 @@ mod tests {
 
         impl Serializable for UpdateProcessor {
             fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
-                output.write_i32(self.delta)?;
+                output.write_int(self.delta)?;
                 Ok(())
             }
         }
@@ -7640,7 +7649,7 @@ mod tests {
             type Output = i32;
         }
         impl Serializable for TestProcessor {
-            fn serialize(&self, _output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(&self, _output: &mut W) -> hazelcast_core::Result<()> {
                 Ok(())
             }
         }
@@ -7701,7 +7710,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
         let _get_handle: tokio::task::JoinHandle<Result<Option<String>>> =
@@ -7720,7 +7729,7 @@ mod tests {
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
         let mut entries = HashMap::new();
@@ -7769,13 +7778,13 @@ mod tests {
             type Output = i32;
         }
         impl Serializable for TestProcessor {
-            fn serialize(&self, _output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(&self, _output: &mut W) -> hazelcast_core::Result<()> {
                 Ok(())
             }
         }
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
-        let cm = Arc::new(ConnectionManager::new(vec![addr]));
+        let cm = Arc::new(make_cm_from_addr(addr));
         let map: IMap<String, i32> = IMap::new("test".to_string(), cm);
 
         let _handle: tokio::task::JoinHandle<Result<Option<i32>>> =

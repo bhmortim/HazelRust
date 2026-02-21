@@ -15,12 +15,14 @@ use futures::Stream;
 use tokio::spawn;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use std::sync::Mutex;
+
 use hazelcast_core::protocol::constants::{
     CACHE_ADD_ENTRY_LISTENER, CACHE_CLEAR, CACHE_CONTAINS_KEY, CACHE_EVENT_JOURNAL_READ,
     CACHE_EVENT_JOURNAL_SUBSCRIBE, CACHE_GET, CACHE_GET_ALL, CACHE_GET_AND_PUT,
-    CACHE_GET_AND_REMOVE, CACHE_GET_AND_REPLACE, CACHE_PUT, CACHE_PUT_ALL, CACHE_PUT_IF_ABSENT,
-    CACHE_REMOVE, CACHE_REMOVE_ALL, CACHE_REMOVE_ENTRY_LISTENER, CACHE_REPLACE,
-    CACHE_REPLACE_IF_SAME, END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, PARTITION_ID_ANY,
+    CACHE_GET_AND_REMOVE, CACHE_GET_AND_REPLACE, CACHE_INVOKE, CACHE_PUT, CACHE_PUT_ALL,
+    CACHE_PUT_IF_ABSENT, CACHE_REMOVE, CACHE_REMOVE_ALL, CACHE_REMOVE_ENTRY_LISTENER,
+    CACHE_REPLACE, CACHE_REPLACE_IF_SAME, END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, PARTITION_ID_ANY,
     RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
@@ -29,8 +31,10 @@ use hazelcast_core::{
     compute_partition_hash, ClientMessage, Deserializable, HazelcastError, Result, Serializable,
 };
 
+use crate::cache::NearCache;
 use crate::connection::ConnectionManager;
 use crate::listener::{ListenerId, ListenerRegistration};
+use crate::proxy::entry_processor::EntryProcessor;
 
 /// Event types for Event Journal cache events.
 ///
@@ -954,6 +958,106 @@ impl<K, V> Stream for CacheEventJournalStream<K, V> {
     }
 }
 
+/// Expiry policy for cache entries, defining per-operation TTL durations.
+///
+/// Each field controls the expiry behavior for different cache operations.
+/// A value of `None` means the operation does not modify the entry's expiry.
+/// A value of `Some(Duration::ZERO)` means the entry should be considered
+/// immediately expired (access returns no entry, effectively a delete).
+///
+/// # Example
+///
+/// ```ignore
+/// use std::time::Duration;
+///
+/// let policy = ExpiryPolicy {
+///     creation: Some(Duration::from_secs(300)),
+///     access: Some(Duration::from_secs(60)),
+///     update: Some(Duration::from_secs(300)),
+/// };
+///
+/// cache.put_with_expiry("key".to_string(), "value".to_string(), &policy).await?;
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ExpiryPolicy {
+    /// Duration after creation before an entry expires.
+    pub creation: Option<Duration>,
+    /// Duration after last access before an entry expires.
+    pub access: Option<Duration>,
+    /// Duration after last update before an entry expires.
+    pub update: Option<Duration>,
+}
+
+impl ExpiryPolicy {
+    /// Creates a new expiry policy with no expiration for any operation.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Creates an expiry policy where entries expire after the given duration from creation.
+    pub fn created_expiry(duration: Duration) -> Self {
+        Self {
+            creation: Some(duration),
+            access: None,
+            update: None,
+        }
+    }
+
+    /// Creates an expiry policy where entries expire after the given duration from last access.
+    pub fn accessed_expiry(duration: Duration) -> Self {
+        Self {
+            creation: None,
+            access: Some(duration),
+            update: None,
+        }
+    }
+
+    /// Creates an expiry policy where entries expire after the given duration from last update.
+    pub fn updated_expiry(duration: Duration) -> Self {
+        Self {
+            creation: None,
+            access: None,
+            update: Some(duration),
+        }
+    }
+
+    /// Creates an expiry policy where all operations set the same expiry duration.
+    pub fn eternal() -> Self {
+        Self {
+            creation: Some(Duration::MAX),
+            access: Some(Duration::MAX),
+            update: Some(Duration::MAX),
+        }
+    }
+
+    /// Creates an expiry policy with the given duration for all operations.
+    pub fn ttl(duration: Duration) -> Self {
+        Self {
+            creation: Some(duration),
+            access: Some(duration),
+            update: Some(duration),
+        }
+    }
+
+    /// Returns the duration in milliseconds for the given optional duration.
+    /// Returns -1 if None (meaning "don't change"), 0 for Duration::ZERO.
+    fn duration_millis(d: &Option<Duration>) -> i64 {
+        match d {
+            None => -1,
+            Some(dur) => dur.as_millis() as i64,
+        }
+    }
+
+    /// Serializes this expiry policy to a data frame for protocol encoding.
+    fn to_frame(&self) -> Frame {
+        let mut buf = BytesMut::with_capacity(24);
+        buf.extend_from_slice(&Self::duration_millis(&self.creation).to_le_bytes());
+        buf.extend_from_slice(&Self::duration_millis(&self.access).to_le_bytes());
+        buf.extend_from_slice(&Self::duration_millis(&self.update).to_le_bytes());
+        Frame::with_content(buf)
+    }
+}
+
 /// A distributed cache proxy implementing a subset of the JCache (JSR-107) API.
 ///
 /// `ICache` provides standard caching operations with strong consistency guarantees.
@@ -981,6 +1085,7 @@ impl<K, V> Stream for CacheEventJournalStream<K, V> {
 pub struct ICache<K, V> {
     name: String,
     connection_manager: Arc<ConnectionManager>,
+    near_cache: Option<Mutex<NearCache<Vec<u8>, Vec<u8>>>>,
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
@@ -990,6 +1095,21 @@ impl<K, V> ICache<K, V> {
         Self {
             name,
             connection_manager,
+            near_cache: None,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Creates a new cache proxy with near-cache enabled.
+    pub(crate) fn new_with_near_cache(
+        name: String,
+        connection_manager: Arc<ConnectionManager>,
+        config: crate::cache::NearCacheConfig,
+    ) -> Self {
+        Self {
+            name,
+            connection_manager,
+            near_cache: Some(Mutex::new(NearCache::new(config))),
             _phantom: PhantomData,
         }
     }
@@ -997,6 +1117,11 @@ impl<K, V> ICache<K, V> {
     /// Returns the name of this cache.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns `true` if this cache has near-cache enabled.
+    pub fn has_near_cache(&self) -> bool {
+        self.near_cache.is_some()
     }
 }
 
@@ -1007,17 +1132,40 @@ where
 {
     /// Retrieves the value associated with the given key.
     ///
+    /// If near-cache is enabled, the local cache is checked first. On a near-cache
+    /// miss, the value is fetched from the cluster and stored in the near-cache.
+    ///
     /// Returns `None` if the key does not exist in the cache.
     pub async fn get(&self, key: &K) -> Result<Option<V>> {
         let key_data = Self::serialize_value(key)?;
+
+        // Check near cache first
+        if let Some(ref near_cache) = self.near_cache {
+            let mut cache = near_cache.lock().unwrap();
+            if let Some(value_data) = cache.get(&key_data) {
+                let mut input = ObjectDataInput::new(&value_data);
+                return V::deserialize(&mut input).map(Some);
+            }
+        }
+
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(CACHE_GET, partition_id);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
-        Self::decode_nullable_response(&response)
+        let response = self.invoke_on_cluster(message).await?;
+        let result: Option<V> = Self::decode_nullable_response(&response)?;
+
+        // Store in near cache on successful fetch
+        if let (Some(ref near_cache), Some(ref value)) = (&self.near_cache, &result) {
+            if let Ok(value_data) = Self::serialize_value(value) {
+                let mut cache = near_cache.lock().unwrap();
+                cache.put(key_data, value_data);
+            }
+        }
+
+        Ok(result)
     }
 
     /// Retrieves all values for the given keys.
@@ -1040,25 +1188,32 @@ where
             message.add_frame(Self::data_frame(&key_data));
         }
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_entries_response(&response)
     }
 
     /// Associates the specified value with the specified key.
     ///
     /// If the cache previously contained a mapping for the key, the old value
-    /// is replaced by the specified value.
+    /// is replaced by the specified value. If near-cache is enabled, the
+    /// local cache entry is invalidated.
     pub async fn put(&self, key: K, value: V) -> Result<()> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
         let partition_id = compute_partition_hash(&key_data);
+
+        // Invalidate near cache
+        if let Some(ref near_cache) = self.near_cache {
+            let mut cache = near_cache.lock().unwrap();
+            cache.invalidate(&key_data);
+        }
 
         let mut message = ClientMessage::create_for_encode(CACHE_PUT, partition_id);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        self.invoke(message).await?;
+        self.invoke_on_cluster(message).await?;
         Ok(())
     }
 
@@ -1081,7 +1236,7 @@ where
             message.add_frame(Self::data_frame(&value_data));
         }
 
-        self.invoke(message).await?;
+        self.invoke_on_cluster(message).await?;
         Ok(())
     }
 
@@ -1100,7 +1255,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1116,7 +1271,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1127,7 +1282,7 @@ where
         let mut message = ClientMessage::create_for_encode(CACHE_REMOVE_ALL, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
-        self.invoke(message).await?;
+        self.invoke_on_cluster(message).await?;
         Ok(())
     }
 
@@ -1144,7 +1299,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1165,7 +1320,7 @@ where
         message.add_frame(Self::data_frame(&old_value_data));
         message.add_frame(Self::data_frame(&new_value_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1178,7 +1333,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1190,7 +1345,7 @@ where
         let mut message = ClientMessage::create_for_encode(CACHE_CLEAR, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
-        self.invoke(message).await?;
+        self.invoke_on_cluster(message).await?;
         Ok(())
     }
 
@@ -1208,7 +1363,7 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -1224,7 +1379,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -1242,7 +1397,135 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
+        Self::decode_nullable_response(&response)
+    }
+
+    /// Associates the specified value with the specified key, using a custom expiry policy.
+    ///
+    /// The expiry policy controls when the entry expires based on creation, access,
+    /// and update durations.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::time::Duration;
+    ///
+    /// let policy = ExpiryPolicy::ttl(Duration::from_secs(300));
+    /// cache.put_with_expiry("key".to_string(), "value".to_string(), &policy).await?;
+    /// ```
+    pub async fn put_with_expiry(&self, key: K, value: V, expiry_policy: &ExpiryPolicy) -> Result<()> {
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+        let partition_id = compute_partition_hash(&key_data);
+
+        // Invalidate near cache
+        if let Some(ref near_cache) = self.near_cache {
+            let mut cache = near_cache.lock().unwrap();
+            cache.invalidate(&key_data);
+        }
+
+        let mut message = ClientMessage::create_for_encode(CACHE_PUT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(expiry_policy.to_frame());
+
+        self.invoke_on_cluster(message).await?;
+        Ok(())
+    }
+
+    /// Associates the specified value with the specified key using a custom expiry policy,
+    /// returning the previously associated value if any.
+    ///
+    /// Returns `None` if there was no previous mapping for the key.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::time::Duration;
+    ///
+    /// let policy = ExpiryPolicy::created_expiry(Duration::from_secs(600));
+    /// let old_value = cache.get_and_put_with_expiry("key".to_string(), new_value, &policy).await?;
+    /// ```
+    pub async fn get_and_put_with_expiry(
+        &self,
+        key: K,
+        value: V,
+        expiry_policy: &ExpiryPolicy,
+    ) -> Result<Option<V>> {
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+        let partition_id = compute_partition_hash(&key_data);
+
+        // Invalidate near cache
+        if let Some(ref near_cache) = self.near_cache {
+            let mut cache = near_cache.lock().unwrap();
+            cache.invalidate(&key_data);
+        }
+
+        let mut message = ClientMessage::create_for_encode(CACHE_GET_AND_PUT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(expiry_policy.to_frame());
+
+        let response = self.invoke_on_cluster(message).await?;
+        Self::decode_nullable_response(&response)
+    }
+
+    /// Invokes an entry processor on the entry with the specified key.
+    ///
+    /// The entry processor is serialized and sent to the cluster where it executes
+    /// atomically on the cache entry. The result is deserialized and returned.
+    ///
+    /// # Type Parameters
+    ///
+    /// - `P`: The entry processor type, must implement `EntryProcessor` and `Serializable`
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key of the entry to process
+    /// * `processor` - The entry processor to execute
+    ///
+    /// # Returns
+    ///
+    /// The result of the entry processor execution, or `None` if the entry doesn't exist.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let processor = IncrementProcessor { delta: 10 };
+    /// let result = cache.invoke_processor(&"counter".to_string(), &processor).await?;
+    /// ```
+    pub async fn invoke_processor<P>(
+        &self,
+        key: &K,
+        processor: &P,
+    ) -> Result<Option<P::Output>>
+    where
+        P: EntryProcessor,
+        P::Output: Deserializable,
+    {
+        let key_data = Self::serialize_value(key)?;
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut processor_output = ObjectDataOutput::new();
+        processor.serialize(&mut processor_output)?;
+        let processor_data = processor_output.into_bytes();
+
+        // Invalidate near cache since the processor may modify the entry
+        if let Some(ref near_cache) = self.near_cache {
+            let mut cache = near_cache.lock().unwrap();
+            cache.invalidate(&key_data);
+        }
+
+        let mut message = ClientMessage::create_for_encode(CACHE_INVOKE, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&processor_data));
+
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -1348,7 +1631,7 @@ where
             ClientMessage::create_for_encode(CACHE_EVENT_JOURNAL_SUBSCRIBE, partition_id);
         message.add_frame(Self::string_frame(&self.name));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_event_journal_subscribe_response(&response)
     }
 
@@ -1569,7 +1852,7 @@ where
         Frame::with_content(buf)
     }
 
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
+    async fn invoke_on_cluster(&self, message: ClientMessage) -> Result<ClientMessage> {
         let address = self.get_connection_address().await?;
 
         self.connection_manager.send_to(address, message).await?;
@@ -1713,7 +1996,7 @@ where
         message.add_frame(Self::bool_frame(config.synchronous));
         message.add_frame(Self::bool_frame(false)); // local only = false
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
 
         let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
@@ -1787,7 +2070,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::uuid_frame(registration.id().as_uuid()));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke_on_cluster(message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1905,6 +2188,7 @@ impl<K, V> Clone for ICache<K, V> {
         Self {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
+            near_cache: None, // Near cache is not cloned; each proxy instance manages its own
             _phantom: PhantomData,
         }
     }
@@ -2506,7 +2790,7 @@ mod tests {
     #[test]
     fn test_fn_cache_loader_load_all_custom() {
         let loader: FnCacheLoader<String, i32> = FnCacheLoader::builder()
-            .load(|_| Ok(None))
+            .load(|_: &String| Ok(None))
             .load_all(|keys| {
                 let mut map = HashMap::new();
                 for key in keys {

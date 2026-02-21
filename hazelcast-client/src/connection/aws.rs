@@ -281,7 +281,7 @@ impl AwsDiscovery {
     }
 
     /// Extracts IP address from a discovered instance based on configuration.
-    fn extract_ip(&self, instance: &DiscoveredInstance) -> Option<&str> {
+    fn extract_ip<'a>(&self, instance: &'a DiscoveredInstance) -> Option<&'a str> {
         if self.config.use_private_ip {
             instance.private_ip.as_deref()
         } else {

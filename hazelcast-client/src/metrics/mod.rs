@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use metrics::{counter, gauge, histogram, Label};
-use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder, PrometheusHandle};
 
 use crate::diagnostics::{ClientStatistics, OperationType, StatisticsCollector};
 
@@ -33,6 +33,12 @@ pub enum PrometheusError {
     /// Recorder already installed.
     #[error("metrics recorder already installed")]
     RecorderAlreadyInstalled,
+}
+
+impl From<BuildError> for PrometheusError {
+    fn from(err: BuildError) -> Self {
+        PrometheusError::Setup(err.to_string())
+    }
 }
 
 /// Builder for configuring a [`PrometheusExporter`].
@@ -105,13 +111,6 @@ impl PrometheusExporterBuilder {
     /// Returns an error if a metrics recorder is already installed.
     pub fn build(self) -> Result<PrometheusExporter, PrometheusError> {
         let mut builder = PrometheusBuilder::new();
-
-        if let Some(timeout) = self.idle_timeout {
-            builder = builder.idle_timeout(
-                Matcher::Full("hazelcast_operation_latency_seconds".to_string()),
-                Some(timeout),
-            );
-        }
 
         builder = builder.set_buckets_for_metric(
             Matcher::Suffix("_latency_seconds".to_string()),
@@ -217,34 +216,32 @@ impl PrometheusExporter {
     /// Records an operation with its latency.
     pub fn record_operation(op_type: OperationType, latency: Duration) {
         let op_name = op_type.name();
-        let labels = [Label::new("operation", op_name)];
 
-        counter!("hazelcast_operations_total", &labels).increment(1);
-        histogram!("hazelcast_operation_latency_seconds", &labels).record(latency.as_secs_f64());
+        counter!("hazelcast_operations_total", "operation" => op_name).increment(1);
+        histogram!("hazelcast_operation_latency_seconds", "operation" => op_name).record(latency.as_secs_f64());
     }
 
     /// Records an operation without latency tracking.
     pub fn record_operation_count(op_type: OperationType) {
-        let labels = [Label::new("operation", op_type.name())];
-        counter!("hazelcast_operations_total", &labels).increment(1);
+        counter!("hazelcast_operations_total", "operation" => op_type.name()).increment(1);
     }
 
     /// Records a near cache hit.
     pub fn record_near_cache_hit(map_name: &str) {
-        let labels = [Label::new("map", map_name.to_string())];
-        counter!("hazelcast_near_cache_hits_total", &labels).increment(1);
+        let labels = vec![Label::new("map", map_name.to_string())];
+        counter!("hazelcast_near_cache_hits_total", labels).increment(1);
     }
 
     /// Records a near cache miss.
     pub fn record_near_cache_miss(map_name: &str) {
-        let labels = [Label::new("map", map_name.to_string())];
-        counter!("hazelcast_near_cache_misses_total", &labels).increment(1);
+        let labels = vec![Label::new("map", map_name.to_string())];
+        counter!("hazelcast_near_cache_misses_total", labels).increment(1);
     }
 
     /// Records a near cache eviction.
     pub fn record_near_cache_eviction(map_name: &str) {
-        let labels = [Label::new("map", map_name.to_string())];
-        counter!("hazelcast_near_cache_evictions_total", &labels).increment(1);
+        let labels = vec![Label::new("map", map_name.to_string())];
+        counter!("hazelcast_near_cache_evictions_total", labels).increment(1);
     }
 
     /// Updates all gauge metrics from a statistics snapshot.
@@ -262,19 +259,17 @@ impl PrometheusExporter {
         gauge!("hazelcast_bytes_received_total").set(conn_stats.bytes_received() as f64);
 
         for (op_type, count) in stats.operation_counts() {
-            let labels = [Label::new("operation", op_type.name())];
-            gauge!("hazelcast_operations_total", &labels).set(*count as f64);
+            gauge!("hazelcast_operations_total", "operation" => op_type.name()).set(*count as f64);
         }
 
         for (map_name, cache_stats) in stats.near_cache_stats() {
-            let labels = [Label::new("map", map_name.clone())];
-            gauge!("hazelcast_near_cache_hits_total", &labels).set(cache_stats.hits() as f64);
-            gauge!("hazelcast_near_cache_misses_total", &labels).set(cache_stats.misses() as f64);
-            gauge!("hazelcast_near_cache_evictions_total", &labels)
+            gauge!("hazelcast_near_cache_hits_total", "map" => map_name.clone()).set(cache_stats.hits() as f64);
+            gauge!("hazelcast_near_cache_misses_total", "map" => map_name.clone()).set(cache_stats.misses() as f64);
+            gauge!("hazelcast_near_cache_evictions_total", "map" => map_name.clone())
                 .set(cache_stats.evictions() as f64);
-            gauge!("hazelcast_near_cache_expirations_total", &labels)
+            gauge!("hazelcast_near_cache_expirations_total", "map" => map_name.clone())
                 .set(cache_stats.expirations() as f64);
-            gauge!("hazelcast_near_cache_hit_ratio", &labels).set(cache_stats.hit_ratio());
+            gauge!("hazelcast_near_cache_hit_ratio", "map" => map_name.clone()).set(cache_stats.hit_ratio());
         }
 
         let mem_stats = stats.memory_stats();

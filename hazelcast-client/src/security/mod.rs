@@ -5,6 +5,9 @@ pub mod authorization;
 pub mod credentials;
 pub mod tls_config;
 
+#[cfg(feature = "kerberos")]
+pub mod kerberos;
+
 pub use authenticator::{
     AuthError, AuthResponse, Authenticator, Credentials, CustomCredentials, DefaultAuthenticator,
     JwtValidationResult, TokenAuthenticator, TokenCredentials, TokenFormat, validate_jwt_structure,
@@ -32,3 +35,6 @@ pub use credentials::GcpCredentialProvider;
 
 #[cfg(feature = "kubernetes")]
 pub use credentials::KubernetesCredentialProvider;
+
+#[cfg(feature = "kerberos")]
+pub use kerberos::{KerberosAuthenticator, KerberosCredentials};

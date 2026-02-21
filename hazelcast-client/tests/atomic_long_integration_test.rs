@@ -19,7 +19,7 @@ async fn test_atomic_long_get_and_set() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     let initial = counter.get().await.unwrap();
     assert_eq!(initial, 0);
@@ -40,7 +40,7 @@ async fn test_atomic_long_get_and_set_returns_old_value() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-gas");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(50).await.unwrap();
 
@@ -62,7 +62,7 @@ async fn test_atomic_long_increment_and_get() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-inc");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(0).await.unwrap();
 
@@ -87,7 +87,7 @@ async fn test_atomic_long_decrement_and_get() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-dec");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(10).await.unwrap();
 
@@ -109,7 +109,7 @@ async fn test_atomic_long_get_and_increment() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-gai");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(5).await.unwrap();
 
@@ -131,7 +131,7 @@ async fn test_atomic_long_get_and_decrement() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-gad");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(5).await.unwrap();
 
@@ -153,7 +153,7 @@ async fn test_atomic_long_add_and_get() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-aag");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(10).await.unwrap();
 
@@ -175,7 +175,7 @@ async fn test_atomic_long_get_and_add() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-gaa");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(10).await.unwrap();
 
@@ -197,7 +197,7 @@ async fn test_atomic_long_compare_and_set_success() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-cas");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(10).await.unwrap();
 
@@ -219,7 +219,7 @@ async fn test_atomic_long_compare_and_set_failure() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-cas-fail");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(10).await.unwrap();
 
@@ -241,7 +241,7 @@ async fn test_atomic_long_negative_values() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-neg");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(-100).await.unwrap();
     assert_eq!(counter.get().await.unwrap(), -100);
@@ -265,7 +265,7 @@ async fn test_atomic_long_large_values() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-large");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     counter.set(i64::MAX - 1).await.unwrap();
     let value = counter.increment_and_get().await.unwrap();
@@ -291,7 +291,7 @@ async fn test_atomic_long_concurrent_increments() {
     let counter_name = unique_name("test-counter-concurrent");
 
     {
-        let counter = client.get_atomic_long(&counter_name).await.unwrap();
+        let counter = client.get_atomic_long(&counter_name);
         counter.set(0).await.unwrap();
     }
 
@@ -303,9 +303,7 @@ async fn test_atomic_long_concurrent_increments() {
         
         let handle = tokio::spawn(async move {
             let counter = client_clone
-                .get_atomic_long(&counter_name_clone)
-                .await
-                .unwrap();
+                .get_atomic_long(&counter_name_clone);
             
             for _ in 0..100 {
                 counter.increment_and_get().await.unwrap();
@@ -319,7 +317,7 @@ async fn test_atomic_long_concurrent_increments() {
         handle.await.unwrap();
     }
 
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
     let final_value = counter.get().await.unwrap();
     assert_eq!(final_value, 1000);
 }
@@ -339,7 +337,7 @@ async fn test_atomic_long_concurrent_cas() {
     let counter_name = unique_name("test-counter-cas-concurrent");
 
     {
-        let counter = client.get_atomic_long(&counter_name).await.unwrap();
+        let counter = client.get_atomic_long(&counter_name);
         counter.set(0).await.unwrap();
     }
 
@@ -353,9 +351,7 @@ async fn test_atomic_long_concurrent_cas() {
         
         let handle = tokio::spawn(async move {
             let counter = client_clone
-                .get_atomic_long(&counter_name_clone)
-                .await
-                .unwrap();
+                .get_atomic_long(&counter_name_clone);
             
             for _ in 0..10 {
                 loop {
@@ -375,7 +371,7 @@ async fn test_atomic_long_concurrent_cas() {
         handle.await.unwrap();
     }
 
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
     let final_value = counter.get().await.unwrap();
     assert_eq!(final_value, 100);
     assert_eq!(success_count.load(std::sync::atomic::Ordering::SeqCst), 100);
@@ -392,7 +388,7 @@ async fn test_atomic_long_name() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-name");
-    let counter = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter = client.get_atomic_long(&counter_name);
 
     assert_eq!(counter.name(), counter_name);
 }
@@ -408,7 +404,7 @@ async fn test_atomic_long_clone() {
         .await
         .expect("failed to connect");
     let counter_name = unique_name("test-counter-clone");
-    let counter1 = client.get_atomic_long(&counter_name).await.unwrap();
+    let counter1 = client.get_atomic_long(&counter_name);
     let counter2 = counter1.clone();
 
     counter1.set(42).await.unwrap();
@@ -434,8 +430,8 @@ async fn test_atomic_long_multiple_counters() {
     let counter1_name = unique_name("test-counter-multi-1");
     let counter2_name = unique_name("test-counter-multi-2");
     
-    let counter1 = client.get_atomic_long(&counter1_name).await.unwrap();
-    let counter2 = client.get_atomic_long(&counter2_name).await.unwrap();
+    let counter1 = client.get_atomic_long(&counter1_name);
+    let counter2 = client.get_atomic_long(&counter2_name);
 
     counter1.set(100).await.unwrap();
     counter2.set(200).await.unwrap();

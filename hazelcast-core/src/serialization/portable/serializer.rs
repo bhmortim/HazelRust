@@ -67,14 +67,21 @@ impl PortableSerializer {
         let factory_id = portable.factory_id();
         let class_id = portable.class_id();
 
-        let class_def = self
+        let (class_def, has_registered_def) = match self
             .class_definitions
             .values()
             .find(|cd| cd.factory_id() == factory_id && cd.class_id() == class_id)
             .cloned()
-            .unwrap_or_else(|| ClassDefinition::new(factory_id, class_id, 0));
+        {
+            Some(cd) => (cd, true),
+            None => (ClassDefinition::new(factory_id, class_id, 0), false),
+        };
 
-        let mut writer = DefaultPortableWriter::new(class_def.clone());
+        let mut writer = if has_registered_def {
+            DefaultPortableWriter::new(class_def.clone())
+        } else {
+            DefaultPortableWriter::new_lenient(class_def.clone())
+        };
         portable.write_portable(&mut writer)?;
         let field_data = writer.to_bytes();
 

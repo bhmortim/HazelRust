@@ -154,7 +154,7 @@ impl LifecycleService {
 mod tests {
     use super::*;
     use crate::config::ClientConfigBuilder;
-    use crate::connection::discovery::StaticAddressDiscovery;
+    use crate::connection::StaticAddressDiscovery;
     use std::time::Duration;
     use tokio::net::TcpListener;
 

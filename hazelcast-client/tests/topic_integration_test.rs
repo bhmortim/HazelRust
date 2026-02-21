@@ -20,7 +20,7 @@ async fn test_topic_publish() {
         .await
         .expect("failed to connect");
     let topic_name = unique_name("test-topic");
-    let topic = client.get_topic::<String>(&topic_name).await.unwrap();
+    let topic = client.get_topic::<String>(&topic_name);
 
     let result = topic.publish("Hello, World!".to_string()).await;
     assert!(result.is_ok());
@@ -37,7 +37,7 @@ async fn test_topic_publish_multiple_messages() {
         .await
         .expect("failed to connect");
     let topic_name = unique_name("test-topic-multi");
-    let topic = client.get_topic::<String>(&topic_name).await.unwrap();
+    let topic = client.get_topic::<String>(&topic_name);
 
     for i in 0..10 {
         topic.publish(format!("Message {}", i)).await.unwrap();
@@ -55,7 +55,7 @@ async fn test_topic_publish_with_integers() {
         .await
         .expect("failed to connect");
     let topic_name = unique_name("test-topic-int");
-    let topic = client.get_topic::<i64>(&topic_name).await.unwrap();
+    let topic = client.get_topic::<i64>(&topic_name);
 
     topic.publish(42i64).await.unwrap();
     topic.publish(-100i64).await.unwrap();
@@ -73,7 +73,7 @@ async fn test_topic_add_message_listener() {
         .await
         .expect("failed to connect");
     let topic_name = unique_name("test-topic-listener");
-    let topic = client.get_topic::<String>(&topic_name).await.unwrap();
+    let topic = client.get_topic::<String>(&topic_name);
 
     let counter = Arc::new(AtomicU32::new(0));
     let counter_clone = Arc::clone(&counter);
@@ -104,7 +104,7 @@ async fn test_topic_listener_deactivation() {
         .await
         .expect("failed to connect");
     let topic_name = unique_name("test-topic-deactivate");
-    let topic = client.get_topic::<String>(&topic_name).await.unwrap();
+    let topic = client.get_topic::<String>(&topic_name);
 
     let counter = Arc::new(AtomicU32::new(0));
     let counter_clone = Arc::clone(&counter);
@@ -131,7 +131,7 @@ async fn test_topic_stats() {
         .await
         .expect("failed to connect");
     let topic_name = unique_name("test-topic-stats");
-    let topic = client.get_topic::<String>(&topic_name).await.unwrap();
+    let topic = client.get_topic::<String>(&topic_name);
 
     let stats = topic.stats();
     let initial_messages = stats.messages_received();
@@ -153,7 +153,7 @@ async fn test_topic_name() {
         .await
         .expect("failed to connect");
     let topic_name = unique_name("test-topic-name");
-    let topic = client.get_topic::<String>(&topic_name).await.unwrap();
+    let topic = client.get_topic::<String>(&topic_name);
 
     assert_eq!(topic.name(), topic_name);
 }
@@ -169,7 +169,7 @@ async fn test_topic_clone() {
         .await
         .expect("failed to connect");
     let topic_name = unique_name("test-topic-clone");
-    let topic1 = client.get_topic::<String>(&topic_name).await.unwrap();
+    let topic1 = client.get_topic::<String>(&topic_name);
     let topic2 = topic1.clone();
 
     assert_eq!(topic1.name(), topic2.name());
@@ -189,7 +189,7 @@ async fn test_topic_with_special_characters() {
         .await
         .expect("failed to connect");
     let topic_name = unique_name("test-topic-special");
-    let topic = client.get_topic::<String>(&topic_name).await.unwrap();
+    let topic = client.get_topic::<String>(&topic_name);
 
     let special_messages = vec![
         "Hello, World!",
@@ -226,9 +226,7 @@ async fn test_topic_concurrent_publishers() {
         
         let handle = tokio::spawn(async move {
             let topic = client_clone
-                .get_topic::<String>(&topic_name_clone)
-                .await
-                .unwrap();
+                .get_topic::<String>(&topic_name_clone);
             
             for j in 0..10 {
                 topic.publish(format!("publisher-{}-msg-{}", i, j)).await.unwrap();
@@ -254,7 +252,7 @@ async fn test_topic_large_messages() {
         .await
         .expect("failed to connect");
     let topic_name = unique_name("test-topic-large");
-    let topic = client.get_topic::<String>(&topic_name).await.unwrap();
+    let topic = client.get_topic::<String>(&topic_name);
 
     let large_message = "x".repeat(100_000);
     topic.publish(large_message).await.unwrap();

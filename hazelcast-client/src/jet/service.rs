@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn test_serialize_empty_pipeline() {
         use crate::config::ClientConfigBuilder;
-        use crate::connection::discovery::StaticAddressDiscovery;
+        use crate::connection::StaticAddressDiscovery;
 
         let config = ClientConfigBuilder::new().build().unwrap();
         let discovery = StaticAddressDiscovery::default();
@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn test_serialize_config() {
         use crate::config::ClientConfigBuilder;
-        use crate::connection::discovery::StaticAddressDiscovery;
+        use crate::connection::StaticAddressDiscovery;
         use crate::jet::ProcessingGuarantee;
 
         let config = ClientConfigBuilder::new().build().unwrap();

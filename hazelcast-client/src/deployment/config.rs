@@ -575,7 +575,7 @@ mod tests {
 
     #[test]
     fn test_serializable_argument() {
-        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
         struct TestArg {
             name: String,
             value: i64,

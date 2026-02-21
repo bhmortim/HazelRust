@@ -484,8 +484,8 @@ mod tests {
     #[test]
     fn test_true_filter_serialization() {
         let filter = TrueFilter;
-        assert_eq!(filter.factory_id(), -32);
-        assert_eq!(filter.class_id(), 7);
+        assert_eq!(<TrueFilter as RingbufferFilter<String>>::factory_id(&filter), -32);
+        assert_eq!(<TrueFilter as RingbufferFilter<String>>::class_id(&filter), 7);
 
         let mut output = Vec::new();
         <TrueFilter as RingbufferFilter<String>>::write_data(&filter, &mut output).unwrap();
@@ -495,8 +495,8 @@ mod tests {
     #[test]
     fn test_false_filter_serialization() {
         let filter = FalseFilter;
-        assert_eq!(filter.factory_id(), -32);
-        assert_eq!(filter.class_id(), 6);
+        assert_eq!(<FalseFilter as RingbufferFilter<String>>::factory_id(&filter), -32);
+        assert_eq!(<FalseFilter as RingbufferFilter<String>>::class_id(&filter), 6);
 
         let mut output = Vec::new();
         <FalseFilter as RingbufferFilter<String>>::write_data(&filter, &mut output).unwrap();

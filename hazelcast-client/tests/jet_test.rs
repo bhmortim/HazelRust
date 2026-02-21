@@ -1,7 +1,8 @@
 //! Integration tests for Jet streaming APIs.
 
 use hazelcast_client::{
-    jet::ProcessingGuarantee, ClientConfig, HazelcastClient, JobConfig, JobStatus, Pipeline,
+    jet::{ProcessingGuarantee, Sources, Sinks},
+    ClientConfig, HazelcastClient, JobConfig, JobStatus, Pipeline,
 };
 
 /// Helper to create a test client.
@@ -62,10 +63,10 @@ fn test_job_config_builder_custom() {
 #[test]
 fn test_pipeline_builder() {
     let pipeline = Pipeline::builder()
-        .read_from("source")
+        .read_from(Sources::map("source"))
         .map("transform")
         .filter("filter")
-        .write_to("sink")
+        .write_to(Sinks::map("sink"))
         .build();
 
     assert_eq!(pipeline.vertices().len(), 4);
@@ -134,8 +135,8 @@ async fn test_submit_simple_job() {
     let jet = client.jet();
 
     let pipeline = Pipeline::builder()
-        .read_from("test-source")
-        .write_to("test-sink")
+        .read_from(Sources::map("test-source"))
+        .write_to(Sinks::map("test-sink"))
         .build();
 
     let result = jet.submit_job(&pipeline, None).await;
@@ -163,9 +164,9 @@ async fn test_job_lifecycle() {
     let jet = client.jet();
 
     let pipeline = Pipeline::builder()
-        .read_from("source-map")
+        .read_from(Sources::map("source-map"))
         .map("processor")
-        .write_to("sink-map")
+        .write_to(Sinks::map("sink-map"))
         .build();
 
     let config = JobConfig::builder()
