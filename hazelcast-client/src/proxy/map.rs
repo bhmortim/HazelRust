@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,8 +20,8 @@ use hazelcast_core::protocol::constants::{
     MAP_AGGREGATE_WITH_PREDICATE, MAP_ADD_PARTITION_LOST_LISTENER, MAP_CLEAR, MAP_CONTAINS_KEY,
     MAP_ENTRIES_WITH_PAGING_PREDICATE, MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL,
     MAP_EVENT_JOURNAL_READ, MAP_EVENT_JOURNAL_SUBSCRIBE, MAP_EXECUTE_ON_ALL_KEYS,
-    MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE, MAP_FETCH_ENTRIES,
-    MAP_FETCH_KEYS, MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW,
+    MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE,
+    MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW,
     MAP_IS_LOCKED, MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOAD_ALL,
     MAP_LOAD_GIVEN_KEYS, MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL,
     MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
@@ -32,7 +31,7 @@ use hazelcast_core::protocol::constants::{
     MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{DataInput, DataOutput, ObjectDataInput, ObjectDataOutput};
+use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{
     compute_partition_hash, ClientMessage, Deserializable, HazelcastError, Result, Serializable,
 };
@@ -509,8 +508,8 @@ use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 use crate::listener::{
     dispatch_entry_event, BoxedEntryListener, BoxedMapPartitionLostListener, EntryEvent,
-    EntryEventType, EntryListener, EntryListenerConfig, ListenerId, ListenerRegistration,
-    ListenerStats, MapPartitionLostEvent, MapPartitionLostListener,
+    EntryEventType, EntryListenerConfig, ListenerId, ListenerRegistration,
+    ListenerStats, MapPartitionLostEvent,
 };
 use crate::proxy::distributed_iterator::{DistributedIterator, IterationType as DistIterationType, IteratorConfig};
 use crate::proxy::entry_processor::{EntryProcessor, EntryProcessorResult};
@@ -549,6 +548,7 @@ impl<K, V> IMap<K, V> {
     }
 
     /// Creates a new map proxy with near-cache enabled.
+    #[allow(dead_code)]
     pub(crate) fn new_with_near_cache(
         name: String,
         connection_manager: Arc<ConnectionManager>,
@@ -4012,7 +4012,6 @@ where
                     | EntryEventType::Expired => {
                         cache.remove(&key_data);
                     }
-                    _ => {}
                 }
             })
             .await?;
@@ -4723,7 +4722,7 @@ where
         self.check_permission(PermissionAction::Read)?;
 
         // Subscribe to get initial sequence info
-        let (oldest_sequence, newest_sequence) = self.subscribe_to_event_journal(partition_id).await?;
+        let (oldest_sequence, _newest_sequence) = self.subscribe_to_event_journal(partition_id).await?;
 
         let start_sequence = if config.start_sequence < 0 {
             oldest_sequence
@@ -5148,6 +5147,7 @@ impl<K, V> Clone for IMap<K, V> {
 mod tests {
     use super::*;
     use crate::cache::EvictionPolicy;
+    use hazelcast_core::serialization::{DataInput, DataOutput};
     use std::time::Duration;
 
     /// Helper to create a ConnectionManager from a socket address for tests.

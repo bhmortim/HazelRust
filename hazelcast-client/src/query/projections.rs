@@ -23,7 +23,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
-use hazelcast_core::{Result, Serializable};
+use hazelcast_core::Result;
 
 /// Factory ID for built-in Hazelcast projections.
 pub const PROJECTION_FACTORY_ID: i32 = -30;

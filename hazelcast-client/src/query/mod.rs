@@ -35,7 +35,7 @@ pub use projections::*;
 use std::fmt::Debug;
 
 use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
-use hazelcast_core::{HazelcastError, Result, Serializable};
+use hazelcast_core::{Result, Serializable};
 
 /// Factory ID for built-in Hazelcast predicates.
 pub const PREDICATE_FACTORY_ID: i32 = -20;

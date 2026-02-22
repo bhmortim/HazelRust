@@ -19,6 +19,8 @@ pub struct LocalQueueStats {
     poll_latency: LatencyTracker,
 }
 
+#[allow(missing_docs)]
+#[allow(dead_code)]
 impl LocalQueueStats {
     pub(crate) fn new() -> Self {
         Self {
@@ -115,6 +117,8 @@ pub struct LocalSetStats {
     remove_latency: LatencyTracker,
 }
 
+#[allow(missing_docs)]
+#[allow(dead_code)]
 impl LocalSetStats {
     pub(crate) fn new() -> Self {
         Self {
@@ -194,6 +198,8 @@ pub struct LocalListStats {
     get_latency: LatencyTracker,
 }
 
+#[allow(missing_docs)]
+#[allow(dead_code)]
 impl LocalListStats {
     pub(crate) fn new() -> Self {
         Self {

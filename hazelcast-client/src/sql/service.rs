@@ -10,7 +10,7 @@ use hazelcast_core::{HazelcastError, Result};
 
 use crate::connection::ConnectionManager;
 
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveTime, Timelike};
 use rust_decimal::Decimal;
 
 use super::{SqlColumnMetadata, SqlColumnType, SqlRow, SqlRowMetadata, SqlStatement, SqlValue};
@@ -28,6 +28,7 @@ pub struct SqlQueryId {
     local_id_low: i64,
 }
 
+#[allow(dead_code)]
 impl SqlQueryId {
     /// Creates a new query ID from components.
     fn new(member_id_high: i64, member_id_low: i64, local_id_high: i64, local_id_low: i64) -> Self {

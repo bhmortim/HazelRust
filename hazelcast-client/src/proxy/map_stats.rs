@@ -136,6 +136,7 @@ impl Default for MapStatsTracker {
     }
 }
 
+#[allow(dead_code)]
 impl MapStatsTracker {
     /// Creates a new statistics tracker.
     pub fn new() -> Self {

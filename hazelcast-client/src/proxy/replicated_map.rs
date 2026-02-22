@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -27,10 +26,11 @@ use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Seri
 
 use crate::connection::ConnectionManager;
 use crate::listener::{
-    dispatch_entry_event, BoxedEntryListener, EntryEvent, EntryEventType, EntryListener,
+    dispatch_entry_event, BoxedEntryListener, EntryEvent, EntryEventType,
     EntryListenerConfig, ListenerId, ListenerRegistration, ListenerStats,
 };
 
+#[allow(dead_code)]
 static REPLICATED_MAP_INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Statistics for a replicated map instance.
@@ -112,14 +112,17 @@ impl ReplicatedMapStats {
         self.remove_operation_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     fn record_put_latency(&self, duration: Duration) {
         self.put_latency.record(duration);
     }
 
+    #[allow(dead_code)]
     fn record_get_latency(&self, duration: Duration) {
         self.get_latency.record(duration);
     }
 
+    #[allow(dead_code)]
     fn record_remove_latency(&self, duration: Duration) {
         self.remove_latency.record(duration);
     }

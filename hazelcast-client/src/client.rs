@@ -16,9 +16,9 @@ use crate::diagnostics::{ClientStatistics, StatisticsCollector};
 use crate::executor::ExecutorService;
 use crate::jet::JetService;
 use crate::listener::{
-    BoxedDistributedObjectListener, ClientStateListener, DistributedObjectEvent,
+    ClientStateListener, DistributedObjectEvent,
     DistributedObjectListener, LifecycleEvent, ListenerId, ListenerRegistration, Member,
-    MemberEvent, MigrationEvent, MigrationListener, MigrationState, PartitionLostEvent,
+    MemberEvent, MigrationListener, MigrationState,
     PartitionLostListener,
 };
 use crate::proxy::{
@@ -1113,7 +1113,7 @@ impl HazelcastClient {
         use hazelcast_core::protocol::constants::{
             CLIENT_GET_DISTRIBUTED_OBJECTS, PARTITION_ID_ANY,
         };
-        use hazelcast_core::protocol::{ClientMessage, Frame};
+        use hazelcast_core::protocol::ClientMessage;
 
         let mut request = ClientMessage::new_request(CLIENT_GET_DISTRIBUTED_OBJECTS);
         request.set_partition_id(PARTITION_ID_ANY);

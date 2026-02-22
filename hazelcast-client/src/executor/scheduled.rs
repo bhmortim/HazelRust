@@ -26,6 +26,7 @@ use super::{Callable, CallableTask};
 /// Unit of time for scheduled tasks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[allow(missing_docs)]
 pub enum TimeUnit {
     Nanoseconds = 0,
     Microseconds = 1,
@@ -33,6 +34,7 @@ pub enum TimeUnit {
     Seconds = 3,
 }
 
+#[allow(dead_code)]
 impl TimeUnit {
     fn to_nanos(&self, value: i64) -> i64 {
         match self {
@@ -353,6 +355,7 @@ pub struct ScheduledExecutorService {
     connection_manager: Arc<ConnectionManager>,
 }
 
+#[allow(dead_code)]
 impl ScheduledExecutorService {
     /// Creates a new scheduled executor service instance.
     pub(crate) fn new(name: String, connection_manager: Arc<ConnectionManager>) -> Self {

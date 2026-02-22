@@ -8,7 +8,6 @@ pub use query_cache::{
     AttributeExtractor, FnAttributeExtractor, QueryCache, QueryCacheConfig,
     QueryCacheConfigBuilder, QueryCacheIndexPredicate, QueryCacheIndexType, QueryCacheStats,
 };
-pub(crate) use query_cache::StatsTracker;
 // Note: EvictionPolicy, InMemoryFormat, NearCacheConfig, NearCacheConfigBuilder,
 // PreloadConfig, PreloadConfigBuilder are defined below in this module and already public.
 

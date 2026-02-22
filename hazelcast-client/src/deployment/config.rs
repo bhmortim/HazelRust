@@ -345,11 +345,13 @@ impl UserCodeDeploymentConfigBuilder {
 /// // Send arg.data() to the Java entry processor
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct SerializableArgument {
     type_name: String,
     data: Vec<u8>,
 }
 
+#[allow(dead_code)]
 impl SerializableArgument {
     /// Creates a new serializable argument from any serializable value.
     pub fn new<T: Serialize>(value: T) -> Result<Self, ConfigError> {

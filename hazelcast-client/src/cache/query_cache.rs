@@ -327,6 +327,7 @@ impl LocalIndex {
         }
     }
 
+    #[allow(dead_code)]
     fn remove_key(&mut self, attr_value: &[u8], key: &[u8]) {
         match self {
             LocalIndex::Hash(map) => {
@@ -362,6 +363,7 @@ impl LocalIndex {
     }
 }
 
+/// A locally-maintained, continuously updated cache of query results from an `IMap`.
 pub struct QueryCache<K, V> {
     name: String,
     map_name: String,
@@ -392,6 +394,7 @@ impl<K, V> fmt::Debug for QueryCache<K, V> {
     }
 }
 
+#[allow(dead_code)]
 impl<K, V> QueryCache<K, V>
 where
     K: Serializable + Deserializable + Eq + Hash + Clone + Send + Sync,

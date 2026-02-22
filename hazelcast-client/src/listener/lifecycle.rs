@@ -27,6 +27,7 @@ use std::fmt;
 ///
 /// let listener_id = client.add_client_state_listener(MyStateListener).await?;
 /// ```
+#[allow(dead_code)]
 pub trait ClientStateListener: Send + Sync {
     /// Called when the client has connected to the cluster.
     fn client_connected(&self) {}

@@ -275,6 +275,7 @@ pub trait PartitionAware {
 ///
 /// Format: `i32` length followed by each element serialized in order.
 /// This is useful for serializing `Vec<T>` where T is not `u8`.
+#[allow(dead_code)]
 pub fn serialize_list<T: Serializable, W: DataOutput>(items: &[T], output: &mut W) -> Result<()> {
     output.write_int(items.len() as i32)?;
     for item in items {
@@ -286,6 +287,7 @@ pub fn serialize_list<T: Serializable, W: DataOutput>(items: &[T], output: &mut 
 /// Deserializes a list of items with a length prefix.
 ///
 /// Format: `i32` length followed by each element deserialized in order.
+#[allow(dead_code)]
 pub fn deserialize_list<T: Deserializable, R: DataInput>(input: &mut R) -> Result<Vec<T>> {
     let len = input.read_int()? as usize;
     let mut items = Vec::with_capacity(len);
@@ -298,6 +300,7 @@ pub fn deserialize_list<T: Deserializable, R: DataInput>(input: &mut R) -> Resul
 /// Serializes a map as a sequence of key-value pairs with a length prefix.
 ///
 /// Format: `i32` entry count followed by (key, value) pairs.
+#[allow(dead_code)]
 pub fn serialize_map<K: Serializable, V: Serializable, W: DataOutput>(
     map: &std::collections::HashMap<K, V>,
     output: &mut W,
@@ -311,6 +314,7 @@ pub fn serialize_map<K: Serializable, V: Serializable, W: DataOutput>(
 }
 
 /// Deserializes a map from a sequence of key-value pairs with a length prefix.
+#[allow(dead_code)]
 pub fn deserialize_map<K, V, R>(input: &mut R) -> Result<std::collections::HashMap<K, V>>
 where
     K: Deserializable + Eq + std::hash::Hash,

@@ -27,6 +27,7 @@ use super::{Callable, CallableTask};
 /// Contains the sequence ID assigned by the cluster, which can be used to
 /// retrieve results after client reconnection.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DurableFuture<T> {
     sequence: i64,
     partition_id: i32,
@@ -102,6 +103,7 @@ pub struct DurableExecutorService {
     connection_manager: Arc<ConnectionManager>,
 }
 
+#[allow(dead_code)]
 impl DurableExecutorService {
     /// Creates a new durable executor service instance.
     pub(crate) fn new(name: String, connection_manager: Arc<ConnectionManager>) -> Self {

@@ -32,6 +32,7 @@ impl Default for ReliableTopicConfig {
     }
 }
 
+#[allow(missing_docs)]
 impl ReliableTopicConfig {
     pub fn new() -> Self {
         Self::default()
@@ -64,6 +65,7 @@ pub struct ReliableTopicMessage<T> {
     pub publish_time: u64,
 }
 
+#[allow(missing_docs)]
 impl<T> ReliableTopicMessage<T> {
     pub fn new(message: T, sequence: i64) -> Self {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -104,6 +106,7 @@ pub struct ReliableTopicStats {
     messages_lost: AtomicU64,
 }
 
+#[allow(missing_docs)]
 impl ReliableTopicStats {
     pub fn new() -> Self {
         Self::default()
