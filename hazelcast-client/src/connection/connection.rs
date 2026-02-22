@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
+use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec};
 use hazelcast_core::{HazelcastError, Result};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Encoder};
 

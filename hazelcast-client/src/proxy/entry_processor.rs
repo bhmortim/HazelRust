@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use hazelcast_core::serialization::{Deserializable, ObjectDataInput, ObjectDataOutput, Serializable};
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_core::serialization::{Deserializable, Serializable};
 
 /// A processor that can be executed on map entries server-side.
 ///
@@ -161,7 +160,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hazelcast_core::serialization::{DataInput, DataOutput};
+    use hazelcast_core::Result;
+    use hazelcast_core::serialization::{DataInput, DataOutput, ObjectDataInput, ObjectDataOutput};
 
     struct TestProcessor {
         value: i32,

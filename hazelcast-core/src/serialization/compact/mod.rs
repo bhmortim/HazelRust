@@ -33,6 +33,7 @@ pub fn rabin_fingerprint_64(data: &[u8]) -> i64 {
 
 /// Default values for Compact fields during schema evolution.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum DefaultFieldValue {
     Boolean(bool),
     Int8(i8),
@@ -47,6 +48,7 @@ pub enum DefaultFieldValue {
 
 /// Result of schema evolution validation.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(missing_docs)]
 pub enum SchemaEvolutionResult {
     Compatible {
         added_fields: Vec<String>,
@@ -60,6 +62,7 @@ pub enum SchemaEvolutionResult {
 /// Field kind identifiers for Compact serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(i32)]
+#[allow(missing_docs)]
 pub enum FieldKind {
     Boolean = 0,
     Int8 = 1,
@@ -808,6 +811,7 @@ pub trait Compact: Send + Sync {
     fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()>;
 }
 
+#[allow(dead_code)]
 const NULL_MARKER: i8 = 0;
 const NOT_NULL_MARKER: i8 = 1;
 

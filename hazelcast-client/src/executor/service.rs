@@ -15,7 +15,6 @@ use hazelcast_core::protocol::{
 };
 use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
 
-use crate::connection::ConnectionManager;
 use crate::listener::Member;
 use super::{Callable, CallableTask, ExecutionCallback, ExecutionTarget, MemberSelector, Runnable, RunnableTask};
 

@@ -3,7 +3,6 @@
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -22,7 +21,7 @@ use hazelcast_core::{
 
 use crate::connection::ConnectionManager;
 use crate::listener::{
-    dispatch_entry_event, BoxedEntryListener, EntryEvent, EntryEventType, EntryListener,
+    dispatch_entry_event, BoxedEntryListener, EntryEvent, EntryEventType,
     EntryListenerConfig, ListenerId, ListenerRegistration, ListenerStats,
 };
 
@@ -111,14 +110,17 @@ impl LocalMultiMapStats {
         self.update_last_update_time();
     }
 
+    #[allow(dead_code)]
     fn record_put_latency(&self, duration: Duration) {
         self.put_latency.record(duration);
     }
 
+    #[allow(dead_code)]
     fn record_get_latency(&self, duration: Duration) {
         self.get_latency.record(duration);
     }
 
+    #[allow(dead_code)]
     fn record_remove_latency(&self, duration: Duration) {
         self.remove_latency.record(duration);
     }

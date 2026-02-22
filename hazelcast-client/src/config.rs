@@ -1,7 +1,6 @@
 //! Client configuration types and builders.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -423,6 +422,7 @@ pub struct ConfigError {
 }
 
 impl ConfigError {
+    /// Creates a new configuration error with the given message.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -3041,6 +3041,7 @@ impl ClientConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_default_client_config() {

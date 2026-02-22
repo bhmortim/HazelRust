@@ -28,9 +28,9 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 use hazelcast_core::serialization::ObjectDataOutput;
-use hazelcast_core::{Deserializable, Result, Serializable};
+use hazelcast_core::{Result, Serializable};
 
-use super::{class_ids, write_data_bytes, write_i32, Predicate, PREDICATE_FACTORY_ID};
+use super::{class_ids, write_data_bytes, write_i32, Predicate};
 
 /// Iteration type for paging predicate results.
 ///

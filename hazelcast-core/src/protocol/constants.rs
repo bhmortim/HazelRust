@@ -411,7 +411,7 @@ pub const CLIENT_GET_DISTRIBUTED_OBJECTS: i32 = 0x000A00;
 pub const CLIENT_CREATE_PROXY: i32 = 0x000B00;
 
 /// Client destroy proxy request.
-pub const CLIENT_DESTROY_PROXY: i32 = 0x000C00;
+pub const CLIENT_DESTROY_PROXY: i32 = 0x000500;
 
 /// ReplicatedMap put request.
 pub const REPLICATED_MAP_PUT: i32 = 0x0D0100;
@@ -644,23 +644,23 @@ pub const MAP_FLUSH: i32 = 0x013200;
 /// Map set TTL request.
 pub const MAP_SET_TTL: i32 = 0x013500;
 
-/// Executor submit to partition request.
-pub const EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x0E0100;
-
-/// Executor submit to member request.
-pub const EXECUTOR_SUBMIT_TO_MEMBER: i32 = 0x0E0200;
-
 /// Executor shutdown request.
-pub const EXECUTOR_SHUTDOWN: i32 = 0x0E0300;
+pub const EXECUTOR_SHUTDOWN: i32 = 0x080100;
 
 /// Executor is shutdown request.
-pub const EXECUTOR_IS_SHUTDOWN: i32 = 0x0E0400;
+pub const EXECUTOR_IS_SHUTDOWN: i32 = 0x080200;
 
 /// Executor cancel on partition request.
-pub const EXECUTOR_CANCEL_ON_PARTITION: i32 = 0x0E0500;
+pub const EXECUTOR_CANCEL_ON_PARTITION: i32 = 0x080300;
 
 /// Executor cancel on member request.
-pub const EXECUTOR_CANCEL_ON_MEMBER: i32 = 0x0E0600;
+pub const EXECUTOR_CANCEL_ON_MEMBER: i32 = 0x080400;
+
+/// Executor submit to partition request.
+pub const EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x080500;
+
+/// Executor submit to member request.
+pub const EXECUTOR_SUBMIT_TO_MEMBER: i32 = 0x080600;
 
 /// Scheduled executor submit to partition request.
 pub const SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x1A0100;
@@ -960,37 +960,37 @@ pub const CP_SUBSYSTEM_REMOVE_CP_MEMBER: i32 = 0x1E0600;
 // VectorCollection operations
 
 /// VectorCollection put request.
-pub const VECTOR_COLLECTION_PUT: i32 = 0x230100;
-
-/// VectorCollection get request.
-pub const VECTOR_COLLECTION_GET: i32 = 0x230200;
-
-/// VectorCollection remove request.
-pub const VECTOR_COLLECTION_REMOVE: i32 = 0x230300;
-
-/// VectorCollection search near vector request.
-pub const VECTOR_COLLECTION_SEARCH_NEAR_VECTOR: i32 = 0x230400;
-
-/// VectorCollection put all request.
-pub const VECTOR_COLLECTION_PUT_ALL: i32 = 0x230500;
-
-/// VectorCollection clear request.
-pub const VECTOR_COLLECTION_CLEAR: i32 = 0x230600;
-
-/// VectorCollection size request.
-pub const VECTOR_COLLECTION_SIZE: i32 = 0x230700;
-
-/// VectorCollection delete request.
-pub const VECTOR_COLLECTION_DELETE: i32 = 0x230800;
+pub const VECTOR_COLLECTION_PUT: i32 = 0x240100;
 
 /// VectorCollection put if absent request.
-pub const VECTOR_COLLECTION_PUT_IF_ABSENT: i32 = 0x230900;
+pub const VECTOR_COLLECTION_PUT_IF_ABSENT: i32 = 0x240200;
+
+/// VectorCollection put all request.
+pub const VECTOR_COLLECTION_PUT_ALL: i32 = 0x240300;
+
+/// VectorCollection get request.
+pub const VECTOR_COLLECTION_GET: i32 = 0x240400;
+
+/// VectorCollection remove request.
+pub const VECTOR_COLLECTION_REMOVE: i32 = 0x240500;
 
 /// VectorCollection set request.
-pub const VECTOR_COLLECTION_SET: i32 = 0x230A00;
+pub const VECTOR_COLLECTION_SET: i32 = 0x240600;
+
+/// VectorCollection delete request.
+pub const VECTOR_COLLECTION_DELETE: i32 = 0x240700;
+
+/// VectorCollection search near vector request.
+pub const VECTOR_COLLECTION_SEARCH_NEAR_VECTOR: i32 = 0x240800;
 
 /// VectorCollection optimize request.
-pub const VECTOR_COLLECTION_OPTIMIZE: i32 = 0x230B00;
+pub const VECTOR_COLLECTION_OPTIMIZE: i32 = 0x240900;
+
+/// VectorCollection clear request.
+pub const VECTOR_COLLECTION_CLEAR: i32 = 0x240A00;
+
+/// VectorCollection size request.
+pub const VECTOR_COLLECTION_SIZE: i32 = 0x240B00;
 
 // Transactional MultiMap operations
 

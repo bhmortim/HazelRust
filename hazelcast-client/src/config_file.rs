@@ -292,7 +292,7 @@ impl ClientConfig {
         let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
             ConfigError::new(format!("failed to read TOML config file: {e}"))
         })?;
-        let file_config: FileConfig = toml_crate::from_str(&content).map_err(|e| {
+        let file_config: FileConfig = toml::from_str(&content).map_err(|e| {
             ConfigError::new(format!("failed to parse TOML config: {e}"))
         })?;
         file_config.try_into()
@@ -547,8 +547,8 @@ mod tests {
             max_concurrent_invocations: Some(128),
             ..Default::default()
         };
-        let toml_str = toml_crate::to_string(&file_config).unwrap();
-        let parsed: FileConfig = toml_crate::from_str(&toml_str).unwrap();
+        let toml_str = toml::to_string(&file_config).unwrap();
+        let parsed: FileConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.cluster_name.as_deref(), Some("toml-test"));
         assert_eq!(parsed.max_concurrent_invocations, Some(128));
     }

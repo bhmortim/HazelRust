@@ -199,6 +199,11 @@ impl Frame {
         }
 
         let frame_length = u32::from_le_bytes([src[0], src[1], src[2], src[3]]) as usize;
+
+        if frame_length < SIZE_OF_FRAME_FLAGS_FIELD {
+            return None;
+        }
+
         let total_frame_size = SIZE_OF_FRAME_LENGTH_FIELD + frame_length;
 
         if src.len() < total_frame_size {

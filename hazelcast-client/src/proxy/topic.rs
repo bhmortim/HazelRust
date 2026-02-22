@@ -158,10 +158,12 @@ impl TopicStatsTracker {
         self.last_publish_time.store(now, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     fn record_publish_latency(&self, duration: Duration) {
         self.publish_latency.record(duration);
     }
 
+    #[allow(dead_code)]
     fn record_receive_latency(&self, duration: Duration) {
         self.receive_latency.record(duration);
     }
@@ -176,6 +178,7 @@ impl TopicStatsTracker {
         self.sequence_counter.fetch_add(1, Ordering::SeqCst)
     }
 
+    #[allow(dead_code)]
     fn current_sequence(&self) -> i64 {
         self.sequence_counter.load(Ordering::SeqCst)
     }

@@ -4,7 +4,7 @@ use crate::error::{HazelcastError, Result};
 use crate::serialization::{DataInput, DataOutput, ObjectDataInput, ObjectDataOutput};
 use std::collections::HashMap;
 
-use super::FieldKind;
+use super::{rabin_fingerprint_64, FieldKind};
 
 const NOT_NULL_MARKER: i8 = 1;
 
@@ -644,20 +644,37 @@ impl GenericRecordBuilder {
 
     /// Builds the GenericRecord.
     pub fn build(self) -> GenericRecord {
+        let schema_id = self.compute_schema_id();
         GenericRecord {
             type_name: self.type_name,
-            schema_id: 0,
+            schema_id,
             fields: self.fields,
         }
     }
 
+    fn compute_schema_id(&self) -> i64 {
+        let mut data = Vec::new();
+        data.extend_from_slice(self.type_name.as_bytes());
+
+        let mut sorted_fields: Vec<_> = self.fields.iter().collect();
+        sorted_fields.sort_by(|a, b| a.0.cmp(b.0));
+
+        for (name, field_data) in sorted_fields {
+            data.extend_from_slice(name.as_bytes());
+            data.extend_from_slice(&field_data.kind.id().to_be_bytes());
+        }
+
+        rabin_fingerprint_64(&data)
+    }
+
     /// Serializes the record to Compact format bytes.
     pub fn to_compact_bytes(&self) -> Vec<u8> {
+        let schema_id = self.compute_schema_id();
         let field_data = self.field_data_bytes();
 
         let mut output = ObjectDataOutput::new();
         let _ = output.write_string(&self.type_name);
-        let _ = output.write_long(0);
+        let _ = output.write_long(schema_id);
         let _ = output.write_int(field_data.len() as i32);
         let _ = output.write_bytes(&field_data);
 

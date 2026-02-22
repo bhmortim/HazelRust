@@ -5,7 +5,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -127,24 +127,28 @@ impl<K, V> CacheEntryEvent<K, V> {
 }
 
 /// A listener for cache entry creation events.
+#[allow(dead_code)]
 pub trait CacheEntryCreatedListener<K, V>: Send + Sync {
     /// Called when an entry is created in the cache.
     fn on_created(&self, event: CacheEntryEvent<K, V>);
 }
 
 /// A listener for cache entry update events.
+#[allow(dead_code)]
 pub trait CacheEntryUpdatedListener<K, V>: Send + Sync {
     /// Called when an entry is updated in the cache.
     fn on_updated(&self, event: CacheEntryEvent<K, V>);
 }
 
 /// A listener for cache entry removal events.
+#[allow(dead_code)]
 pub trait CacheEntryRemovedListener<K, V>: Send + Sync {
     /// Called when an entry is removed from the cache.
     fn on_removed(&self, event: CacheEntryEvent<K, V>);
 }
 
 /// A listener for cache entry expiration events.
+#[allow(dead_code)]
 pub trait CacheEntryExpiredListener<K, V>: Send + Sync {
     /// Called when an entry expires in the cache.
     fn on_expired(&self, event: CacheEntryEvent<K, V>);
@@ -181,6 +185,7 @@ pub trait CacheEntryListener<K, V>: Send + Sync {
 pub type BoxedCacheEntryListener<K, V> = Arc<dyn CacheEntryListener<K, V>>;
 
 /// A cache entry listener implementation using closures.
+#[allow(dead_code)]
 pub struct FnCacheEntryListener<K, V> {
     on_created: Option<Box<dyn Fn(CacheEntryEvent<K, V>) + Send + Sync>>,
     on_updated: Option<Box<dyn Fn(CacheEntryEvent<K, V>) + Send + Sync>>,
@@ -188,6 +193,7 @@ pub struct FnCacheEntryListener<K, V> {
     on_expired: Option<Box<dyn Fn(CacheEntryEvent<K, V>) + Send + Sync>>,
 }
 
+#[allow(dead_code)]
 impl<K, V> FnCacheEntryListener<K, V> {
     /// Creates a new builder for constructing an `FnCacheEntryListener`.
     pub fn builder() -> FnCacheEntryListenerBuilder<K, V> {
@@ -237,6 +243,7 @@ impl<K, V> std::fmt::Debug for FnCacheEntryListener<K, V> {
 }
 
 /// Builder for creating [`FnCacheEntryListener`] instances.
+#[allow(dead_code)]
 pub struct FnCacheEntryListenerBuilder<K, V> {
     on_created: Option<Box<dyn Fn(CacheEntryEvent<K, V>) + Send + Sync>>,
     on_updated: Option<Box<dyn Fn(CacheEntryEvent<K, V>) + Send + Sync>>,
@@ -244,6 +251,7 @@ pub struct FnCacheEntryListenerBuilder<K, V> {
     on_expired: Option<Box<dyn Fn(CacheEntryEvent<K, V>) + Send + Sync>>,
 }
 
+#[allow(dead_code)]
 impl<K, V> FnCacheEntryListenerBuilder<K, V> {
     fn new() -> Self {
         Self {
@@ -335,6 +343,7 @@ impl<K, V> std::fmt::Debug for FnCacheEntryListenerBuilder<K, V> {
 ///     }
 /// }
 /// ```
+#[allow(dead_code)]
 pub trait CacheLoader<K, V>: Send + Sync {
     /// Loads the value for the specified key from the external data source.
     ///
@@ -352,15 +361,18 @@ pub trait CacheLoader<K, V>: Send + Sync {
 }
 
 /// A boxed cache loader for type-erased storage.
+#[allow(dead_code)]
 pub type BoxedCacheLoader<K, V> = Arc<dyn CacheLoader<K, V>>;
 
 /// A cache loader implementation using closures.
+#[allow(dead_code)]
 pub struct FnCacheLoader<K, V> {
     load_fn: Box<dyn Fn(&K) -> Result<Option<V>> + Send + Sync>,
     load_all_fn: Option<Box<dyn Fn(&[K]) -> Result<HashMap<K, V>> + Send + Sync>>,
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
+#[allow(dead_code)]
 impl<K, V> FnCacheLoader<K, V> {
     /// Creates a new builder for constructing an `FnCacheLoader`.
     pub fn builder() -> FnCacheLoaderBuilder<K, V> {
@@ -401,12 +413,14 @@ impl<K, V> std::fmt::Debug for FnCacheLoader<K, V> {
 }
 
 /// Builder for creating [`FnCacheLoader`] instances.
+#[allow(dead_code)]
 pub struct FnCacheLoaderBuilder<K, V> {
     load_fn: Option<Box<dyn Fn(&K) -> Result<Option<V>> + Send + Sync>>,
     load_all_fn: Option<Box<dyn Fn(&[K]) -> Result<HashMap<K, V>> + Send + Sync>>,
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
+#[allow(dead_code)]
 impl<K, V> FnCacheLoaderBuilder<K, V> {
     fn new() -> Self {
         Self {
@@ -498,6 +512,7 @@ impl<K, V> std::fmt::Debug for FnCacheLoaderBuilder<K, V> {
 ///     }
 /// }
 /// ```
+#[allow(dead_code)]
 pub trait CacheWriter<K, V>: Send + Sync {
     /// Writes the specified entry to the external data source.
     ///
@@ -523,9 +538,11 @@ pub trait CacheWriter<K, V>: Send + Sync {
 }
 
 /// A boxed cache writer for type-erased storage.
+#[allow(dead_code)]
 pub type BoxedCacheWriter<K, V> = Arc<dyn CacheWriter<K, V>>;
 
 /// A cache writer implementation using closures.
+#[allow(dead_code)]
 pub struct FnCacheWriter<K, V> {
     write_fn: Box<dyn Fn(&K, &V) -> Result<()> + Send + Sync>,
     write_all_fn: Option<Box<dyn Fn(&HashMap<K, V>) -> Result<()> + Send + Sync>>,
@@ -534,6 +551,7 @@ pub struct FnCacheWriter<K, V> {
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
+#[allow(dead_code)]
 impl<K, V> FnCacheWriter<K, V> {
     /// Creates a new builder for constructing an `FnCacheWriter`.
     pub fn builder() -> FnCacheWriterBuilder<K, V> {
@@ -587,6 +605,7 @@ impl<K, V> std::fmt::Debug for FnCacheWriter<K, V> {
 }
 
 /// Builder for creating [`FnCacheWriter`] instances.
+#[allow(dead_code)]
 pub struct FnCacheWriterBuilder<K, V> {
     write_fn: Option<Box<dyn Fn(&K, &V) -> Result<()> + Send + Sync>>,
     write_all_fn: Option<Box<dyn Fn(&HashMap<K, V>) -> Result<()> + Send + Sync>>,
@@ -595,6 +614,7 @@ pub struct FnCacheWriterBuilder<K, V> {
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
+#[allow(dead_code)]
 impl<K, V> FnCacheWriterBuilder<K, V> {
     fn new() -> Self {
         Self {
@@ -688,6 +708,7 @@ impl<K, V> std::fmt::Debug for FnCacheWriterBuilder<K, V> {
 /// This configuration determines how the cache interacts with external
 /// data sources through `CacheLoader` and `CacheWriter` implementations.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct CacheConfiguration {
     /// Whether read-through is enabled.
     ///
@@ -715,6 +736,7 @@ pub struct CacheConfiguration {
     pub management_enabled: bool,
 }
 
+#[allow(dead_code)]
 impl CacheConfiguration {
     /// Creates a new cache configuration with default settings.
     pub fn new() -> Self {
@@ -1101,6 +1123,7 @@ impl<K, V> ICache<K, V> {
     }
 
     /// Creates a new cache proxy with near-cache enabled.
+    #[allow(dead_code)]
     pub(crate) fn new_with_near_cache(
         name: String,
         connection_manager: Arc<ConnectionManager>,

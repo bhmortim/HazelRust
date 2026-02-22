@@ -16,10 +16,10 @@ use hazelcast_core::{HazelcastError, Result};
 
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
-use crate::config::{ClientConfig, ClientFailoverConfig, Permissions, ReconnectMode};
+use crate::config::{ClientConfig, ClientFailoverConfig, Permissions};
 use crate::cluster::{MigrationEvent, PartitionLostEvent};
 use crate::listener::{
-    DistributedObjectEvent, LifecycleEvent, Member, MemberEvent, MemberEventType,
+    DistributedObjectEvent, LifecycleEvent, Member, MemberEvent,
 };
 
 /// Events emitted during connection lifecycle.
@@ -1452,10 +1452,10 @@ impl ConnectionManager {
         }
     }
 
-    async fn create_connection_static(address: SocketAddr, config: &ClientConfig) -> Result<Connection> {
+    async fn create_connection_static(address: SocketAddr, _config: &ClientConfig) -> Result<Connection> {
         #[cfg(feature = "tls")]
         {
-            let tls_config = config.network().tls();
+            let tls_config = _config.network().tls();
             if tls_config.enabled() {
                 return Connection::connect_tls(address, tls_config, None).await;
             }

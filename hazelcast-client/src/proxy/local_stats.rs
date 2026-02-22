@@ -102,9 +102,13 @@ impl LatencyTracker {
     }
 }
 
-// Re-exports from other stats modules for convenience
+// Re-exports from other stats modules for convenience.
+// These are intentional API re-exports even though not yet consumed internally.
+#[allow(unused_imports)]
 pub use super::collection_stats::{LocalListStats, LocalQueueStats, LocalSetStats};
+#[allow(unused_imports)]
 pub use super::map_stats::LocalMapStats;
+#[allow(unused_imports)]
 pub(crate) use super::map_stats::MapStatsTracker;
 
 #[cfg(test)]

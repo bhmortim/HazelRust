@@ -7,7 +7,7 @@ use std::sync::Arc;
 use bytes::BytesMut;
 use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_core::serialization::ObjectDataOutput;
 use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
 use crate::config::PermissionAction;
