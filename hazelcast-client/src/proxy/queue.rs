@@ -151,6 +151,27 @@ where
         Ok(self.size().await? == 0)
     }
 
+    /// Removes all elements from this queue.
+    ///
+    /// After this method returns, the queue will be empty.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// queue.clear().await?;
+    /// assert!(queue.is_empty().await?);
+    /// ```
+    pub async fn clear(&self) -> Result<()> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_CLEAR);
+        message.add_frame(Self::string_frame(&self.name));
+
+        self.invoke(message).await?;
+        Ok(())
+    }
+
     /// Returns the number of additional elements that this queue can ideally
     /// accept without blocking.
     pub async fn remaining_capacity(&self) -> Result<i32> {
@@ -803,6 +824,28 @@ mod tests {
         let queue: IQueue<String> = IQueue::new("test".to_string(), cm);
 
         let result = queue.contains(&"item".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_queue_permission_denied_clear() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let queue: IQueue<String> = IQueue::new("test".to_string(), cm);
+
+        let result = queue.clear().await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 }

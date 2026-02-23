@@ -10,6 +10,7 @@ use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::{ClientMessage, HazelcastError, Result};
 
+use crate::cluster::{CPSessionManager, NO_SESSION_ID};
 use crate::connection::ConnectionManager;
 
 static INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -24,22 +25,44 @@ static INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// This token should be passed to protected resources to prevent stale operations
 /// from lock holders that have been preempted.
 ///
+/// The lock uses CP sessions to track ownership. When a CP session expires
+/// (e.g., due to client crash), the lock is automatically released, preventing
+/// deadlocks from failed clients.
+///
 /// Note: FencedLock requires the CP subsystem to be enabled on the Hazelcast cluster.
 #[derive(Debug)]
 pub struct FencedLock {
     name: String,
     connection_manager: Arc<ConnectionManager>,
+    session_manager: Option<Arc<CPSessionManager>>,
     session_id: i64,
     thread_id: i64,
 }
 
 impl FencedLock {
-    /// Creates a new FencedLock proxy.
+    /// Creates a new FencedLock proxy without session management (legacy mode).
+    #[allow(dead_code)]
     pub(crate) fn new(name: String, connection_manager: Arc<ConnectionManager>) -> Self {
         Self {
             name,
             connection_manager,
-            session_id: -1,
+            session_manager: None,
+            session_id: NO_SESSION_ID,
+            thread_id: std::process::id() as i64,
+        }
+    }
+
+    /// Creates a new FencedLock proxy with CP session management.
+    pub(crate) fn with_session_manager(
+        name: String,
+        connection_manager: Arc<ConnectionManager>,
+        session_manager: Arc<CPSessionManager>,
+    ) -> Self {
+        Self {
+            name,
+            connection_manager,
+            session_manager: Some(session_manager),
+            session_id: NO_SESSION_ID,
             thread_id: std::process::id() as i64,
         }
     }
@@ -54,6 +77,9 @@ impl FencedLock {
     /// This method blocks until the lock is acquired. The returned fence token
     /// is monotonically increasing and can be used to detect stale lock holders.
     ///
+    /// If a CP session manager is configured, a session is automatically
+    /// acquired before the lock request and released on failure.
+    ///
     /// # Returns
     ///
     /// The fence token associated with this lock acquisition.
@@ -61,12 +87,19 @@ impl FencedLock {
     /// # Errors
     ///
     /// Returns an error if a network error occurs or the CP subsystem is unavailable.
-    pub async fn lock(&self) -> Result<i64> {
+    pub async fn lock(&mut self) -> Result<i64> {
+        self.ensure_session().await?;
+
         let mut message = ClientMessage::create_for_encode_any_partition(CP_FENCED_LOCK_LOCK);
         self.encode_lock_request(&mut message, i64::MAX);
 
-        let response = self.invoke(message).await?;
-        Self::decode_fence_response(&response)
+        match self.invoke(message).await {
+            Ok(response) => Self::decode_fence_response(&response),
+            Err(e) => {
+                self.handle_session_error(&e).await;
+                Err(e)
+            }
+        }
     }
 
     /// Tries to acquire the lock within the given timeout.
@@ -83,13 +116,20 @@ impl FencedLock {
     /// # Errors
     ///
     /// Returns an error if a network error occurs or the CP subsystem is unavailable.
-    pub async fn try_lock(&self, timeout: Duration) -> Result<Option<i64>> {
+    pub async fn try_lock(&mut self, timeout: Duration) -> Result<Option<i64>> {
+        self.ensure_session().await?;
+
         let timeout_ms = timeout.as_millis() as i64;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_FENCED_LOCK_TRY_LOCK);
         self.encode_lock_request(&mut message, timeout_ms);
 
-        let response = self.invoke(message).await?;
-        Self::decode_try_lock_response(&response)
+        match self.invoke(message).await {
+            Ok(response) => Self::decode_try_lock_response(&response),
+            Err(e) => {
+                self.handle_session_error(&e).await;
+                Err(e)
+            }
+        }
     }
 
     /// Releases the lock with the given fence token.
@@ -102,12 +142,20 @@ impl FencedLock {
     ///
     /// Returns an error if the fence token is invalid, the lock is not held,
     /// or a network error occurs.
-    pub async fn unlock(&self, fence: i64) -> Result<()> {
+    pub async fn unlock(&mut self, fence: i64) -> Result<()> {
         let mut message = ClientMessage::create_for_encode_any_partition(CP_FENCED_LOCK_UNLOCK);
         self.encode_unlock_request(&mut message, fence);
 
-        let _response = self.invoke(message).await?;
-        Ok(())
+        match self.invoke(message).await {
+            Ok(_response) => {
+                self.release_session().await;
+                Ok(())
+            }
+            Err(e) => {
+                self.handle_session_error(&e).await;
+                Err(e)
+            }
+        }
     }
 
     /// Returns whether the lock is currently held by any thread.
@@ -147,6 +195,50 @@ impl FencedLock {
         let response = self.invoke(message).await?;
         Self::decode_lock_ownership_state(&response)
     }
+
+    // ── Session management helpers ──────────────────────────────────
+
+    /// Ensures a CP session is active. If no session exists, acquires one.
+    async fn ensure_session(&mut self) -> Result<()> {
+        if let Some(ref sm) = self.session_manager {
+            if self.session_id == NO_SESSION_ID {
+                let group_id =
+                    crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                self.session_id = sm.acquire_session(&group_id).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Releases the CP session reference after a successful unlock.
+    async fn release_session(&mut self) {
+        if let Some(ref sm) = self.session_manager {
+            if self.session_id != NO_SESSION_ID {
+                let group_id =
+                    crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                sm.release_session(&group_id, self.session_id).await;
+            }
+        }
+    }
+
+    /// Handles session-related errors by invalidating the session if expired.
+    async fn handle_session_error(&mut self, error: &HazelcastError) {
+        if let Some(ref sm) = self.session_manager {
+            if self.session_id != NO_SESSION_ID {
+                if let HazelcastError::Server { code, .. } = error {
+                    if code.value() == 76 {
+                        // CpSessionNotFound
+                        let group_id =
+                            crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                        sm.invalidate_session(&group_id, self.session_id).await;
+                        self.session_id = NO_SESSION_ID;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Encoding helpers ────────────────────────────────────────────
 
     fn encode_lock_request(&self, message: &mut ClientMessage, timeout_ms: i64) {
         message.add_frame(Self::string_frame(&self.name));
@@ -306,6 +398,7 @@ impl Clone for FencedLock {
         Self {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
+            session_manager: self.session_manager.clone(),
             session_id: self.session_id,
             thread_id: self.thread_id,
         }
@@ -427,5 +520,36 @@ mod tests {
         let state = result.unwrap();
         assert_eq!(state.fence, 50);
         assert_eq!(state.lock_count, 2);
+    }
+
+    #[test]
+    fn test_fenced_lock_new_has_no_session() {
+        let cm = ConnectionManager::from_config(
+            crate::config::ClientConfig::builder()
+                .cluster_name("test")
+                .build()
+                .unwrap(),
+        );
+        let lock = FencedLock::new("test-lock".to_string(), Arc::new(cm));
+        assert_eq!(lock.session_id, NO_SESSION_ID);
+        assert!(lock.session_manager.is_none());
+    }
+
+    #[test]
+    fn test_fenced_lock_with_session_manager() {
+        let cm = Arc::new(ConnectionManager::from_config(
+            crate::config::ClientConfig::builder()
+                .cluster_name("test")
+                .build()
+                .unwrap(),
+        ));
+        let sm = Arc::new(CPSessionManager::new(Arc::clone(&cm)));
+        let lock = FencedLock::with_session_manager(
+            "test-lock".to_string(),
+            cm,
+            sm,
+        );
+        assert_eq!(lock.session_id, NO_SESSION_ID);
+        assert!(lock.session_manager.is_some());
     }
 }

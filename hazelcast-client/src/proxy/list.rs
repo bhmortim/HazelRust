@@ -164,6 +164,30 @@ where
         Ok(self.size().await? == 0)
     }
 
+    /// Removes the first occurrence of the specified element from this list, if present.
+    ///
+    /// Returns `true` if this list contained the specified element.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let removed = list.remove(&"item".to_string()).await?;
+    /// if removed {
+    ///     println!("Item was removed");
+    /// }
+    /// ```
+    pub async fn remove(&self, item: &T) -> Result<bool> {
+        self.check_permission(PermissionAction::Remove)?;
+        let item_data = Self::serialize_value(item)?;
+
+        let mut message = ClientMessage::create_for_encode_any_partition(LIST_REMOVE);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&item_data));
+
+        let response = self.invoke(message).await?;
+        Self::decode_bool_response(&response)
+    }
+
     /// Appends all elements in the specified collection to the end of this list.
     ///
     /// Returns `true` if this list changed as a result of the call.
@@ -510,5 +534,27 @@ mod tests {
     fn test_serialize_string() {
         let data = IList::<String>::serialize_value(&"hello".to_string()).unwrap();
         assert!(!data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_permission_denied_remove() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+        use std::sync::Arc;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let list: IList<String> = IList::new("test".to_string(), cm);
+
+        let result = list.remove(&"item".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 }

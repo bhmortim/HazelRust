@@ -9,7 +9,10 @@ mod split_brain;
 
 pub use cluster_service::{ClientInfo, ClusterService, ClusterView};
 pub use cp_management::{CPGroup, CPGroupId, CPGroupStatus, CPMember, CPSubsystemManagementService};
-pub use cp_session::{CPSession, CPSessionEndpointType, CPSessionId, CPSessionManagementService};
+pub use cp_session::{
+    CPSession, CPSessionEndpointType, CPSessionId, CPSessionManagementService, CPSessionManager,
+    NO_SESSION_ID,
+};
 pub use lifecycle_service::{LifecycleListenerRegistration, LifecycleService};
 pub use partition_service::{
     BoxedMigrationListener, BoxedPartitionLostListener, FnMigrationListener,
