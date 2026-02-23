@@ -7,8 +7,8 @@ use hazelcast_core::{Deserializable, Result, Serializable};
 use uuid::Uuid;
 
 use crate::cluster::{
-    CPSessionManagementService, CPSubsystemManagementService, ClusterService, LifecycleService,
-    PartitionService, SplitBrainProtectionService,
+    CPSessionManagementService, CPSessionManager, CPSubsystemManagementService, ClusterService,
+    LifecycleService, PartitionService, SplitBrainProtectionService,
 };
 use crate::config::ClientConfig;
 use crate::connection::{ConnectionEvent, ConnectionManager, DataConnectionService};
@@ -211,6 +211,7 @@ impl std::fmt::Debug for ConnectionListenerState {
 pub struct HazelcastClient {
     config: Arc<ClientConfig>,
     connection_manager: Arc<ConnectionManager>,
+    cp_session_manager: Arc<CPSessionManager>,
     statistics_collector: Arc<StatisticsCollector>,
     client_uuid: Uuid,
     distributed_object_listeners: RwLock<DistributedObjectListenerState>,
@@ -238,6 +239,12 @@ impl HazelcastClient {
         let connection_manager = ConnectionManager::from_config(config.clone());
         connection_manager.start().await?;
 
+        let connection_manager = Arc::new(connection_manager);
+
+        // Initialize CP session manager for session-aware CP proxies
+        let cp_session_manager = Arc::new(CPSessionManager::new(Arc::clone(&connection_manager)));
+        cp_session_manager.start_heartbeat().await;
+
         tracing::info!(
             cluster = %config.cluster_name(),
             client_uuid = %client_uuid,
@@ -246,7 +253,8 @@ impl HazelcastClient {
 
         Ok(Self {
             config: Arc::new(config),
-            connection_manager: Arc::new(connection_manager),
+            connection_manager,
+            cp_session_manager,
             statistics_collector: Arc::new(StatisticsCollector::new()),
             client_uuid,
             distributed_object_listeners: RwLock::new(DistributedObjectListenerState {
@@ -536,7 +544,11 @@ impl HazelcastClient {
     /// - Protecting critical sections across multiple processes
     /// - Scenarios where detecting stale lock holders is important
     pub fn get_fenced_lock(&self, name: &str) -> FencedLock {
-        FencedLock::new(name.to_string(), Arc::clone(&self.connection_manager))
+        FencedLock::with_session_manager(
+            name.to_string(),
+            Arc::clone(&self.connection_manager),
+            Arc::clone(&self.cp_session_manager),
+        )
     }
 
     /// Returns a distributed Semaphore proxy for the given name.
@@ -551,7 +563,11 @@ impl HazelcastClient {
     /// - Implementing distributed rate limiting
     /// - Coordinating access to bounded resources
     pub fn get_semaphore(&self, name: &str) -> Semaphore {
-        Semaphore::new(name.to_string(), Arc::clone(&self.connection_manager))
+        Semaphore::with_session_manager(
+            name.to_string(),
+            Arc::clone(&self.connection_manager),
+            Arc::clone(&self.cp_session_manager),
+        )
     }
 
     /// Returns a distributed CountDownLatch proxy for the given name.
@@ -566,7 +582,11 @@ impl HazelcastClient {
     /// - Implementing barrier synchronization across processes
     /// - Coordinating startup sequences in distributed systems
     pub fn get_countdown_latch(&self, name: &str) -> CountDownLatch {
-        CountDownLatch::new(name.to_string(), Arc::clone(&self.connection_manager))
+        CountDownLatch::with_session_manager(
+            name.to_string(),
+            Arc::clone(&self.connection_manager),
+            Arc::clone(&self.cp_session_manager),
+        )
     }
 
     /// Returns a distributed cache proxy for the given name.
@@ -1886,12 +1906,21 @@ impl HazelcastClient {
 
     /// Shuts down the client and closes all connections.
     ///
+    /// CP sessions are gracefully closed before disconnecting from the cluster,
+    /// ensuring that any locks, semaphore permits, or other CP resources held
+    /// by this client are properly released.
+    ///
     /// After shutdown, the client cannot be used for any operations.
     pub async fn shutdown(&self) -> Result<()> {
         tracing::info!(
             cluster = %self.config.cluster_name(),
             "shutting down Hazelcast client"
         );
+
+        // Close CP sessions first (while connections are still alive)
+        self.cp_session_manager.shutdown().await;
+
+        // Then shut down connections
         self.connection_manager.shutdown().await
     }
 }

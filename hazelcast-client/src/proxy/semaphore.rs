@@ -10,6 +10,7 @@ use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::{ClientMessage, HazelcastError, Result};
 
+use crate::cluster::{CPSessionManager, NO_SESSION_ID};
 use crate::connection::ConnectionManager;
 
 static INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -20,22 +21,44 @@ static INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// to a shared resource through permits. Unlike Java's `java.util.concurrent.Semaphore`,
 /// this implementation is distributed and backed by the Raft consensus protocol.
 ///
+/// The semaphore uses CP sessions to track permit ownership. When a CP session
+/// expires (e.g., due to client crash), acquired permits are automatically
+/// released, preventing resource starvation from failed clients.
+///
 /// Note: Semaphore requires the CP subsystem to be enabled on the Hazelcast cluster.
 #[derive(Debug)]
 pub struct Semaphore {
     name: String,
     connection_manager: Arc<ConnectionManager>,
+    session_manager: Option<Arc<CPSessionManager>>,
     session_id: i64,
     thread_id: i64,
 }
 
 impl Semaphore {
-    /// Creates a new Semaphore proxy.
+    /// Creates a new Semaphore proxy without session management (legacy mode).
+    #[allow(dead_code)]
     pub(crate) fn new(name: String, connection_manager: Arc<ConnectionManager>) -> Self {
         Self {
             name,
             connection_manager,
-            session_id: -1,
+            session_manager: None,
+            session_id: NO_SESSION_ID,
+            thread_id: std::process::id() as i64,
+        }
+    }
+
+    /// Creates a new Semaphore proxy with CP session management.
+    pub(crate) fn with_session_manager(
+        name: String,
+        connection_manager: Arc<ConnectionManager>,
+        session_manager: Arc<CPSessionManager>,
+    ) -> Self {
+        Self {
+            name,
+            connection_manager,
+            session_manager: Some(session_manager),
+            session_id: NO_SESSION_ID,
             thread_id: std::process::id() as i64,
         }
     }
@@ -72,6 +95,9 @@ impl Semaphore {
 
     /// Acquires the given number of permits, blocking until they are available.
     ///
+    /// If a CP session manager is configured, a session is automatically
+    /// acquired before the request and released on failure.
+    ///
     /// # Arguments
     ///
     /// * `permits` - The number of permits to acquire (must be positive)
@@ -79,12 +105,19 @@ impl Semaphore {
     /// # Errors
     ///
     /// Returns an error if a network error occurs or the CP subsystem is unavailable.
-    pub async fn acquire(&self, permits: i32) -> Result<()> {
+    pub async fn acquire(&mut self, permits: i32) -> Result<()> {
+        self.ensure_session().await?;
+
         let mut message = ClientMessage::create_for_encode_any_partition(CP_SEMAPHORE_ACQUIRE);
         self.encode_acquire_request(&mut message, permits, i64::MAX);
 
-        let _response = self.invoke(message).await?;
-        Ok(())
+        match self.invoke(message).await {
+            Ok(_response) => Ok(()),
+            Err(e) => {
+                self.handle_session_error(&e).await;
+                Err(e)
+            }
+        }
     }
 
     /// Tries to acquire the given number of permits within the specified timeout.
@@ -101,13 +134,20 @@ impl Semaphore {
     /// # Errors
     ///
     /// Returns an error if a network error occurs or the CP subsystem is unavailable.
-    pub async fn try_acquire(&self, permits: i32, timeout: Duration) -> Result<bool> {
+    pub async fn try_acquire(&mut self, permits: i32, timeout: Duration) -> Result<bool> {
+        self.ensure_session().await?;
+
         let timeout_ms = timeout.as_millis() as i64;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_SEMAPHORE_ACQUIRE);
         self.encode_acquire_request(&mut message, permits, timeout_ms);
 
-        let response = self.invoke(message).await?;
-        Self::decode_bool_response(&response)
+        match self.invoke(message).await {
+            Ok(response) => Self::decode_bool_response(&response),
+            Err(e) => {
+                self.handle_session_error(&e).await;
+                Err(e)
+            }
+        }
     }
 
     /// Releases the given number of permits.
@@ -119,12 +159,20 @@ impl Semaphore {
     /// # Errors
     ///
     /// Returns an error if a network error occurs or the CP subsystem is unavailable.
-    pub async fn release(&self, permits: i32) -> Result<()> {
+    pub async fn release(&mut self, permits: i32) -> Result<()> {
         let mut message = ClientMessage::create_for_encode_any_partition(CP_SEMAPHORE_RELEASE);
         self.encode_release_request(&mut message, permits);
 
-        let _response = self.invoke(message).await?;
-        Ok(())
+        match self.invoke(message).await {
+            Ok(_response) => {
+                self.release_session().await;
+                Ok(())
+            }
+            Err(e) => {
+                self.handle_session_error(&e).await;
+                Err(e)
+            }
+        }
     }
 
     /// Returns the current number of available permits.
@@ -154,12 +202,19 @@ impl Semaphore {
     /// # Errors
     ///
     /// Returns an error if a network error occurs or the CP subsystem is unavailable.
-    pub async fn drain_permits(&self) -> Result<i32> {
+    pub async fn drain_permits(&mut self) -> Result<i32> {
+        self.ensure_session().await?;
+
         let mut message = ClientMessage::create_for_encode_any_partition(CP_SEMAPHORE_DRAIN);
         self.encode_drain_request(&mut message);
 
-        let response = self.invoke(message).await?;
-        Self::decode_int_response(&response)
+        match self.invoke(message).await {
+            Ok(response) => Self::decode_int_response(&response),
+            Err(e) => {
+                self.handle_session_error(&e).await;
+                Err(e)
+            }
+        }
     }
 
     /// Reduces the number of available permits by the indicated reduction.
@@ -174,12 +229,19 @@ impl Semaphore {
     /// # Errors
     ///
     /// Returns an error if a network error occurs or the CP subsystem is unavailable.
-    pub async fn reduce_permits(&self, reduction: i32) -> Result<()> {
+    pub async fn reduce_permits(&mut self, reduction: i32) -> Result<()> {
+        self.ensure_session().await?;
+
         let mut message = ClientMessage::create_for_encode_any_partition(CP_SEMAPHORE_CHANGE);
         self.encode_change_request(&mut message, -reduction);
 
-        let _response = self.invoke(message).await?;
-        Ok(())
+        match self.invoke(message).await {
+            Ok(_response) => Ok(()),
+            Err(e) => {
+                self.handle_session_error(&e).await;
+                Err(e)
+            }
+        }
     }
 
     /// Increases the number of available permits by the indicated amount.
@@ -191,13 +253,64 @@ impl Semaphore {
     /// # Errors
     ///
     /// Returns an error if a network error occurs or the CP subsystem is unavailable.
-    pub async fn increase_permits(&self, increase: i32) -> Result<()> {
+    pub async fn increase_permits(&mut self, increase: i32) -> Result<()> {
+        self.ensure_session().await?;
+
         let mut message = ClientMessage::create_for_encode_any_partition(CP_SEMAPHORE_CHANGE);
         self.encode_change_request(&mut message, increase);
 
-        let _response = self.invoke(message).await?;
+        match self.invoke(message).await {
+            Ok(_response) => Ok(()),
+            Err(e) => {
+                self.handle_session_error(&e).await;
+                Err(e)
+            }
+        }
+    }
+
+    // ── Session management helpers ──────────────────────────────────
+
+    /// Ensures a CP session is active. If no session exists, acquires one.
+    async fn ensure_session(&mut self) -> Result<()> {
+        if let Some(ref sm) = self.session_manager {
+            if self.session_id == NO_SESSION_ID {
+                let group_id =
+                    crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                self.session_id = sm.acquire_session(&group_id).await?;
+            }
+        }
         Ok(())
     }
+
+    /// Releases the CP session reference after a successful release.
+    async fn release_session(&mut self) {
+        if let Some(ref sm) = self.session_manager {
+            if self.session_id != NO_SESSION_ID {
+                let group_id =
+                    crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                sm.release_session(&group_id, self.session_id).await;
+            }
+        }
+    }
+
+    /// Handles session-related errors by invalidating the session if expired.
+    async fn handle_session_error(&mut self, error: &HazelcastError) {
+        if let Some(ref sm) = self.session_manager {
+            if self.session_id != NO_SESSION_ID {
+                if let HazelcastError::Server { code, .. } = error {
+                    if code.value() == 76 {
+                        // CpSessionNotFound
+                        let group_id =
+                            crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                        sm.invalidate_session(&group_id, self.session_id).await;
+                        self.session_id = NO_SESSION_ID;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Encoding helpers ────────────────────────────────────────────
 
     fn encode_acquire_request(&self, message: &mut ClientMessage, permits: i32, timeout_ms: i64) {
         message.add_frame(Self::string_frame(&self.name));
@@ -323,6 +436,7 @@ impl Clone for Semaphore {
         Self {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
+            session_manager: self.session_manager.clone(),
             session_id: self.session_id,
             thread_id: self.thread_id,
         }
@@ -441,5 +555,36 @@ mod tests {
         let result = Semaphore::decode_int_response(&message);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), -5);
+    }
+
+    #[test]
+    fn test_semaphore_new_has_no_session() {
+        let cm = ConnectionManager::from_config(
+            crate::config::ClientConfig::builder()
+                .cluster_name("test")
+                .build()
+                .unwrap(),
+        );
+        let sem = Semaphore::new("test-sem".to_string(), Arc::new(cm));
+        assert_eq!(sem.session_id, NO_SESSION_ID);
+        assert!(sem.session_manager.is_none());
+    }
+
+    #[test]
+    fn test_semaphore_with_session_manager() {
+        let cm = Arc::new(ConnectionManager::from_config(
+            crate::config::ClientConfig::builder()
+                .cluster_name("test")
+                .build()
+                .unwrap(),
+        ));
+        let sm = Arc::new(CPSessionManager::new(Arc::clone(&cm)));
+        let sem = Semaphore::with_session_manager(
+            "test-sem".to_string(),
+            cm,
+            sm,
+        );
+        assert_eq!(sem.session_id, NO_SESSION_ID);
+        assert!(sem.session_manager.is_some());
     }
 }

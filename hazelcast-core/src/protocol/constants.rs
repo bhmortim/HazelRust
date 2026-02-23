@@ -155,6 +155,9 @@ pub const QUEUE_IS_EMPTY: i32 = 0x031100;
 /// Queue iterator (get all) request.
 pub const QUEUE_ITERATOR: i32 = 0x031200;
 
+/// Queue clear request.
+pub const QUEUE_CLEAR: i32 = 0x031300;
+
 /// Queue drain to (without max size) request.
 pub const QUEUE_DRAIN_TO: i32 = 0x030B00;
 
@@ -208,6 +211,9 @@ pub const LIST_SET: i32 = 0x050700;
 
 /// List get request.
 pub const LIST_GET: i32 = 0x050800;
+
+/// List remove by value request.
+pub const LIST_REMOVE: i32 = 0x051200;
 
 /// List remove at index request.
 pub const LIST_REMOVE_AT: i32 = 0x050900;
@@ -933,6 +939,18 @@ pub const MAP_FETCH_ENTRIES: i32 = 0x014400;
 
 /// Map fetch values request (for iteration).
 pub const MAP_FETCH_VALUES: i32 = 0x014500;
+
+/// Map contains value request.
+pub const MAP_CONTAINS_VALUE: i32 = 0x012500;
+
+/// Map delete request (remove without returning old value).
+pub const MAP_DELETE: i32 = 0x012600;
+
+/// Map set request (put without returning old value).
+pub const MAP_SET: i32 = 0x012700;
+
+/// Map is empty request.
+pub const MAP_IS_EMPTY: i32 = 0x012800;
 
 /// Client statistics request.
 pub const CLIENT_STATISTICS: i32 = 0x000C00;

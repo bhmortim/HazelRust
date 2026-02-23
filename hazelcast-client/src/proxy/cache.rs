@@ -22,8 +22,8 @@ use hazelcast_core::protocol::constants::{
     CACHE_EVENT_JOURNAL_SUBSCRIBE, CACHE_GET, CACHE_GET_ALL, CACHE_GET_AND_PUT,
     CACHE_GET_AND_REMOVE, CACHE_GET_AND_REPLACE, CACHE_INVOKE, CACHE_PUT, CACHE_PUT_ALL,
     CACHE_PUT_IF_ABSENT, CACHE_REMOVE, CACHE_REMOVE_ALL, CACHE_REMOVE_ENTRY_LISTENER,
-    CACHE_REPLACE, CACHE_REPLACE_IF_SAME, END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, PARTITION_ID_ANY,
-    RESPONSE_HEADER_SIZE,
+    CACHE_REPLACE, CACHE_REPLACE_IF_SAME, CACHE_SIZE, END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG,
+    PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -1372,6 +1372,31 @@ where
         Ok(())
     }
 
+    /// Returns the number of entries in this cache.
+    ///
+    /// This is a cluster-wide operation that counts entries across all partitions.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let count = cache.size().await?;
+    /// println!("Cache has {} entries", count);
+    /// ```
+    pub async fn size(&self) -> Result<usize> {
+        let mut message = ClientMessage::create_for_encode(CACHE_SIZE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke_on_cluster(message).await?;
+        Self::decode_int_response(&response).map(|v| v as usize)
+    }
+
+    /// Returns `true` if this cache contains no entries.
+    ///
+    /// This is a convenience method equivalent to checking `size() == 0`.
+    pub async fn is_empty(&self) -> Result<bool> {
+        Ok(self.size().await? == 0)
+    }
+
     /// Associates the specified value with the specified key, returning the
     /// previously associated value if any.
     ///
@@ -1923,6 +1948,26 @@ where
             Ok(initial_frame.content[RESPONSE_HEADER_SIZE] != 0)
         } else {
             Ok(false)
+        }
+    }
+
+    fn decode_int_response(response: &ClientMessage) -> Result<i32> {
+        let frames = response.frames();
+        if frames.is_empty() {
+            return Err(HazelcastError::Serialization("empty response".to_string()));
+        }
+
+        let initial_frame = &frames[0];
+        if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 4 {
+            let offset = RESPONSE_HEADER_SIZE;
+            Ok(i32::from_le_bytes([
+                initial_frame.content[offset],
+                initial_frame.content[offset + 1],
+                initial_frame.content[offset + 2],
+                initial_frame.content[offset + 3],
+            ]))
+        } else {
+            Ok(0)
         }
     }
 
@@ -3146,5 +3191,40 @@ mod tests {
             Uuid::from_bytes(frame.content[..16].try_into().unwrap()),
             uuid
         );
+    }
+
+    #[test]
+    fn test_decode_int_response_valid() {
+        let mut content = BytesMut::with_capacity(RESPONSE_HEADER_SIZE + 4);
+        content.extend_from_slice(&[0u8; RESPONSE_HEADER_SIZE]);
+        content.extend_from_slice(&42i32.to_le_bytes());
+
+        let frame = Frame::with_content(content);
+        let message = ClientMessage::from_frames(vec![frame]);
+
+        let result = ICache::<String, String>::decode_int_response(&message);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_decode_int_response_empty() {
+        let message = ClientMessage::from_frames(vec![]);
+        let result = ICache::<String, String>::decode_int_response(&message);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decode_int_response_zero() {
+        let mut content = BytesMut::with_capacity(RESPONSE_HEADER_SIZE + 4);
+        content.extend_from_slice(&[0u8; RESPONSE_HEADER_SIZE]);
+        content.extend_from_slice(&0i32.to_le_bytes());
+
+        let frame = Frame::with_content(content);
+        let message = ClientMessage::from_frames(vec![frame]);
+
+        let result = ICache::<String, String>::decode_int_response(&message);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
     }
 }

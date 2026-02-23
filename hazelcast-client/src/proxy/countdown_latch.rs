@@ -10,6 +10,7 @@ use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::{ClientMessage, HazelcastError, Result};
 
+use crate::cluster::{CPSessionManager, NO_SESSION_ID};
 use crate::connection::ConnectionManager;
 
 static INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -26,22 +27,43 @@ static INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// Unlike `java.util.concurrent.CountDownLatch`, this distributed implementation
 /// can be reset by calling `try_set_count` after the count has reached zero.
 ///
+/// The latch uses CP sessions to track waiters. When a CP session expires
+/// (e.g., due to client crash), the waiter is automatically removed.
+///
 /// Note: CountDownLatch requires the CP subsystem to be enabled on the Hazelcast cluster.
 #[derive(Debug)]
 pub struct CountDownLatch {
     name: String,
     connection_manager: Arc<ConnectionManager>,
+    session_manager: Option<Arc<CPSessionManager>>,
     session_id: i64,
     thread_id: i64,
 }
 
 impl CountDownLatch {
-    /// Creates a new CountDownLatch proxy.
+    /// Creates a new CountDownLatch proxy without session management (legacy mode).
+    #[allow(dead_code)]
     pub(crate) fn new(name: String, connection_manager: Arc<ConnectionManager>) -> Self {
         Self {
             name,
             connection_manager,
-            session_id: -1,
+            session_manager: None,
+            session_id: NO_SESSION_ID,
+            thread_id: std::process::id() as i64,
+        }
+    }
+
+    /// Creates a new CountDownLatch proxy with CP session management.
+    pub(crate) fn with_session_manager(
+        name: String,
+        connection_manager: Arc<ConnectionManager>,
+        session_manager: Arc<CPSessionManager>,
+    ) -> Self {
+        Self {
+            name,
+            connection_manager,
+            session_manager: Some(session_manager),
+            session_id: NO_SESSION_ID,
             thread_id: std::process::id() as i64,
         }
     }
@@ -126,6 +148,9 @@ impl CountDownLatch {
     /// - The count reaches zero due to invocations of `count_down`, returning `true`
     /// - The specified timeout expires, returning `false`
     ///
+    /// If a CP session manager is configured, a session is automatically
+    /// acquired before the wait and released afterwards.
+    ///
     /// # Arguments
     ///
     /// * `timeout` - The maximum time to wait for the count to reach zero
@@ -137,14 +162,68 @@ impl CountDownLatch {
     /// # Errors
     ///
     /// Returns an error if a network error occurs or the CP subsystem is unavailable.
-    pub async fn await_latch(&self, timeout: Duration) -> Result<bool> {
+    pub async fn await_latch(&mut self, timeout: Duration) -> Result<bool> {
+        self.ensure_session().await?;
+
         let timeout_ms = timeout.as_millis() as i64;
         let mut message = ClientMessage::create_for_encode_any_partition(CP_COUNTDOWN_LATCH_AWAIT);
         self.encode_await_request(&mut message, timeout_ms);
 
-        let response = self.invoke(message).await?;
-        Self::decode_bool_response(&response)
+        match self.invoke(message).await {
+            Ok(response) => {
+                self.release_session().await;
+                Self::decode_bool_response(&response)
+            }
+            Err(e) => {
+                self.handle_session_error(&e).await;
+                Err(e)
+            }
+        }
     }
+
+    // ── Session management helpers ──────────────────────────────────
+
+    /// Ensures a CP session is active. If no session exists, acquires one.
+    async fn ensure_session(&mut self) -> Result<()> {
+        if let Some(ref sm) = self.session_manager {
+            if self.session_id == NO_SESSION_ID {
+                let group_id =
+                    crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                self.session_id = sm.acquire_session(&group_id).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Releases the CP session reference.
+    async fn release_session(&mut self) {
+        if let Some(ref sm) = self.session_manager {
+            if self.session_id != NO_SESSION_ID {
+                let group_id =
+                    crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                sm.release_session(&group_id, self.session_id).await;
+            }
+        }
+    }
+
+    /// Handles session-related errors by invalidating the session if expired.
+    async fn handle_session_error(&mut self, error: &HazelcastError) {
+        if let Some(ref sm) = self.session_manager {
+            if self.session_id != NO_SESSION_ID {
+                if let HazelcastError::Server { code, .. } = error {
+                    if code.value() == 76 {
+                        // CpSessionNotFound
+                        let group_id =
+                            crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                        sm.invalidate_session(&group_id, self.session_id).await;
+                        self.session_id = NO_SESSION_ID;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Encoding helpers ────────────────────────────────────────────
 
     fn encode_count_down_request(&self, message: &mut ClientMessage) {
         message.add_frame(Self::string_frame(&self.name));
@@ -250,6 +329,7 @@ impl Clone for CountDownLatch {
         Self {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
+            session_manager: self.session_manager.clone(),
             session_id: self.session_id,
             thread_id: self.thread_id,
         }
@@ -368,5 +448,36 @@ mod tests {
         let result = CountDownLatch::decode_int_response(&message);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_countdown_latch_new_has_no_session() {
+        let cm = ConnectionManager::from_config(
+            crate::config::ClientConfig::builder()
+                .cluster_name("test")
+                .build()
+                .unwrap(),
+        );
+        let latch = CountDownLatch::new("test-latch".to_string(), Arc::new(cm));
+        assert_eq!(latch.session_id, NO_SESSION_ID);
+        assert!(latch.session_manager.is_none());
+    }
+
+    #[test]
+    fn test_countdown_latch_with_session_manager() {
+        let cm = Arc::new(ConnectionManager::from_config(
+            crate::config::ClientConfig::builder()
+                .cluster_name("test")
+                .build()
+                .unwrap(),
+        ));
+        let sm = Arc::new(CPSessionManager::new(Arc::clone(&cm)));
+        let latch = CountDownLatch::with_session_manager(
+            "test-latch".to_string(),
+            cm,
+            sm,
+        );
+        assert_eq!(latch.session_id, NO_SESSION_ID);
+        assert!(latch.session_manager.is_some());
     }
 }

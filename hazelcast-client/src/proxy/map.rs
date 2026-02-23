@@ -18,6 +18,7 @@ use hazelcast_core::protocol::constants::{
     END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER,
     MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_ADD_INTERCEPTOR, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_ADD_PARTITION_LOST_LISTENER, MAP_CLEAR, MAP_CONTAINS_KEY,
+    MAP_CONTAINS_VALUE,
     MAP_ENTRIES_WITH_PAGING_PREDICATE, MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL,
     MAP_EVENT_JOURNAL_READ, MAP_EVENT_JOURNAL_SUBSCRIBE, MAP_EXECUTE_ON_ALL_KEYS,
     MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE,
@@ -1139,6 +1140,123 @@ where
 
         let response = self.invoke_on_random(message).await?;
         Self::decode_int_response(&response).map(|v| v as usize)
+    }
+
+    /// Returns `true` if this map contains no key-value mappings.
+    ///
+    /// This is a convenience method equivalent to checking `size() == 0`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// if map.is_empty().await? {
+    ///     println!("Map has no entries");
+    /// }
+    /// ```
+    pub async fn is_empty(&self) -> Result<bool> {
+        Ok(self.size().await? == 0)
+    }
+
+    /// Removes the mapping for the specified key without returning the old value.
+    ///
+    /// Unlike [`remove`](Self::remove), this method does not return the old value and
+    /// is therefore slightly more efficient when the previous value is not needed.
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the delete to the cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Remove without caring about the old value
+    /// map.delete(&key).await?;
+    /// ```
+    pub async fn delete(&self, key: &K) -> Result<()> {
+        self.check_permission(PermissionAction::Remove)?;
+        self.check_quorum(false).await?;
+        self.stats_tracker.record_remove();
+        let key_data = Self::serialize_value(key)?;
+
+        // Invalidate near-cache before remote operation
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+
+        self.invoke_on_partition_mutating(partition_id, message).await?;
+        Ok(())
+    }
+
+    /// Associates the specified value with the specified key without returning the old value.
+    ///
+    /// Unlike [`put`](Self::put), this method does not return the previous value and
+    /// is therefore slightly more efficient when the previous value is not needed.
+    ///
+    /// If near-cache is enabled, invalidates the local cache entry before
+    /// sending the set to the cluster.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Set value without caring about the old value
+    /// map.set(key, value).await?;
+    /// ```
+    pub async fn set(&self, key: K, value: V) -> Result<()> {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+        self.stats_tracker.record_put();
+        let key_data = Self::serialize_value(&key)?;
+        let value_data = Self::serialize_value(&value)?;
+
+        // Invalidate near-cache before remote operation
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache.lock().unwrap();
+            cache_guard.invalidate(&key_data);
+        }
+
+        let partition_id = compute_partition_hash(&key_data);
+
+        let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
+        message.add_frame(Self::long_frame(-1)); // Max idle: no expiry
+
+        self.invoke_on_partition_mutating(partition_id, message).await?;
+        Ok(())
+    }
+
+    /// Returns `true` if this map maps one or more keys to the specified value.
+    ///
+    /// This is a cluster-wide operation that scans all values in the map.
+    /// It may be slower than [`contains_key`](Self::contains_key) for large maps
+    /// since it requires checking values across all partitions.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// if map.contains_value(&value).await? {
+    ///     println!("Value exists in the map");
+    /// }
+    /// ```
+    pub async fn contains_value(&self, value: &V) -> Result<bool> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+        let target_data = Self::serialize_value(value)?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_CONTAINS_VALUE, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+        message.add_frame(Self::data_frame(&target_data));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_bool_response(&response)
     }
 
     /// Asynchronously retrieves the value associated with the given key.
@@ -5223,6 +5341,69 @@ mod tests {
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
         let result = map.remove(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_map_permission_denied_delete() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Put);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.delete(&"key".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_map_permission_denied_set() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Read);
+        perms.grant(PermissionAction::Remove);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.set("key".to_string(), "value".to_string()).await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_map_permission_denied_contains_value() {
+        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::connection::ConnectionManager;
+
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+        perms.grant(PermissionAction::Remove);
+
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let map: IMap<String, String> = IMap::new("test".to_string(), cm);
+
+        let result = map.contains_value(&"value".to_string()).await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
