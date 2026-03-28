@@ -418,7 +418,10 @@ impl ConnectionManager {
             initial_content.put_i32_le(PARTITION_ID_ANY);
             initial_content.put_u64_le(hi);
             initial_content.put_u64_le(lo);
-            initial_content.put_u8(1); initial_content.put_u8(0); initial_content.put_u8(0); initial_content.put_u8(0);
+            initial_content.put_u8(0xA8); // serialization_version = 168 (HZ 5.x)
+            initial_content.put_u8(1);    // routing_mode = 1 (SMART, matching Java)
+            initial_content.put_u8(0);    // cp_direct_to_leader = false
+            initial_content.put_u8(0);    // padding
             auth_msg.add_frame(Frame::new(initial_content, 0xC100));
             auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
             auth_msg.add_frame(Frame::new_null_frame());
