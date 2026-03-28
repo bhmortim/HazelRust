@@ -397,57 +397,59 @@ impl ConnectionManager {
 
         let id = connection.id();
 
-        // Build ClientAuthentication request per HZ 5.x protocol spec
-        use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
-        use hazelcast_core::protocol::Frame;
-        use bytes::{BytesMut, BufMut};
+        // Build and send ClientAuthentication matching exact Java wire format
+        {
+            use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
+            use hazelcast_core::protocol::Frame;
+            use bytes::{BytesMut, BufMut};
 
-        let cluster_name = self.config.cluster_name().to_string();
-        let client_uuid = uuid::Uuid::new_v4();
+            let cluster_name = self.config.cluster_name().to_string();
+            let client_uuid = uuid::Uuid::new_v4();
 
-        // Build multi-frame auth message per the ClientAuthenticationCodec spec.
-        // HZ rejects "fragmented" messages pre-auth, meaning messages split across
-        // TCP segments. We ensure all frames are buffered and written as one write.
-        let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
-            CLIENT_AUTHENTICATION, PARTITION_ID_ANY
-        );
-
-        // Extend initial frame with auth-specific fixed fields at offsets 16..35
-        if let Some(initial_frame) = auth_msg.frames_mut().first_mut() {
             let (hi, lo) = client_uuid.as_u64_pair();
-            initial_frame.content.put_u64_le(hi);   // UUID hi [16..24]
-            initial_frame.content.put_u64_le(lo);   // UUID lo [24..32]
-            initial_frame.content.put_u8(1);         // serialization_version [32]
-            initial_frame.content.put_u8(0);         // routing_mode [33]
-            initial_frame.content.put_u8(0);         // cp_direct_to_leader [34]
-            initial_frame.content.put_u8(0);         // padding to match Java frame size [35]
-        }
 
-        // String frames (order matches ClientAuthenticationCodec.decodeRequest):
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
-        auth_msg.add_frame(Frame::new_null_frame()); // username (nullable)
-        auth_msg.add_frame(Frame::new_null_frame()); // password (nullable)
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
-        // Empty labels list: BEGIN_DATA_STRUCTURE + END_DATA_STRUCTURE
-        auth_msg.add_frame(Frame::with_flags(0x1000)); // BEGIN_DATA_STRUCTURE (1 << 12)
-        auth_msg.add_frame(Frame::with_flags(0x0800)); // END_DATA_STRUCTURE (1 << 11)
+            // Build a ClientMessage from the pre-encoded buffer
+            // We need to send via connection.send which uses the codec
+            let mut auth_msg = hazelcast_core::ClientMessage::new();
+            // Initial frame
+            let mut initial_content = BytesMut::with_capacity(36);
+            initial_content.put_i32_le(CLIENT_AUTHENTICATION);
+            initial_content.put_i64_le(1);
+            initial_content.put_i32_le(PARTITION_ID_ANY);
+            initial_content.put_u64_le(hi);
+            initial_content.put_u64_le(lo);
+            initial_content.put_u8(1); initial_content.put_u8(0); initial_content.put_u8(0); initial_content.put_u8(0);
+            auth_msg.add_frame(Frame::new(initial_content, 0xC100));
+            auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
+            auth_msg.add_frame(Frame::new_null_frame());
+            auth_msg.add_frame(Frame::new_null_frame());
+            auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
+            auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
+            auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+            auth_msg.add_frame(Frame::with_flags(0x1000));
+            auth_msg.add_frame(Frame::with_flags(0x2800));
 
-        if let Err(e) = connection.send(auth_msg).await {
-            tracing::warn!(address = %address, error = %e, "authentication message send failed");
-            // Continue anyway - the connection may still work for some cluster configs
-        } else {
-            // Try to read auth response (non-blocking, with timeout)
+            // Write frames directly to stream to avoid write_to adding END_FLAG
+            let mut wire_buf = BytesMut::with_capacity(256);
+            for frame in auth_msg.frames() {
+                frame.write_to(&mut wire_buf);
+            }
+            connection.send_raw_bytes(&wire_buf).await.map_err(|e| {
+                HazelcastError::Connection(format!(
+                    "failed to send auth to {}: {}", address, e
+                ))
+            })?;
+
+            // Read auth response
             match tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 connection.receive()
             ).await {
                 Ok(Ok(Some(response))) => {
-                    tracing::debug!(
+                    tracing::info!(
                         address = %address,
                         msg_type = ?response.message_type(),
-                        "received authentication response"
+                        "authentication successful"
                     );
                 }
                 Ok(Ok(None)) => {

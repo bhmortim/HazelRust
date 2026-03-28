@@ -416,6 +416,16 @@ impl Connection {
     }
 
     /// Sends a heartbeat ping message.
+    /// Sends raw bytes to the connection (bypassing message codec).
+    /// Used for auth where we need exact control over frame flags.
+    pub async fn send_raw_bytes(&mut self, data: &[u8]) -> Result<()> {
+        self.stream.write_all(data).await.map_err(|e| {
+            HazelcastError::Connection(format!("failed to write to {}: {}", self.address, e))
+        })?;
+        self.last_write_at = Instant::now();
+        Ok(())
+    }
+
     pub async fn send_heartbeat(&mut self) -> Result<()> {
         use hazelcast_core::protocol::constants::PARTITION_ID_ANY;
 
