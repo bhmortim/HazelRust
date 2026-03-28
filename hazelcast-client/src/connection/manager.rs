@@ -397,34 +397,18 @@ impl ConnectionManager {
 
         let id = connection.id();
 
-        // Authenticate with the cluster member
+        // Authenticate with the cluster member using proper frame format
         use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
+        use hazelcast_core::protocol::Frame;
+        use bytes::BytesMut;
+
         let cluster_name = self.config.cluster_name().to_string();
         let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(CLIENT_AUTHENTICATION, PARTITION_ID_ANY);
 
-        // Build authentication frame: cluster_name (string) + username + password + client_uuid + client_type + serialization_version + client_version
-        {
-            let mut payload = Vec::new();
-            // Fixed-size fields: serialization_version (u8) = 1, client_type = "RST" (Rust)
-            // String fields: cluster_name, username (empty), password (empty)
-            // The frame format for ClientAuthentication request:
-            // - byte: serialization_version (1)
-            // - string: cluster_name
-            // - string: username (nullable - empty for no auth)
-            // - string: password (nullable - empty for no auth)
-            // - uuid: client_uuid
-            // - string: client_type ("RST")
-            // - string: client_version ("0.1.0")
-
-            // Write serialization version
-            payload.push(1u8);
-            // Write cluster name as length-prefixed string
-            let name_bytes = cluster_name.as_bytes();
-            payload.extend_from_slice(&(name_bytes.len() as i32).to_le_bytes());
-            payload.extend_from_slice(name_bytes);
-
-            auth_msg.add_frame_with_data(&payload);
-        }
+        // Add frames: cluster_name, username, password (matching test_encode_authentication_request format)
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
+        auth_msg.add_frame(Frame::with_content(BytesMut::new())); // empty username
+        auth_msg.add_frame(Frame::with_content(BytesMut::new())); // empty password
 
         if let Err(e) = connection.send(auth_msg).await {
             tracing::warn!(address = %address, error = %e, "authentication message send failed");
