@@ -57,9 +57,9 @@ impl Decoder for ClientMessageCodec {
 
             let frame_length =
                 u32::from_le_bytes([src[0], src[1], src[2], src[3]]) as usize;
-            let total_frame_size = SIZE_OF_FRAME_LENGTH_FIELD + frame_length;
 
-            if src.len() < total_frame_size {
+            // frame_length is total frame size (including the 4-byte length prefix)
+            if src.len() < frame_length {
                 return Ok(None);
             }
 

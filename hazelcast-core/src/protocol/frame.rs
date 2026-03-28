@@ -175,11 +175,14 @@ impl Frame {
         SIZE_OF_FRAME_LENGTH_FIELD + SIZE_OF_FRAME_FLAGS_FIELD + self.content.len()
     }
 
-    /// Returns the frame length value (flags + content length).
+    /// Returns the frame length value (total frame size including length prefix).
     ///
-    /// This is the value written in the length field.
+    /// The Hazelcast Java server interprets this as the total frame size:
+    /// 4 (length field) + 2 (flags) + content_len. This matches the Java
+    /// ClientMessageReader which subtracts SIZE_OF_FRAME_LENGTH_AND_FLAGS (6)
+    /// to get the content size.
     pub fn frame_length(&self) -> usize {
-        SIZE_OF_FRAME_FLAGS_FIELD + self.content.len()
+        SIZE_OF_FRAME_LENGTH_FIELD + SIZE_OF_FRAME_FLAGS_FIELD + self.content.len()
     }
 
     /// Writes this frame to the given buffer.
@@ -200,19 +203,19 @@ impl Frame {
 
         let frame_length = u32::from_le_bytes([src[0], src[1], src[2], src[3]]) as usize;
 
-        if frame_length < SIZE_OF_FRAME_FLAGS_FIELD {
+        // frame_length includes the 4-byte length field + 2-byte flags + content
+        // Minimum is SIZE_OF_FRAME_LENGTH_FIELD(4) + SIZE_OF_FRAME_FLAGS_FIELD(2) = 6
+        if frame_length < SIZE_OF_FRAME_LENGTH_FIELD + SIZE_OF_FRAME_FLAGS_FIELD {
             return None;
         }
 
-        let total_frame_size = SIZE_OF_FRAME_LENGTH_FIELD + frame_length;
-
-        if src.len() < total_frame_size {
+        if src.len() < frame_length {
             return None;
         }
 
         src.advance(SIZE_OF_FRAME_LENGTH_FIELD);
         let flags = src.get_u16_le();
-        let content_length = frame_length - SIZE_OF_FRAME_FLAGS_FIELD;
+        let content_length = frame_length - SIZE_OF_FRAME_LENGTH_FIELD - SIZE_OF_FRAME_FLAGS_FIELD;
         let content = src.split_to(content_length);
 
         Some(Self::new(content, flags))
@@ -272,10 +275,10 @@ mod tests {
     #[test]
     fn test_frame_length() {
         let empty = Frame::default();
-        assert_eq!(empty.frame_length(), 2);
+        assert_eq!(empty.frame_length(), 6);
 
         let with_content = Frame::with_content(BytesMut::from(&[1, 2, 3][..]));
-        assert_eq!(with_content.frame_length(), 5);
+        assert_eq!(with_content.frame_length(), 9);
     }
 
     #[test]
@@ -302,9 +305,9 @@ mod tests {
     #[test]
     fn test_read_incomplete_content() {
         let mut buf = BytesMut::from(&[
-            0x06, 0x00, 0x00, 0x00, // length = 6 (flags + 4 bytes content)
+            0x0A, 0x00, 0x00, 0x00, // length = 10 (4+2+4 bytes total)
             0x00, 0x80, // flags
-            0x01, 0x02, // only 2 bytes of content
+            0x01, 0x02, // only 2 bytes of content (incomplete)
         ][..]);
         assert!(Frame::read_from(&mut buf).is_none());
     }
@@ -312,7 +315,7 @@ mod tests {
     #[test]
     fn test_read_empty_frame() {
         let mut buf = BytesMut::from(&[
-            0x02, 0x00, 0x00, 0x00, // length = 2 (just flags)
+            0x06, 0x00, 0x00, 0x00, // length = 6 (4+2+0, empty content)
             0x00, 0x40, // END_FLAG
         ][..]);
 
