@@ -405,57 +405,33 @@ impl ConnectionManager {
         let cluster_name = self.config.cluster_name().to_string();
         let client_uuid = uuid::Uuid::new_v4();
 
-        // Build auth as a SINGLE frame (BEGIN|END) because HZ server rejects
-        // fragmented messages before authentication is complete.
-        // Pack all fields into one frame: header + fixed fields + length-prefixed strings
-        let mut content = BytesMut::with_capacity(256);
-
-        // Standard request header (16 bytes)
-        content.put_i32_le(CLIENT_AUTHENTICATION);  // message_type
-        content.put_i64_le(1);  // correlation_id
-        content.put_i32_le(PARTITION_ID_ANY);  // partition_id = -1
-
-        // Auth-specific fixed fields
-        let (hi, lo) = client_uuid.as_u64_pair();
-        content.put_u64_le(hi);  // UUID high
-        content.put_u64_le(lo);  // UUID low
-        content.put_u8(1);       // serialization_version
-        content.put_u8(0);       // routing_mode (UNISOCKET)
-        content.put_u8(0);       // cp_direct_to_leader = false
-
-        // Variable-length fields as length-prefixed strings (i32 LE length + bytes)
-        // 1. clusterName
-        let cn = cluster_name.as_bytes();
-        content.put_i32_le(cn.len() as i32);
-        content.put_slice(cn);
-
-        // 2. username (nullable) - use -1 length for null
-        content.put_i32_le(-1);
-
-        // 3. password (nullable) - use -1 length for null
-        content.put_i32_le(-1);
-
-        // 4. clientType
-        content.put_i32_le(3);
-        content.put_slice(b"RST");
-
-        // 5. clientHazelcastVersion
-        content.put_i32_le(5);
-        content.put_slice(b"5.6.0");
-
-        // 6. clientName
-        content.put_i32_le(9);
-        content.put_slice(b"hazelrust");
-
-        // 7. labels count = 0
-        content.put_i32_le(0);
-
-        let auth_frame = Frame::new(
-            content,
-            hazelcast_core::protocol::constants::BEGIN_FLAG | hazelcast_core::protocol::constants::END_FLAG,
+        // Build multi-frame auth message per the ClientAuthenticationCodec spec.
+        // HZ rejects "fragmented" messages pre-auth, meaning messages split across
+        // TCP segments. We ensure all frames are buffered and written as one write.
+        let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
+            CLIENT_AUTHENTICATION, PARTITION_ID_ANY
         );
-        let mut auth_msg = hazelcast_core::ClientMessage::new();
-        auth_msg.add_frame(auth_frame);
+
+        // Extend initial frame with auth-specific fixed fields at offsets 16..35
+        if let Some(initial_frame) = auth_msg.frames_mut().first_mut() {
+            let (hi, lo) = client_uuid.as_u64_pair();
+            initial_frame.content.put_u64_le(hi);   // UUID hi [16..24]
+            initial_frame.content.put_u64_le(lo);   // UUID lo [24..32]
+            initial_frame.content.put_u8(1);         // serialization_version [32]
+            initial_frame.content.put_u8(0);         // routing_mode [33]
+            initial_frame.content.put_u8(0);         // cp_direct_to_leader [34]
+        }
+
+        // String frames (order matches ClientAuthenticationCodec.decodeRequest):
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
+        auth_msg.add_frame(Frame::new_null_frame()); // username (nullable)
+        auth_msg.add_frame(Frame::new_null_frame()); // password (nullable)
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+        // Empty labels list: BEGIN_DATA_STRUCTURE + END_DATA_STRUCTURE
+        auth_msg.add_frame(Frame::with_flags(0x1000)); // BEGIN_DATA_STRUCTURE (1 << 12)
+        auth_msg.add_frame(Frame::with_flags(0x0800)); // END_DATA_STRUCTURE (1 << 11)
 
         if let Err(e) = connection.send(auth_msg).await {
             tracing::warn!(address = %address, error = %e, "authentication message send failed");
