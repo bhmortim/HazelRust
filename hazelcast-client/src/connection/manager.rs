@@ -420,6 +420,7 @@ impl ConnectionManager {
             initial_frame.content.put_u8(1);         // serialization_version [32]
             initial_frame.content.put_u8(0);         // routing_mode [33]
             initial_frame.content.put_u8(0);         // cp_direct_to_leader [34]
+            initial_frame.content.put_u8(0);         // padding to match Java frame size [35]
         }
 
         // String frames (order matches ClientAuthenticationCodec.decodeRequest):
