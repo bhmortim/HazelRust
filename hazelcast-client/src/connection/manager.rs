@@ -398,48 +398,40 @@ impl ConnectionManager {
         let id = connection.id();
 
         // Build ClientAuthentication request per HZ 5.x protocol spec
-        use hazelcast_core::protocol::constants::PARTITION_ID_ANY;
+        use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
         use hazelcast_core::protocol::Frame;
         use bytes::{BytesMut, BufMut};
 
         let cluster_name = self.config.cluster_name().to_string();
         let client_uuid = uuid::Uuid::new_v4();
 
-        // Build the initial frame (27 bytes):
-        // [0..4]  message_type = 0x000100 (CLIENT_AUTHENTICATION)
-        // [4..8]  partition_id = -1
-        // [8..24] client UUID (16 bytes, little-endian)
-        // [24]    serialization_version = 1
-        // [25]    routing_mode = 0 (UNISOCKET)
-        // [26]    cp_direct_to_leader = false
-        let mut initial_content = BytesMut::with_capacity(27);
-        initial_content.put_i32_le(0x000100);  // message_type
-        initial_content.put_i32_le(PARTITION_ID_ANY);  // partition_id = -1
-        // UUID: write as two u64 (most_significant, least_significant) in LE
-        let (hi, lo) = client_uuid.as_u64_pair();
-        initial_content.put_u64_le(hi);
-        initial_content.put_u64_le(lo);
-        initial_content.put_u8(1);    // serialization_version
-        initial_content.put_u8(0);    // routing_mode (UNISOCKET)
-        initial_content.put_u8(0);    // cp_direct_to_leader = false
+        // Use create_for_encode to get proper initial frame with header
+        // (message_type, correlation_id, partition_id at correct offsets)
+        let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
+            CLIENT_AUTHENTICATION, PARTITION_ID_ANY
+        );
 
-        let mut auth_msg = hazelcast_core::ClientMessage::new();
-        // Initial frame with BEGIN flag
-        let initial_frame = Frame::new(initial_content, hazelcast_core::protocol::constants::BEGIN_FLAG);
-        auth_msg.add_frame(initial_frame);
+        // Append auth-specific fields to the initial frame:
+        // [16..32] UUID (16 bytes LE)
+        // [32]     serialization_version = 1
+        // [33]     routing_mode = 0 (UNISOCKET)
+        // [34]     cp_direct_to_leader = false
+        if let Some(initial_frame) = auth_msg.frames_mut().first_mut() {
+            let (hi, lo) = client_uuid.as_u64_pair();
+            initial_frame.content.put_u64_le(hi);
+            initial_frame.content.put_u64_le(lo);
+            initial_frame.content.put_u8(1);    // serialization_version
+            initial_frame.content.put_u8(0);    // routing_mode (UNISOCKET)
+            initial_frame.content.put_u8(0);    // cp_direct_to_leader = false
+        }
 
-        // String frames in order: cluster_name, username, password, client_type, client_version, client_name
+        // String frames: cluster_name, username, password, client_type, client_version, client_name
         auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
-        // Username (nullable - send empty for no-auth clusters)
-        auth_msg.add_frame(Frame::with_content(BytesMut::new()));
-        // Password (nullable - send empty for no-auth clusters)
-        auth_msg.add_frame(Frame::with_content(BytesMut::new()));
-        // Client type
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
-        // Client Hazelcast version
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
-        // Client name
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::new())); // username (nullable)
+        auth_msg.add_frame(Frame::with_content(BytesMut::new())); // password (nullable)
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));     // client type
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));   // client HZ version
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..]))); // client name
 
         if let Err(e) = connection.send(auth_msg).await {
             tracing::warn!(address = %address, error = %e, "authentication message send failed");
