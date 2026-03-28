@@ -385,7 +385,7 @@ impl ConnectionManager {
         let connect_timeout = self.config.network().connection_timeout();
         tracing::debug!(timeout = ?connect_timeout, "attempting connection");
 
-        let connection = timeout(connect_timeout, self.create_connection(address))
+        let mut connection = timeout(connect_timeout, self.create_connection(address))
             .await
             .map_err(|_| {
                 tracing::warn!(timeout = ?connect_timeout, "connection attempt timed out");
@@ -396,6 +396,63 @@ impl ConnectionManager {
             })??;
 
         let id = connection.id();
+
+        // Authenticate with the cluster member
+        use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
+        let cluster_name = self.config.cluster_name().to_string();
+        let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(CLIENT_AUTHENTICATION, PARTITION_ID_ANY);
+
+        // Build authentication frame: cluster_name (string) + username + password + client_uuid + client_type + serialization_version + client_version
+        {
+            let mut payload = Vec::new();
+            // Fixed-size fields: serialization_version (u8) = 1, client_type = "RST" (Rust)
+            // String fields: cluster_name, username (empty), password (empty)
+            // The frame format for ClientAuthentication request:
+            // - byte: serialization_version (1)
+            // - string: cluster_name
+            // - string: username (nullable - empty for no auth)
+            // - string: password (nullable - empty for no auth)
+            // - uuid: client_uuid
+            // - string: client_type ("RST")
+            // - string: client_version ("0.1.0")
+
+            // Write serialization version
+            payload.push(1u8);
+            // Write cluster name as length-prefixed string
+            let name_bytes = cluster_name.as_bytes();
+            payload.extend_from_slice(&(name_bytes.len() as i32).to_le_bytes());
+            payload.extend_from_slice(name_bytes);
+
+            auth_msg.add_frame_with_data(&payload);
+        }
+
+        if let Err(e) = connection.send(auth_msg).await {
+            tracing::warn!(address = %address, error = %e, "authentication message send failed");
+            // Continue anyway - the connection may still work for some cluster configs
+        } else {
+            // Try to read auth response (non-blocking, with timeout)
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                connection.receive()
+            ).await {
+                Ok(Ok(Some(response))) => {
+                    tracing::debug!(
+                        address = %address,
+                        msg_type = ?response.message_type(),
+                        "received authentication response"
+                    );
+                }
+                Ok(Ok(None)) => {
+                    tracing::warn!(address = %address, "connection closed during authentication");
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(address = %address, error = %e, "error reading auth response");
+                }
+                Err(_) => {
+                    tracing::warn!(address = %address, "authentication response timeout");
+                }
+            }
+        }
 
         self.connections.write().await.insert(address, connection);
 

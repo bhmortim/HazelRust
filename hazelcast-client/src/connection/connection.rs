@@ -158,9 +158,19 @@ impl Connection {
         socket_config: &crate::config::SocketConfig,
     ) -> Result<Self> {
         let stream = Self::create_tcp_stream(address, socket_config).await?;
+        let mut conn = Self::new(stream, address);
 
-        tracing::debug!(address = %address, "established connection");
-        Ok(Self::new(stream, address))
+        // Send Hazelcast open binary client protocol header "CB2"
+        use tokio::io::AsyncWriteExt;
+        conn.stream.write_all(b"CB2").await.map_err(|e| {
+            HazelcastError::Connection(format!(
+                "failed to send protocol header to {}: {}",
+                address, e
+            ))
+        })?;
+
+        tracing::debug!(address = %address, "established connection with CB2 protocol header");
+        Ok(conn)
     }
 
     /// Creates a TCP stream with the configured socket options applied.
