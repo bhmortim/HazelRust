@@ -425,13 +425,24 @@ impl ConnectionManager {
             initial_frame.content.put_u8(0);    // cp_direct_to_leader = false
         }
 
-        // String frames: cluster_name, username, password, client_type, client_version, client_name
+        // String frames in exact order expected by ClientAuthenticationCodec.decodeRequest:
+        // 1. clusterName (string)
         auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
-        auth_msg.add_frame(Frame::with_content(BytesMut::new())); // username (nullable)
-        auth_msg.add_frame(Frame::with_content(BytesMut::new())); // password (nullable)
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));     // client type
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));   // client HZ version
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..]))); // client name
+        // 2. username (nullable string) - send null frame
+        auth_msg.add_frame(Frame::new_null_frame());
+        // 3. password (nullable string) - send null frame
+        auth_msg.add_frame(Frame::new_null_frame());
+        // 4. clientType (string)
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
+        // 5. clientHazelcastVersion (string)
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
+        // 6. clientName (string)
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+        // 7. labels (list of strings) - empty list
+        //    BEGIN_DATA_STRUCTURE_FLAG = 1 << 13 = 0x2000
+        //    END_DATA_STRUCTURE_FLAG = 1 << 14 = 0x4000
+        auth_msg.add_frame(Frame::with_flags(0x2000)); // BEGIN_DATA_STRUCTURE
+        auth_msg.add_frame(Frame::with_flags(0x4000)); // END_DATA_STRUCTURE
 
         if let Err(e) = connection.send(auth_msg).await {
             tracing::warn!(address = %address, error = %e, "authentication message send failed");
