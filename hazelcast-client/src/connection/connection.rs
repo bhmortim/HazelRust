@@ -162,14 +162,14 @@ impl Connection {
 
         // Send Hazelcast open binary client protocol header "CB2"
         use tokio::io::AsyncWriteExt;
-        conn.stream.write_all(b"CB2").await.map_err(|e| {
+        conn.stream.write_all(b"CP2").await.map_err(|e| {
             HazelcastError::Connection(format!(
                 "failed to send protocol header to {}: {}",
                 address, e
             ))
         })?;
 
-        tracing::debug!(address = %address, "established connection with CB2 protocol header");
+        tracing::debug!(address = %address, "established connection with CP2 protocol header");
         Ok(conn)
     }
 
