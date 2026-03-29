@@ -37,7 +37,7 @@ impl ClientMessage {
 
     /// Creates a request message with the given type and partition ID.
     pub fn create_for_encode(message_type: i32, partition_id: i32) -> Self {
-        let mut initial_frame = Frame::with_capacity(REQUEST_HEADER_SIZE, BEGIN_FLAG);
+        let mut initial_frame = Frame::with_capacity(REQUEST_HEADER_SIZE, 0xC100); // UNFRAGMENTED + 0x0100 matching Java
         initial_frame.content.put_i32_le(message_type);
         initial_frame.content.put_i64_le(next_correlation_id());
         initial_frame.content.put_i32_le(partition_id);
