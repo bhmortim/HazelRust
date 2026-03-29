@@ -1172,9 +1172,8 @@ impl ConnectionManager {
     pub async fn invoke_on_partition(
         &self,
         partition_id: i32,
-        message: hazelcast_core::ClientMessage,
+        mut message: hazelcast_core::ClientMessage,
     ) -> Result<hazelcast_core::ClientMessage> {
-        // Acquire back-pressure permit (if configured)
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(sem.acquire().await.map_err(|_| {
                 HazelcastError::Connection("client is shutting down".to_string())
@@ -1182,71 +1181,35 @@ impl ConnectionManager {
             None => None,
         };
 
-        let timeout_duration = self.invocation_timeout;
+        let timeout_duration = std::time::Duration::from_secs(10);
+
+        // Get the correlation_id from the message for matching the response
+        let corr_id = message.correlation_id().unwrap_or(0);
+
         tokio::time::timeout(timeout_duration, async {
             let address = self.get_connection_for_partition(partition_id).await?;
-            // Use a fresh connection to avoid heartbeat interference
-            // create_connection already sends CP2 protocol header
-            let mut conn = self.create_connection(address).await?;
-            tracing::info!(address = %address, "fresh connection created, authenticating...");
-            self.authenticate_connection(&mut conn, address).await?;
-            // Drain any pending server events/notifications before sending our operation
+            
+            // Send on the shared connection
+            self.send_to(address, message).await?;
+            
+            // Read responses until we find one matching our correlation_id
+            // Other responses (heartbeat acks, cluster events) are discarded
             loop {
-                match tokio::time::timeout(std::time::Duration::from_millis(100), conn.receive()).await {
-                    Ok(Ok(Some(event))) => {
-                        tracing::debug!(
-                            address = %address,
-                            msg_type = ?event.message_type(),
-                            "drained pending server message"
-                        );
-                    }
-                    _ => break, // No more pending messages
+                let resp = self.receive_from(address)
+                    .await?
+                    .ok_or_else(|| HazelcastError::Connection("connection closed".to_string()))?;
+                
+                if resp.correlation_id().unwrap_or(-1) == corr_id {
+                    return Ok(resp);
                 }
-            }
-
-            // Drain ALL leftover data from auth response (cluster events, partition tables)
-            // Must read from the actual TCP socket, not just clear the in-memory buffer
-            conn.drain_socket().await;
-
-            // Send CreateProxy for the map (required before first operation)
-            // This tells the server to create a local proxy for the distributed object
-            {
-                use hazelcast_core::protocol::constants::CLIENT_CREATE_PROXY;
-                use hazelcast_core::protocol::Frame;
-                use bytes::BytesMut;
-
-                let mut proxy_msg = hazelcast_core::ClientMessage::create_for_encode(
-                    CLIENT_CREATE_PROXY, hazelcast_core::protocol::constants::PARTITION_ID_ANY
+                // Not our response � discard and try again
+                tracing::trace!(
+                    expected_corr = corr_id,
+                    got_corr = resp.correlation_id(),
+                    got_type = ?resp.message_type(),
+                    "discarding non-matching response"
                 );
-                // CreateProxy has no fixed-size params beyond the header
-                // Variable-size params: name (String), serviceName (String)
-                // Extract map name from the operation message (second frame = name string)
-                let map_name = if message.frame_count() > 1 {
-                    String::from_utf8_lossy(&message.frames()[1].content).to_string()
-                } else {
-                    "default".to_string()
-                };
-                proxy_msg.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
-                proxy_msg.add_frame(Frame::with_content(BytesMut::from(&b"hz:impl:mapService"[..])));
-
-                conn.send(proxy_msg).await?;
-                // Read CreateProxy response
-                match tokio::time::timeout(std::time::Duration::from_secs(5), conn.receive()).await {
-                    Ok(Ok(Some(_))) => {
-                        tracing::debug!(address = %address, "CreateProxy successful");
-                    }
-                    _ => {
-                        tracing::warn!(address = %address, "CreateProxy response issue");
-                    }
-                }
             }
-
-            tracing::info!(address = %address, msg_type = ?message.message_type(), "sending operation message");
-            conn.send(message).await?;
-            tracing::info!(address = %address, "operation sent, waiting for response...");
-            conn.receive()
-                .await?
-                .ok_or_else(|| HazelcastError::Connection("connection closed".to_string()))
         })
         .await
         .map_err(|_| {
@@ -1256,6 +1219,7 @@ impl ConnectionManager {
             ))
         })?
     }
+
 
     /// Invokes a request on any available connection and returns the response.
     ///
