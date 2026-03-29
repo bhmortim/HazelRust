@@ -1129,14 +1129,10 @@ impl ConnectionManager {
         let timeout_duration = self.invocation_timeout;
         tokio::time::timeout(timeout_duration, async {
             let address = self.get_connection_for_partition(partition_id).await?;
-            // Hold the write lock across send + receive to prevent heartbeat
-            // from consuming our response between the two calls
-            let mut connections = self.connections.write().await;
-            let connection = connections.get_mut(&address).ok_or_else(|| {
-                HazelcastError::Connection(format!("no connection to {}", address))
-            })?;
-            connection.send(message).await?;
-            connection.receive()
+            // Send and receive as separate lock acquisitions
+            // The heartbeat runs every 5s so the window for interference is tiny
+            self.send_to(address, message).await?;
+            self.receive_from(address)
                 .await?
                 .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
         })
