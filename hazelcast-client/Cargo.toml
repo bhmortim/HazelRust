@@ -28,6 +28,7 @@ tower = ["dep:tower"]
 config-file = ["dep:serde_yaml", "serde_json"]
 
 [dependencies]
+dashmap = "6"
 hazelcast-core = { path = "../hazelcast-core", features = ["serde"] }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

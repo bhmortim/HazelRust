@@ -72,6 +72,8 @@ pub struct ConnectionManager {
     config: Arc<ClientConfig>,
     discovery: Arc<dyn ClusterDiscovery>,
     connections: Arc<RwLock<HashMap<SocketAddr, Connection>>>,
+    /// Serialize HZ operations to prevent response interleaving on shared connections.
+    operation_mutex: Arc<tokio::sync::Mutex<()>>,
     members: Arc<RwLock<HashMap<Uuid, Member>>>,
     partition_table: Arc<RwLock<HashMap<i32, Uuid>>>,
     partition_count: AtomicI32,
@@ -142,6 +144,7 @@ impl ConnectionManager {
             config: Arc::new(config),
             discovery: Arc::new(discovery),
             connections: Arc::new(RwLock::new(HashMap::new())),
+            operation_mutex: Arc::new(tokio::sync::Mutex::new(())),
             members: Arc::new(RwLock::new(HashMap::new())),
             partition_table: Arc::new(RwLock::new(HashMap::new())),
             partition_count: AtomicI32::new(0),
@@ -208,6 +211,7 @@ impl ConnectionManager {
             config: Arc::new(primary_config),
             discovery: Arc::new(discovery),
             connections: Arc::new(RwLock::new(HashMap::new())),
+            operation_mutex: Arc::new(tokio::sync::Mutex::new(())),
             members: Arc::new(RwLock::new(HashMap::new())),
             partition_table: Arc::new(RwLock::new(HashMap::new())),
             partition_count: AtomicI32::new(0),
@@ -1186,7 +1190,9 @@ impl ConnectionManager {
 
         let timeout_duration = std::time::Duration::from_secs(10);
 
-        // Get the correlation_id from the message for matching the response
+        // Serialize operations to prevent response interleaving
+        let _op_guard = self.operation_mutex.lock().await;
+
         let corr_id = message.correlation_id().unwrap_or(0);
 
         tokio::time::timeout(timeout_duration, async {

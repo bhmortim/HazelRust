@@ -4884,7 +4884,6 @@ where
     ///             println!("Event: {:?}, Key: {:?}, Seq: {}",
     ///                 event.event_type(), event.key(), event.sequence());
     ///         }
-    ///         Err(e) => eprintln!("Error: {}", e),
     ///     }
     /// }
     /// ```
