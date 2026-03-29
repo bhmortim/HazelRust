@@ -405,15 +405,31 @@ impl Connection {
     /// Returns `None` if the connection is closed cleanly.
     pub async fn receive(&mut self) -> Result<Option<ClientMessage>> {
         loop {
-            if let Some(message) = self.codec.decode(&mut self.read_buffer)? {
-                self.last_read_at = Instant::now();
-                tracing::debug!(
-                    address = %self.address,
-                    msg_type = ?message.message_type(),
-                    frame_count = message.frame_count(),
-                    "received message"
-                );
-                return Ok(Some(message));
+            tracing::trace!(
+                address = %self.address,
+                buffer_len = self.read_buffer.len(),
+                "attempting decode from buffer"
+            );
+            match self.codec.decode(&mut self.read_buffer) {
+                Ok(Some(message)) => {
+                    self.last_read_at = Instant::now();
+                    tracing::info!(
+                        address = %self.address,
+                        msg_type = ?message.message_type(),
+                        frame_count = message.frame_count(),
+                        remaining_buffer = self.read_buffer.len(),
+                        "received message"
+                    );
+                    return Ok(Some(message));
+                }
+                Ok(None) => {
+                    // Need more data
+                    tracing::trace!(address = %self.address, "buffer incomplete, reading from socket");
+                }
+                Err(e) => {
+                    tracing::warn!(address = %self.address, error = %e, "decode error");
+                    return Err(e);
+                }
             }
 
             let bytes_read = self.stream.read_buf(&mut self.read_buffer).await.map_err(|e| {
