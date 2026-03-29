@@ -214,9 +214,12 @@ impl ClientMessage {
     ///
     /// Sets the END flag on the last frame before writing.
     pub fn write_to(&mut self, dst: &mut BytesMut) {
-        // Java client does NOT add END_FLAG to the last frame.
-        // UNFRAGMENTED_MESSAGE (0xC000) on the first frame tells the
-        // server that all frames are in this TCP segment.
+        // Add IS_FINAL_FLAG to the last frame to signal end of message.
+        // The Java server's ClientMessageReader reads frames until it
+        // sees IS_FINAL_FLAG (1 << 13 = 0x2000), then processes the message.
+        if let Some(last) = self.frames.last_mut() {
+            last.flags |= IS_FINAL_FLAG;
+        }
         for frame in &self.frames {
             frame.write_to(dst);
         }
