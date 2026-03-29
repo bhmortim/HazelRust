@@ -67,7 +67,7 @@ impl Decoder for ClientMessageCodec {
                 .ok_or_else(|| HazelcastError::Protocol("failed to read frame".to_string()))?;
 
             let is_begin = frame.is_begin_frame();
-            let is_end = frame.is_end_frame();
+            let is_final = frame.flags & IS_FINAL_FLAG != 0;
 
             if is_begin {
                 self.pending_frames.clear();
@@ -78,7 +78,10 @@ impl Decoder for ClientMessageCodec {
                 self.pending_frames.push(frame);
             }
 
-            if is_end && self.in_message {
+            // Message is complete when IS_FINAL_FLAG is seen (not END_FLAG)
+            // The server sets BEGIN|END on the initial frame of ALL messages,
+            // but IS_FINAL marks the actual last frame of the message.
+            if is_final && self.in_message {
                 self.in_message = false;
                 let frames = std::mem::take(&mut self.pending_frames);
                 return Ok(Some(ClientMessage::from_frames(frames)));

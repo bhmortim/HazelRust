@@ -2402,7 +2402,6 @@ where
         }
 
         let data_frame = &frames[1];
-        eprintln!("[DECODE] frames={}, f1_flags=0x{:04x}, f1_content_len={}, f1_content={:?}",
             frames.len(), data_frame.flags, data_frame.content.len(),
             &data_frame.content[..std::cmp::min(20, data_frame.content.len())]);
 
