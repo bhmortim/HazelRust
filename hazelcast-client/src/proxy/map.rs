@@ -2402,8 +2402,6 @@ where
         }
 
         let data_frame = &frames[1];
-            frames.len(), data_frame.flags, data_frame.content.len(),
-            &data_frame.content[..std::cmp::min(20, data_frame.content.len())]);
 
         if data_frame.flags & IS_NULL_FLAG != 0 {
             return Ok(None);
