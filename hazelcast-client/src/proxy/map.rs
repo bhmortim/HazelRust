@@ -14,6 +14,15 @@ use futures::Stream;
 use tokio::spawn;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+/// Default partition count (standard for 3-node Hazelcast cluster).
+/// TODO: Read dynamically from cluster auth response.
+const DEFAULT_PARTITION_COUNT: i32 = 271;
+
+/// Compute partition index from serialized key data.
+fn partition_index(key_data: &[u8]) -> i32 {
+    (compute_partition_hash(key_data) & 0x7FFFFFFF) % DEFAULT_PARTITION_COUNT
+}
+
 use hazelcast_core::protocol::constants::{
     END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER,
     MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_ADD_INTERCEPTOR, MAP_AGGREGATE,
@@ -621,7 +630,7 @@ where
         }
 
         self.stats_tracker.record_miss();
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_GET, partition_id);
 
@@ -669,7 +678,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
 
@@ -718,7 +727,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT_IF_ABSENT, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -758,7 +767,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REPLACE, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -799,7 +808,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REPLACE_IF_SAME, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -963,7 +972,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1002,7 +1011,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REMOVE_IF_SAME, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1018,7 +1027,7 @@ where
         self.check_permission(PermissionAction::Read)?;
         self.check_quorum(true).await?;
         let key_data = Self::serialize_value(key)?;
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_CONTAINS_KEY, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1213,7 +1222,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1250,7 +1259,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
 
@@ -1677,7 +1686,7 @@ where
 
         for key in keys {
             let key_data = Self::serialize_value(key)?;
-            let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+            let partition_id = partition_index(&key_data);
 
             let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
             message.add_frame(Self::string_frame(&self.name));
@@ -1770,7 +1779,7 @@ where
     pub async fn lock(&self, key: &K) -> Result<()> {
         self.check_permission(PermissionAction::Lock)?;
         let key_data = Self::serialize_value(key)?;
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_LOCK, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1803,7 +1812,7 @@ where
     pub async fn try_lock(&self, key: &K, timeout: Duration) -> Result<bool> {
         self.check_permission(PermissionAction::Lock)?;
         let key_data = Self::serialize_value(key)?;
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
         let timeout_ms = timeout.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode(MAP_TRY_LOCK, partition_id);
@@ -1831,7 +1840,7 @@ where
     pub async fn unlock(&self, key: &K) -> Result<()> {
         self.check_permission(PermissionAction::Lock)?;
         let key_data = Self::serialize_value(key)?;
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_UNLOCK, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1855,7 +1864,7 @@ where
     pub async fn is_locked(&self, key: &K) -> Result<bool> {
         self.check_permission(PermissionAction::Read)?;
         let key_data = Self::serialize_value(key)?;
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_IS_LOCKED, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1879,7 +1888,7 @@ where
     pub async fn force_unlock(&self, key: &K) -> Result<()> {
         self.check_permission(PermissionAction::Lock)?;
         let key_data = Self::serialize_value(key)?;
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_FORCE_UNLOCK, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1921,7 +1930,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_EVICT, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -2008,7 +2017,7 @@ where
         self.check_permission(PermissionAction::Read)?;
         self.check_quorum(true).await?;
         let key_data = Self::serialize_value(key)?;
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_GET_ENTRY_VIEW, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -2045,7 +2054,7 @@ where
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
         let key_data = Self::serialize_value(key)?;
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
         let ttl_ms = ttl.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode(MAP_SET_TTL, partition_id);
@@ -2100,7 +2109,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
         let timeout_ms = timeout.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode(MAP_TRY_PUT, partition_id);
@@ -2149,7 +2158,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
         let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
@@ -2209,7 +2218,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
         let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
         let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
 
@@ -2271,7 +2280,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
         let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
         let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
 
@@ -2324,7 +2333,7 @@ where
             cache_guard.invalidate(&key_data);
         }
 
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
         let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT_TRANSIENT, partition_id);
@@ -2402,7 +2411,11 @@ where
             return Ok(None);
         }
 
-        let mut input = ObjectDataInput::new(&data_frame.content);
+        // Skip 8-byte Data header (partition_hash + type_id)
+        let content = &data_frame.content;
+        if content.len() < 8 { return Ok(None); }
+        let payload = &content[8..];
+        let mut input = ObjectDataInput::new(payload);
         T::deserialize(&mut input).map(Some)
     }
 
@@ -3149,7 +3162,7 @@ where
         self.check_permission(PermissionAction::Put)?;
         let key_data = Self::serialize_value(key)?;
         let processor_data = Self::serialize_value(processor)?;
-        let partition_id = (compute_partition_hash(&key_data) & 0x7FFFFFFF) % 271; // TODO: use actual partition count
+        let partition_id = partition_index(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_EXECUTE_ON_KEY, partition_id);
         message.add_frame(Self::string_frame(&self.name));
