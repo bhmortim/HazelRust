@@ -414,7 +414,7 @@ pub const CLIENT_REMOVE_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000900;
 pub const CLIENT_GET_DISTRIBUTED_OBJECTS: i32 = 0x000A00;
 
 /// Client create proxy request.
-pub const CLIENT_CREATE_PROXY: i32 = 0x000B00;
+pub const CLIENT_CREATE_PROXY: i32 = 0x000400;
 
 /// Client destroy proxy request.
 pub const CLIENT_DESTROY_PROXY: i32 = 0x000500;

@@ -1204,9 +1204,41 @@ impl ConnectionManager {
                 }
             }
 
-            // Clear any leftover data from auth response (cluster events, partition tables)
-            // that the codec couldn't decode as complete messages
+            // Clear any leftover data from auth response
             conn.clear_read_buffer();
+
+            // Send CreateProxy for the map (required before first operation)
+            // This tells the server to create a local proxy for the distributed object
+            {
+                use hazelcast_core::protocol::constants::CLIENT_CREATE_PROXY;
+                use hazelcast_core::protocol::Frame;
+                use bytes::BytesMut;
+
+                let mut proxy_msg = hazelcast_core::ClientMessage::create_for_encode(
+                    CLIENT_CREATE_PROXY, hazelcast_core::protocol::constants::PARTITION_ID_ANY
+                );
+                // CreateProxy has no fixed-size params beyond the header
+                // Variable-size params: name (String), serviceName (String)
+                // Extract map name from the operation message (second frame = name string)
+                let map_name = if message.frame_count() > 1 {
+                    String::from_utf8_lossy(&message.frames()[1].content).to_string()
+                } else {
+                    "default".to_string()
+                };
+                proxy_msg.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
+                proxy_msg.add_frame(Frame::with_content(BytesMut::from(&b"hz:impl:mapService"[..])));
+
+                conn.send(proxy_msg).await?;
+                // Read CreateProxy response
+                match tokio::time::timeout(std::time::Duration::from_secs(5), conn.receive()).await {
+                    Ok(Ok(Some(_))) => {
+                        tracing::debug!(address = %address, "CreateProxy successful");
+                    }
+                    _ => {
+                        tracing::warn!(address = %address, "CreateProxy response issue");
+                    }
+                }
+            }
 
             tracing::info!(address = %address, msg_type = ?message.message_type(), "sending operation message");
             conn.send(message).await?;
@@ -1270,9 +1302,41 @@ impl ConnectionManager {
                 }
             }
 
-            // Clear any leftover data from auth response (cluster events, partition tables)
-            // that the codec couldn't decode as complete messages
+            // Clear any leftover data from auth response
             conn.clear_read_buffer();
+
+            // Send CreateProxy for the map (required before first operation)
+            // This tells the server to create a local proxy for the distributed object
+            {
+                use hazelcast_core::protocol::constants::CLIENT_CREATE_PROXY;
+                use hazelcast_core::protocol::Frame;
+                use bytes::BytesMut;
+
+                let mut proxy_msg = hazelcast_core::ClientMessage::create_for_encode(
+                    CLIENT_CREATE_PROXY, hazelcast_core::protocol::constants::PARTITION_ID_ANY
+                );
+                // CreateProxy has no fixed-size params beyond the header
+                // Variable-size params: name (String), serviceName (String)
+                // Extract map name from the operation message (second frame = name string)
+                let map_name = if message.frame_count() > 1 {
+                    String::from_utf8_lossy(&message.frames()[1].content).to_string()
+                } else {
+                    "default".to_string()
+                };
+                proxy_msg.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
+                proxy_msg.add_frame(Frame::with_content(BytesMut::from(&b"hz:impl:mapService"[..])));
+
+                conn.send(proxy_msg).await?;
+                // Read CreateProxy response
+                match tokio::time::timeout(std::time::Duration::from_secs(5), conn.receive()).await {
+                    Ok(Ok(Some(_))) => {
+                        tracing::debug!(address = %address, "CreateProxy successful");
+                    }
+                    _ => {
+                        tracing::warn!(address = %address, "CreateProxy response issue");
+                    }
+                }
+            }
 
             tracing::info!(address = %address, msg_type = ?message.message_type(), "sending operation message");
             conn.send(message).await?;
