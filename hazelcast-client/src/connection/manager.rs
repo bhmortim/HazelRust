@@ -1186,8 +1186,8 @@ impl ConnectionManager {
         tokio::time::timeout(timeout_duration, async {
             let address = self.get_connection_for_partition(partition_id).await?;
             // Use a fresh connection to avoid heartbeat interference
+            // create_connection already sends CP2 protocol header
             let mut conn = self.create_connection(address).await?;
-            conn.send_raw_bytes(b"CP2").await?;
             self.authenticate_connection(&mut conn, address).await?;
             conn.send(message).await?;
             conn.receive()
@@ -1231,8 +1231,8 @@ impl ConnectionManager {
                 HazelcastError::Connection("no connections available".to_string())
             })?;
             // Use a fresh connection to avoid heartbeat interference
+            // create_connection already sends CP2 protocol header
             let mut conn = self.create_connection(address).await?;
-            conn.send_raw_bytes(b"CP2").await?;
             self.authenticate_connection(&mut conn, address).await?;
             conn.send(message).await?;
             conn.receive()
