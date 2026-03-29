@@ -460,10 +460,31 @@ impl Connection {
     }
 
     /// Clears the read buffer and resets the codec decoder state.
-    /// Used after auth to discard cluster events before sending operations.
     pub fn clear_read_buffer(&mut self) {
         self.read_buffer.clear();
         self.codec = ClientMessageCodec::new();
+    }
+
+    /// Drains all pending data from the TCP socket and clears the codec state.
+    /// Used after auth to discard cluster events before sending operations.
+    pub async fn drain_socket(&mut self) {
+        // First clear the buffer
+        self.read_buffer.clear();
+        self.codec = ClientMessageCodec::new();
+        // Then read and discard any data already in the TCP socket buffer
+        loop {
+            let mut drain_buf = bytes::BytesMut::with_capacity(8192);
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                self.stream.read_buf(&mut drain_buf)
+            ).await {
+                Ok(Ok(n)) if n > 0 => {
+                    tracing::debug!(address = %self.address, bytes = n, "drained socket data");
+                    continue; // More data may be available
+                }
+                _ => break, // No more data or timeout
+            }
+        }
     }
 
     pub async fn send_heartbeat(&mut self) -> Result<()> {

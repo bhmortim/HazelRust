@@ -1204,8 +1204,9 @@ impl ConnectionManager {
                 }
             }
 
-            // Clear any leftover data from auth response
-            conn.clear_read_buffer();
+            // Drain ALL leftover data from auth response (cluster events, partition tables)
+            // Must read from the actual TCP socket, not just clear the in-memory buffer
+            conn.drain_socket().await;
 
             // Send CreateProxy for the map (required before first operation)
             // This tells the server to create a local proxy for the distributed object
@@ -1302,8 +1303,9 @@ impl ConnectionManager {
                 }
             }
 
-            // Clear any leftover data from auth response
-            conn.clear_read_buffer();
+            // Drain ALL leftover data from auth response (cluster events, partition tables)
+            // Must read from the actual TCP socket, not just clear the in-memory buffer
+            conn.drain_socket().await;
 
             // Send CreateProxy for the map (required before first operation)
             // This tells the server to create a local proxy for the distributed object
