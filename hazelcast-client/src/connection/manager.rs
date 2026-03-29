@@ -1204,6 +1204,10 @@ impl ConnectionManager {
                 }
             }
 
+            // Clear any leftover data from auth response (cluster events, partition tables)
+            // that the codec couldn't decode as complete messages
+            conn.clear_read_buffer();
+
             tracing::info!(address = %address, msg_type = ?message.message_type(), "sending operation message");
             conn.send(message).await?;
             tracing::info!(address = %address, "operation sent, waiting for response...");
@@ -1265,6 +1269,10 @@ impl ConnectionManager {
                     _ => break, // No more pending messages
                 }
             }
+
+            // Clear any leftover data from auth response (cluster events, partition tables)
+            // that the codec couldn't decode as complete messages
+            conn.clear_read_buffer();
 
             tracing::info!(address = %address, msg_type = ?message.message_type(), "sending operation message");
             conn.send(message).await?;

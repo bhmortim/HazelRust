@@ -459,6 +459,13 @@ impl Connection {
         Ok(())
     }
 
+    /// Clears the read buffer and resets the codec decoder state.
+    /// Used after auth to discard cluster events before sending operations.
+    pub fn clear_read_buffer(&mut self) {
+        self.read_buffer.clear();
+        self.codec = ClientMessageCodec::new();
+    }
+
     pub async fn send_heartbeat(&mut self) -> Result<()> {
         use hazelcast_core::protocol::constants::PARTITION_ID_ANY;
 
