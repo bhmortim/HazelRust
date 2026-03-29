@@ -204,7 +204,7 @@ impl Frame {
         let frame_length = u32::from_le_bytes([src[0], src[1], src[2], src[3]]) as usize;
 
         // frame_length includes the 4-byte length field + 2-byte flags + content
-        // Minimum is SIZE_OF_FRAME_LENGTH_FIELD(4) + SIZE_OF_FRAME_FLAGS_FIELD(2) = 6
+        // (matches Java ClientMessageReader convention)
         if frame_length < SIZE_OF_FRAME_LENGTH_FIELD + SIZE_OF_FRAME_FLAGS_FIELD {
             return None;
         }
@@ -275,10 +275,10 @@ mod tests {
     #[test]
     fn test_frame_length() {
         let empty = Frame::default();
-        assert_eq!(empty.frame_length(), 6);
+        assert_eq!(empty.frame_length(), 6); // encode: 4+2+0
 
         let with_content = Frame::with_content(BytesMut::from(&[1, 2, 3][..]));
-        assert_eq!(with_content.frame_length(), 9);
+        assert_eq!(with_content.frame_length(), 9); // encode: 4+2+3
     }
 
     #[test]
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn test_read_incomplete_content() {
         let mut buf = BytesMut::from(&[
-            0x0A, 0x00, 0x00, 0x00, // length = 10 (4+2+4 bytes total)
+            0x0A, 0x00, 0x00, 0x00, // length = 10 (4+2+4 content, prefix-inclusive)
             0x00, 0x80, // flags
             0x01, 0x02, // only 2 bytes of content (incomplete)
         ][..]);
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn test_read_empty_frame() {
         let mut buf = BytesMut::from(&[
-            0x06, 0x00, 0x00, 0x00, // length = 6 (4+2+0, empty content)
+            0x06, 0x00, 0x00, 0x00, // length = 6 (4+2+0 content, prefix-inclusive)
             0x00, 0x40, // END_FLAG
         ][..]);
 
