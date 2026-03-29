@@ -486,6 +486,62 @@ impl ConnectionManager {
 
         Connection::connect(address).await
     }
+    /// Authenticates a fresh connection with the Hazelcast cluster.
+    async fn authenticate_connection(&self, connection: &mut Connection, address: SocketAddr) -> Result<()> {
+        use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
+        use hazelcast_core::protocol::Frame;
+        use bytes::{BytesMut, BufMut};
+
+        let cluster_name = self.config.cluster_name().to_string();
+        let client_uuid = uuid::Uuid::new_v4();
+
+        let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
+            CLIENT_AUTHENTICATION, PARTITION_ID_ANY
+        );
+
+        if let Some(initial_frame) = auth_msg.frames_mut().first_mut() {
+            let (hi, lo) = client_uuid.as_u64_pair();
+            initial_frame.content.put_u64_le(hi);
+            initial_frame.content.put_u64_le(lo);
+            initial_frame.content.put_u8(0xA8); // serialization_version = 168
+            initial_frame.content.put_u8(1);     // routing_mode = SMART
+            initial_frame.content.put_u8(0);     // cp_direct_to_leader = false
+            initial_frame.content.put_u8(0);     // padding
+            // Set flags to 0xC100 (BEGIN|END|0x0100)
+            initial_frame.flags = 0xC100;
+        }
+
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
+        auth_msg.add_frame(Frame::new_null_frame());
+        auth_msg.add_frame(Frame::new_null_frame());
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+        auth_msg.add_frame(Frame::with_flags(0x1000));
+        auth_msg.add_frame(Frame::with_flags(0x2800));
+
+        // Write all frames directly (bypass write_to which adds END_FLAG)
+        let mut buf = BytesMut::with_capacity(256);
+        for frame in auth_msg.frames() {
+            frame.write_to(&mut buf);
+        }
+        connection.send_raw_bytes(&buf).await?;
+
+        // Read auth response
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            connection.receive()
+        ).await {
+            Ok(Ok(Some(response))) => {
+                tracing::debug!(address = %address, "invocation connection authenticated");
+                Ok(())
+            }
+            Ok(Ok(None)) => Err(HazelcastError::Connection("auth: connection closed".to_string())),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(HazelcastError::Timeout("auth timeout".to_string())),
+        }
+    }
+
 
     /// Reconnects to an address with exponential backoff.
     #[instrument(
@@ -1129,12 +1185,14 @@ impl ConnectionManager {
         let timeout_duration = self.invocation_timeout;
         tokio::time::timeout(timeout_duration, async {
             let address = self.get_connection_for_partition(partition_id).await?;
-            // Send and receive as separate lock acquisitions
-            // The heartbeat runs every 5s so the window for interference is tiny
-            self.send_to(address, message).await?;
-            self.receive_from(address)
+            // Use a fresh connection to avoid heartbeat interference
+            let mut conn = self.create_connection(address).await?;
+            conn.send_raw_bytes(b"CP2").await?;
+            self.authenticate_connection(&mut conn, address).await?;
+            conn.send(message).await?;
+            conn.receive()
                 .await?
-                .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+                .ok_or_else(|| HazelcastError::Connection("connection closed".to_string()))
         })
         .await
         .map_err(|_| {
@@ -1172,10 +1230,14 @@ impl ConnectionManager {
             let address = addresses.into_iter().next().ok_or_else(|| {
                 HazelcastError::Connection("no connections available".to_string())
             })?;
-            self.send_to(address, message).await?;
-            self.receive_from(address)
+            // Use a fresh connection to avoid heartbeat interference
+            let mut conn = self.create_connection(address).await?;
+            conn.send_raw_bytes(b"CP2").await?;
+            self.authenticate_connection(&mut conn, address).await?;
+            conn.send(message).await?;
+            conn.receive()
                 .await?
-                .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+                .ok_or_else(|| HazelcastError::Connection("connection closed".to_string()))
         })
         .await
         .map_err(|_| {
