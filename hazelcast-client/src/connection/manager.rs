@@ -1189,7 +1189,39 @@ impl ConnectionManager {
         tokio::time::timeout(timeout_duration, async {
             let address = self.get_connection_for_partition(partition_id).await?;
             
-            // Send on the shared connection
+            // Send CreateProxy to register the map proxy (required once per map per connection)
+            // Extract map name from frame 1 (the first variable-size parameter)
+            let map_name = if message.frame_count() > 1 {
+                String::from_utf8_lossy(&message.frames()[1].content).to_string()
+            } else {
+                String::new()
+            };
+            if !map_name.is_empty() {
+                use hazelcast_core::protocol::Frame;
+                use bytes::BytesMut;
+                let mut proxy_msg = hazelcast_core::ClientMessage::create_for_encode(
+                    0x000400, // CLIENT_CREATE_PROXY
+                    hazelcast_core::protocol::constants::PARTITION_ID_ANY
+                );
+                proxy_msg.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
+                let mut svc_frame = Frame::with_content(BytesMut::from(&b"hz:impl:mapService"[..]));
+                svc_frame.flags |= hazelcast_core::protocol::constants::IS_FINAL_FLAG;
+                proxy_msg.add_frame(svc_frame);
+                
+                let proxy_corr = proxy_msg.correlation_id().unwrap_or(0);
+                self.send_to(address, proxy_msg).await?;
+                // Read CreateProxy response (discard it)
+                loop {
+                    let resp = self.receive_from(address).await?
+                        .ok_or_else(|| HazelcastError::Connection("connection closed".to_string()))?;
+                    if resp.correlation_id().unwrap_or(-1) == proxy_corr {
+                        tracing::debug!("CreateProxy successful for {}", map_name);
+                        break;
+                    }
+                }
+            }
+
+            // Send the actual operation on the shared connection
             self.send_to(address, message).await?;
             
             // Read responses until we find one matching our correlation_id
