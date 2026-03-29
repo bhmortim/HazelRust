@@ -1225,8 +1225,11 @@ impl ConnectionManager {
                 loop {
                     let resp = self.receive_from(address).await?
                         .ok_or_else(|| HazelcastError::Connection("connection closed".to_string()))?;
-                    if resp.correlation_id().unwrap_or(-1) == proxy_corr {
-                        tracing::debug!("CreateProxy successful for {}", map_name);
+                    let r_corr = resp.correlation_id().unwrap_or(-1);
+                    let r_type = resp.message_type();
+                    eprintln!("[HZ] CreateProxy response: corr={}, type={:?}, expected={}", r_corr, r_type, proxy_corr);
+                    if r_corr == proxy_corr {
+                        eprintln!("[HZ] CreateProxy successful for {}", map_name);
                         break;
                     }
                 }
