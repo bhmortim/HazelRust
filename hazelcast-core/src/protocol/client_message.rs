@@ -37,7 +37,7 @@ impl ClientMessage {
 
     /// Creates a request message with the given type and partition ID.
     pub fn create_for_encode(message_type: i32, partition_id: i32) -> Self {
-        let mut initial_frame = Frame::with_capacity(REQUEST_HEADER_SIZE, 0xC100); // UNFRAGMENTED + 0x0100 matching Java
+        let mut initial_frame = Frame::with_capacity(REQUEST_HEADER_SIZE, 0xC100); // UNFRAGMENTED matching Java client
         initial_frame.content.put_i32_le(message_type);
         initial_frame.content.put_i64_le(next_correlation_id());
         initial_frame.content.put_i32_le(partition_id);
@@ -214,9 +214,9 @@ impl ClientMessage {
     ///
     /// Sets the END flag on the last frame before writing.
     pub fn write_to(&mut self, dst: &mut BytesMut) {
-        if let Some(last) = self.frames.last_mut() {
-            last.flags |= END_FLAG;
-        }
+        // Java client does NOT add END_FLAG to the last frame.
+        // UNFRAGMENTED_MESSAGE (0xC000) on the first frame tells the
+        // server that all frames are in this TCP segment.
         for frame in &self.frames {
             frame.write_to(dst);
         }
