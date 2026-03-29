@@ -1192,6 +1192,14 @@ impl ConnectionManager {
         tokio::time::timeout(timeout_duration, async {
             let address = self.get_connection_for_partition(partition_id).await?;
             
+            // Clear any stale data in the connection before sending
+            {
+                let mut connections = self.connections.write().await;
+                if let Some(conn) = connections.get_mut(&address) {
+                    conn.clear_read_buffer();
+                }
+            }
+            
             // Send CreateProxy to register the map proxy (required once per map per connection)
             // Extract map name from frame 1 (the first variable-size parameter)
             let map_name = if message.frame_count() > 1 {
