@@ -377,9 +377,20 @@ impl Connection {
     }
 
     /// Sends a message over this connection.
-    pub async fn send(&mut self, message: ClientMessage) -> Result<()> {
+    pub async fn send(&mut self, mut message: ClientMessage) -> Result<()> {
+        let msg_type = message.message_type();
+        let frame_count = message.frame_count();
+
         let mut buf = BytesMut::new();
         self.codec.encode(message, &mut buf)?;
+
+        tracing::debug!(
+            address = %self.address,
+            msg_type = ?msg_type,
+            frame_count = frame_count,
+            wire_bytes = buf.len(),
+            "sending message"
+        );
 
         self.stream.write_all(&buf).await.map_err(|e| {
             HazelcastError::Connection(format!("failed to write to {}: {}", self.address, e))
@@ -396,6 +407,12 @@ impl Connection {
         loop {
             if let Some(message) = self.codec.decode(&mut self.read_buffer)? {
                 self.last_read_at = Instant::now();
+                tracing::debug!(
+                    address = %self.address,
+                    msg_type = ?message.message_type(),
+                    frame_count = message.frame_count(),
+                    "received message"
+                );
                 return Ok(Some(message));
             }
 
