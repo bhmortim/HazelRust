@@ -2340,10 +2340,12 @@ where
 
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
-        // Write Hazelcast type ID header for built-in types
-        // For String: type_id = -11 (0xFFFFFFF5 in BE i32)
-        // The type_id tells the Java server which deserializer to use
-        use hazelcast_core::serialization::DataOutput; output.write_int(-11)?; // TYPE_STRING = -11
+        // Hazelcast Data format: [partition_hash: i32 BE] [type_id: i32 BE] [payload]
+        // The partition_hash is computed from the serialized data by MurmurHash3
+        // For simplicity, write 0 as partition hash (computed later by the server)
+        use hazelcast_core::serialization::DataOutput;
+        output.write_int(0)?; // partition_hash placeholder
+        output.write_int(-11)?; // TYPE_STRING = -11
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }
