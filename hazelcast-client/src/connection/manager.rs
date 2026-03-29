@@ -1190,6 +1190,20 @@ impl ConnectionManager {
             let mut conn = self.create_connection(address).await?;
             tracing::info!(address = %address, "fresh connection created, authenticating...");
             self.authenticate_connection(&mut conn, address).await?;
+            // Drain any pending server events/notifications before sending our operation
+            loop {
+                match tokio::time::timeout(std::time::Duration::from_millis(100), conn.receive()).await {
+                    Ok(Ok(Some(event))) => {
+                        tracing::debug!(
+                            address = %address,
+                            msg_type = ?event.message_type(),
+                            "drained pending server message"
+                        );
+                    }
+                    _ => break, // No more pending messages
+                }
+            }
+
             tracing::info!(address = %address, msg_type = ?message.message_type(), "sending operation message");
             conn.send(message).await?;
             tracing::info!(address = %address, "operation sent, waiting for response...");
@@ -1238,6 +1252,20 @@ impl ConnectionManager {
             let mut conn = self.create_connection(address).await?;
             tracing::info!(address = %address, "fresh connection created, authenticating...");
             self.authenticate_connection(&mut conn, address).await?;
+            // Drain any pending server events/notifications before sending our operation
+            loop {
+                match tokio::time::timeout(std::time::Duration::from_millis(100), conn.receive()).await {
+                    Ok(Ok(Some(event))) => {
+                        tracing::debug!(
+                            address = %address,
+                            msg_type = ?event.message_type(),
+                            "drained pending server message"
+                        );
+                    }
+                    _ => break, // No more pending messages
+                }
+            }
+
             tracing::info!(address = %address, msg_type = ?message.message_type(), "sending operation message");
             conn.send(message).await?;
             tracing::info!(address = %address, "operation sent, waiting for response...");
