@@ -624,6 +624,14 @@ where
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_GET, partition_id);
+
+        // Fixed-size params in initial frame: threadId (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
+
+        // Variable-size params: name (String), key (Data)
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -1038,6 +1046,14 @@ where
         let partition_id = compute_partition_hash(&pk_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_GET, partition_id);
+
+        // Fixed-size params in initial frame: threadId (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
+
+        // Variable-size params: name (String), key (Data)
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -1223,11 +1239,22 @@ where
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+
+        // Fixed-size params go in the initial frame (after the 16-byte header):
+        // threadId (long, 8 bytes) + ttl (long, 8 bytes)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0);  // threadId = 0
+            initial_frame.content.put_i64_le(-1);  // ttl = -1 (no expiry)
+        }
+
+        // Variable-size params as separate frames in protocol-defined order:
+        // 1. name (String)
+        // 2. key (Data)
+        // 3. value (Data)
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
-        message.add_frame(Self::long_frame(-1)); // Max idle: no expiry
 
         self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
