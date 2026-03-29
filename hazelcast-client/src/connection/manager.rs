@@ -533,7 +533,7 @@ impl ConnectionManager {
             connection.receive()
         ).await {
             Ok(Ok(Some(response))) => {
-                tracing::debug!(address = %address, "invocation connection authenticated");
+                tracing::info!(address = %address, msg_type = ?response.message_type(), "invocation connection authenticated");
                 Ok(())
             }
             Ok(Ok(None)) => Err(HazelcastError::Connection("auth: connection closed".to_string())),
@@ -1188,8 +1188,11 @@ impl ConnectionManager {
             // Use a fresh connection to avoid heartbeat interference
             // create_connection already sends CP2 protocol header
             let mut conn = self.create_connection(address).await?;
+            tracing::info!(address = %address, "fresh connection created, authenticating...");
             self.authenticate_connection(&mut conn, address).await?;
+            tracing::info!(address = %address, msg_type = ?message.message_type(), "sending operation message");
             conn.send(message).await?;
+            tracing::info!(address = %address, "operation sent, waiting for response...");
             conn.receive()
                 .await?
                 .ok_or_else(|| HazelcastError::Connection("connection closed".to_string()))
@@ -1233,8 +1236,11 @@ impl ConnectionManager {
             // Use a fresh connection to avoid heartbeat interference
             // create_connection already sends CP2 protocol header
             let mut conn = self.create_connection(address).await?;
+            tracing::info!(address = %address, "fresh connection created, authenticating...");
             self.authenticate_connection(&mut conn, address).await?;
+            tracing::info!(address = %address, msg_type = ?message.message_type(), "sending operation message");
             conn.send(message).await?;
+            tracing::info!(address = %address, "operation sent, waiting for response...");
             conn.receive()
                 .await?
                 .ok_or_else(|| HazelcastError::Connection("connection closed".to_string()))
