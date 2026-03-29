@@ -672,11 +672,18 @@ where
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+
+        // Fixed-size params in initial frame: threadId (long) + ttl (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0);  // threadId = 0
+            initial_frame.content.put_i64_le(-1i64); // ttl = -1 (no expiry)
+        }
+
+        // Variable-size params: name, key, value
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
-        message.add_frame(Self::long_frame(-1)); // Max idle: no expiry
 
         let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
@@ -1087,11 +1094,18 @@ where
         }
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+
+        // Fixed-size params in initial frame: threadId (long) + ttl (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0);  // threadId = 0
+            initial_frame.content.put_i64_le(-1i64); // ttl = -1 (no expiry)
+        }
+
+        // Variable-size params: name, key, value
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
-        message.add_frame(Self::long_frame(-1)); // Max idle: no expiry
 
         let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
