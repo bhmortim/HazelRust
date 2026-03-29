@@ -63,3 +63,4 @@ pub use eureka::{EurekaDiscovery, EurekaDiscoveryConfig};
 
 #[cfg(feature = "websocket")]
 pub use websocket::WebSocketConnection;
+pub mod invocation;

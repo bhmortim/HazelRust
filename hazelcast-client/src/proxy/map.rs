@@ -14,12 +14,12 @@ use futures::Stream;
 use tokio::spawn;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-/// Default partition count (standard for 3-node Hazelcast cluster).
-/// TODO: Read dynamically from cluster auth response.
+/// Default partition count (fallback if not received from cluster).
 const DEFAULT_PARTITION_COUNT: i32 = 271;
 
 /// Compute partition index from serialized key data.
 fn partition_index(key_data: &[u8]) -> i32 {
+    // Use DEFAULT_PARTITION_COUNT; IMap::partition_index_with_count uses dynamic count
     (compute_partition_hash(key_data) & 0x7FFFFFFF) % DEFAULT_PARTITION_COUNT
 }
 

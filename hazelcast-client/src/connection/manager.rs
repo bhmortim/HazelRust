@@ -72,8 +72,8 @@ pub struct ConnectionManager {
     config: Arc<ClientConfig>,
     discovery: Arc<dyn ClusterDiscovery>,
     connections: Arc<RwLock<HashMap<SocketAddr, Connection>>>,
-    /// Serialize HZ operations to prevent response interleaving on shared connections.
-    operation_mutex: Arc<tokio::sync::Mutex<()>>,
+    /// Invocation service for concurrent request/response routing.
+    pub invocation: Arc<super::invocation::InvocationService>,
     members: Arc<RwLock<HashMap<Uuid, Member>>>,
     partition_table: Arc<RwLock<HashMap<i32, Uuid>>>,
     partition_count: AtomicI32,
@@ -144,7 +144,7 @@ impl ConnectionManager {
             config: Arc::new(config),
             discovery: Arc::new(discovery),
             connections: Arc::new(RwLock::new(HashMap::new())),
-            operation_mutex: Arc::new(tokio::sync::Mutex::new(())),
+            invocation: Arc::new(super::invocation::InvocationService::new(invocation_timeout)),
             members: Arc::new(RwLock::new(HashMap::new())),
             partition_table: Arc::new(RwLock::new(HashMap::new())),
             partition_count: AtomicI32::new(0),
@@ -211,7 +211,7 @@ impl ConnectionManager {
             config: Arc::new(primary_config),
             discovery: Arc::new(discovery),
             connections: Arc::new(RwLock::new(HashMap::new())),
-            operation_mutex: Arc::new(tokio::sync::Mutex::new(())),
+            invocation: Arc::new(super::invocation::InvocationService::new(invocation_timeout)),
             members: Arc::new(RwLock::new(HashMap::new())),
             partition_table: Arc::new(RwLock::new(HashMap::new())),
             partition_count: AtomicI32::new(0),
@@ -458,8 +458,24 @@ impl ConnectionManager {
                         msg_type = ?response.message_type(),
                         "authentication successful"
                     );
-                    // Drain all initial server events after auth
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+                    // Parse partition count from auth response
+                    // Auth response initial frame: [16 header] [status:1] [address_holder...] [member_uuid:16] [ser_ver:1] [partition_count:4] ...
+                    // The exact offset depends on the address format
+                    // For simplicity, look for partition_count after the known fields
+                    let initial_content = &response.frames()[0].content;
+                    if initial_content.len() >= 34 {
+                        // partition_count is at offset 30 (after status + uuid + ser_ver)
+                        let pc_bytes = &initial_content[30..34];
+                        let pc = i32::from_le_bytes([pc_bytes[0], pc_bytes[1], pc_bytes[2], pc_bytes[3]]);
+                        if pc > 0 && pc < 100000 {
+                            self.partition_count.store(pc, std::sync::atomic::Ordering::Release);
+                            tracing::info!(partition_count = pc, "parsed partition count from auth response");
+                        }
+                    }
+
+                    // Drain initial server events
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     connection.drain_socket().await;
                 }
                 Ok(Ok(None)) => {
@@ -474,7 +490,12 @@ impl ConnectionManager {
             }
         }
 
-        self.connections.write().await.insert(address, connection);
+        // Register connection with InvocationService for concurrent I/O
+        let conn_addr = connection.address();
+        if let Some(tcp_stream) = connection.into_tcp_stream() {
+            self.invocation.register_connection(conn_addr, tcp_stream).await;
+            tracing::debug!(address = %conn_addr, "registered connection with invocation service");
+        }
 
         let _ = self.event_sender.send(ConnectionEvent::Connected { id, address });
         tracing::info!(id = %id, "connected to cluster member");
@@ -1056,6 +1077,27 @@ impl ConnectionManager {
         self.partition_count.load(std::sync::atomic::Ordering::Acquire)
     }
 
+    /// Invoke an operation (alias for send).
+    pub async fn invoke(&self, message: hazelcast_core::ClientMessage) -> Result<hazelcast_core::ClientMessage> {
+        self.send(message).await
+    }
+
+    /// Sends a message and returns the response (backward-compatible wrapper).
+    pub async fn send(&self, message: hazelcast_core::ClientMessage) -> Result<hazelcast_core::ClientMessage> {
+        // Route through invocation service
+        let address = match self.invocation.any_address().await {
+            Some(a) => a,
+            None => {
+                let addrs = self.connected_addresses().await;
+                addrs.into_iter().next().ok_or_else(|| {
+                    HazelcastError::Connection("no connections available".to_string())
+                })?
+            }
+        };
+        self.invocation.invoke(address, message).await
+    }
+
+
     /// Updates the partition table with a new mapping of partition IDs to owner member UUIDs.
     /// Also updates the partition count.
     pub async fn update_partition_table(&self, partitions: HashMap<i32, Uuid>) {
@@ -1108,7 +1150,8 @@ impl ConnectionManager {
     pub async fn get_connection_for_partition(&self, partition_id: i32) -> Result<SocketAddr> {
         if self.config.network().smart_routing() {
             if let Some(owner_address) = self.get_partition_owner_address(partition_id).await {
-                if self.is_connected(&owner_address).await {
+                let inv_addrs = self.invocation.addresses().await;
+                if inv_addrs.contains(&owner_address) {
                     tracing::trace!(address = %owner_address, "using partition owner connection");
                     return Ok(owner_address);
                 }
@@ -1123,8 +1166,12 @@ impl ConnectionManager {
             tracing::trace!("smart routing disabled, using any available connection");
         }
 
-        let addresses = self.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
+        let addresses = self.invocation.addresses().await;
+        if !addresses.is_empty() {
+            return Ok(addresses[0]);
+        }
+        let old_addresses = self.connected_addresses().await;
+        old_addresses.into_iter().next().ok_or_else(|| {
             HazelcastError::Connection("no connections available".to_string())
         })
     }
@@ -1179,97 +1226,29 @@ impl ConnectionManager {
     pub async fn invoke_on_partition(
         &self,
         partition_id: i32,
-        mut message: hazelcast_core::ClientMessage,
+        message: hazelcast_core::ClientMessage,
     ) -> Result<hazelcast_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(sem.acquire().await.map_err(|_| {
-                HazelcastError::Connection("client is shutting down".to_string())
+                HazelcastError::Connection("shutting down".to_string())
             })?),
             None => None,
         };
 
-        let timeout_duration = std::time::Duration::from_secs(10);
+        let address = self.get_connection_for_partition(partition_id).await?;
 
-        // Serialize operations to prevent response interleaving
-        let _op_guard = self.operation_mutex.lock().await;
+        // Ensure proxy is created for the map
+        let map_name = if message.frame_count() > 1 {
+            String::from_utf8_lossy(&message.frames()[1].content).to_string()
+        } else {
+            String::new()
+        };
+        if !map_name.is_empty() {
+            self.invocation.ensure_proxy(address, &map_name, "hz:impl:mapService").await?;
+        }
 
-        let corr_id = message.correlation_id().unwrap_or(0);
-
-        tokio::time::timeout(timeout_duration, async {
-            let address = self.get_connection_for_partition(partition_id).await?;
-            
-            // Clear any stale data in the connection before sending
-            {
-                let mut connections = self.connections.write().await;
-                if let Some(conn) = connections.get_mut(&address) {
-                    conn.clear_read_buffer();
-                }
-            }
-            
-            // Send CreateProxy to register the map proxy (required once per map per connection)
-            // Extract map name from frame 1 (the first variable-size parameter)
-            let map_name = if message.frame_count() > 1 {
-                String::from_utf8_lossy(&message.frames()[1].content).to_string()
-            } else {
-                String::new()
-            };
-            if !map_name.is_empty() {
-                use hazelcast_core::protocol::Frame;
-                use bytes::BytesMut;
-                let mut proxy_msg = hazelcast_core::ClientMessage::create_for_encode(
-                    0x000400, // CLIENT_CREATE_PROXY
-                    hazelcast_core::protocol::constants::PARTITION_ID_ANY
-                );
-                proxy_msg.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
-                let mut svc_frame = Frame::with_content(BytesMut::from(&b"hz:impl:mapService"[..]));
-                svc_frame.flags |= hazelcast_core::protocol::constants::IS_FINAL_FLAG;
-                proxy_msg.add_frame(svc_frame);
-                
-                let proxy_corr = proxy_msg.correlation_id().unwrap_or(0);
-                self.send_to(address, proxy_msg).await?;
-                // Read CreateProxy response (discard it)
-                loop {
-                    let resp = self.receive_from(address).await?
-                        .ok_or_else(|| HazelcastError::Connection("connection closed".to_string()))?;
-                    let r_corr = resp.correlation_id().unwrap_or(-1);
-                    let r_type = resp.message_type();
-                    if r_corr == proxy_corr {
-                        break;
-                    }
-                }
-            }
-
-            // Send the actual operation on the shared connection
-            self.send_to(address, message).await?;
-            
-            // Read responses until we find one matching our correlation_id
-            // Other responses (heartbeat acks, cluster events) are discarded
-            loop {
-                let resp = self.receive_from(address)
-                    .await?
-                    .ok_or_else(|| HazelcastError::Connection("connection closed".to_string()))?;
-                
-                if resp.correlation_id().unwrap_or(-1) == corr_id {
-                    return Ok(resp);
-                }
-                // Not our response � discard and try again
-                tracing::trace!(
-                    expected_corr = corr_id,
-                    got_corr = resp.correlation_id(),
-                    got_type = ?resp.message_type(),
-                    "discarding non-matching response"
-                );
-            }
-        })
-        .await
-        .map_err(|_| {
-            HazelcastError::Timeout(format!(
-                "invocation on partition {} timed out after {:?}",
-                partition_id, timeout_duration
-            ))
-        })?
+        self.invocation.invoke(address, message).await
     }
-
 
     /// Invokes a request on any available connection and returns the response.
     ///
@@ -1286,103 +1265,32 @@ impl ConnectionManager {
     ) -> Result<hazelcast_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(sem.acquire().await.map_err(|_| {
-                HazelcastError::Connection("client is shutting down".to_string())
+                HazelcastError::Connection("shutting down".to_string())
             })?),
             None => None,
         };
 
-        let timeout_duration = self.invocation_timeout;
-        let corr_id = message.correlation_id().unwrap_or(0);
-
-        tokio::time::timeout(timeout_duration, async {
-            let addresses = self.connected_addresses().await;
-            let address = addresses.into_iter().next().ok_or_else(|| {
-                HazelcastError::Connection("no connections available".to_string())
-            })?;
-
-            // Clear stale data, send CreateProxy, then send operation
-            {
-                let mut connections = self.connections.write().await;
-                if let Some(conn) = connections.get_mut(&address) {
-                    conn.clear_read_buffer();
-                }
+        let address = match self.invocation.any_address().await {
+            Some(addr) => addr,
+            None => {
+                let addrs = self.connected_addresses().await;
+                addrs.into_iter().next().ok_or_else(|| {
+                    HazelcastError::Connection("no connections available".to_string())
+                })?
             }
+        };
 
-            // CreateProxy for the map (if applicable)
-            let map_name = if message.frame_count() > 1 {
-                String::from_utf8_lossy(&message.frames()[1].content).to_string()
-            } else {
-                String::new()
-            };
-            if !map_name.is_empty() {
-                use hazelcast_core::protocol::Frame;
-                use bytes::BytesMut;
-                let mut proxy_msg = hazelcast_core::ClientMessage::create_for_encode(
-                    0x000400, hazelcast_core::protocol::constants::PARTITION_ID_ANY
-                );
-                proxy_msg.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
-                let mut svc = Frame::with_content(BytesMut::from(&b"hz:impl:mapService"[..]));
-                svc.flags |= hazelcast_core::protocol::constants::IS_FINAL_FLAG;
-                proxy_msg.add_frame(svc);
-                let pc = proxy_msg.correlation_id().unwrap_or(0);
-                self.send_to(address, proxy_msg).await?;
-                loop {
-                    let r = self.receive_from(address).await?
-                        .ok_or_else(|| HazelcastError::Connection("closed".to_string()))?;
-                    if r.correlation_id().unwrap_or(-1) == pc { break; }
-                }
-            }
-
-            self.send_to(address, message).await?;
-            loop {
-                let resp = self.receive_from(address).await?
-                    .ok_or_else(|| HazelcastError::Connection("closed".to_string()))?;
-                if resp.correlation_id().unwrap_or(-1) == corr_id {
-                    return Ok(resp);
-                }
-            }
-        })
-        .await
-        .map_err(|_| {
-            HazelcastError::Timeout(format!("random invocation timed out after {:?}", timeout_duration))
-        })?
-    }
-
-
-    /// Sends a request and returns the response, automatically routing based on partition ID.
-    ///
-    /// If the message has a specific partition ID, it is routed to the partition owner.
-    /// Otherwise, it is sent to any available connection.
-    #[instrument(
-        name = "connection_manager.send",
-        skip(self, message),
-        level = "debug"
-    )]
-    pub async fn send(
-        &self,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
-        let partition_id = message.partition_id().unwrap_or(hazelcast_core::protocol::constants::PARTITION_ID_ANY);
-        if partition_id >= 0 {
-            self.invoke_on_partition(partition_id, message).await
+        // Ensure proxy is created for the map
+        let map_name = if message.frame_count() > 1 {
+            String::from_utf8_lossy(&message.frames()[1].content).to_string()
         } else {
-            self.invoke_on_random(message).await
+            String::new()
+        };
+        if !map_name.is_empty() {
+            self.invocation.ensure_proxy(address, &map_name, "hz:impl:mapService").await?;
         }
-    }
 
-    /// Invokes a request and returns the response, automatically routing based on partition ID.
-    ///
-    /// This is an alias for `send` for code that prefers the "invoke" terminology.
-    #[instrument(
-        name = "connection_manager.invoke",
-        skip(self, message),
-        level = "debug"
-    )]
-    pub async fn invoke(
-        &self,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
-        self.send(message).await
+        self.invocation.invoke(address, message).await
     }
 
     /// Invokes a request on a specific partition with automatic retry for retryable errors.

@@ -127,6 +127,16 @@ impl Connection {
         self.id
     }
 
+    /// Takes ownership of the underlying TCP stream.
+    /// The Connection becomes unusable after this.
+    pub fn into_tcp_stream(self) -> Option<tokio::net::TcpStream> {
+        match self.stream {
+            ConnectionStream::Plain(stream) => Some(stream),
+            #[cfg(feature = "tls")]
+            ConnectionStream::Tls(_) => None, // Can't extract from TLS
+        }
+    }
+
     /// Returns the remote address of this connection.
     pub fn address(&self) -> SocketAddr {
         self.address
