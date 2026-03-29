@@ -454,6 +454,9 @@ impl ConnectionManager {
                         msg_type = ?response.message_type(),
                         "authentication successful"
                     );
+                    // Drain all initial server events after auth
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    connection.drain_socket().await;
                 }
                 Ok(Ok(None)) => {
                     tracing::warn!(address = %address, "connection closed during authentication");
