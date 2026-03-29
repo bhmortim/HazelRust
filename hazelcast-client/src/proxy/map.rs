@@ -2299,6 +2299,10 @@ where
 
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
+        // Write Hazelcast type ID header for built-in types
+        // For String: type_id = -11 (0xFFFFFFF5 in BE i32)
+        // The type_id tells the Java server which deserializer to use
+        use hazelcast_core::serialization::DataOutput; output.write_int(-11)?; // TYPE_STRING = -11
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }
