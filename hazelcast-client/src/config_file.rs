@@ -71,6 +71,9 @@ pub struct FileConfig {
     /// Maximum concurrent invocations (0 = unlimited, default).
     /// Note: Java client defaults to 2^23; Rust defaults to 0 (unlimited/opt-in).
     pub max_concurrent_invocations: Option<usize>,
+    /// Number of data connections per cluster member (default: 1).
+    /// Higher values reduce write-Mutex contention under concurrent load.
+    pub connection_pool_size: Option<usize>,
     /// Whether to retry non-idempotent operations on connection failure.
     pub redo_operation: Option<bool>,
     /// Number of retry attempts for retryable operations.
@@ -237,6 +240,10 @@ impl TryFrom<FileConfig> for ClientConfig {
 
         if let Some(max) = file.max_concurrent_invocations {
             builder = builder.max_concurrent_invocations(max);
+        }
+
+        if let Some(size) = file.connection_pool_size {
+            builder = builder.connection_pool_size(size);
         }
 
         if let Some(redo) = file.redo_operation {

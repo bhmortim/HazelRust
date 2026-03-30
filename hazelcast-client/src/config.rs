@@ -410,6 +410,8 @@ const DEFAULT_INVOCATION_TIMEOUT: Duration = Duration::from_secs(120);
 /// Note: The Java client defaults to 2^23 (8,388,608). In Rust, we default to 0
 /// (unlimited) since back-pressure is opt-in. Set a non-zero value to enable.
 const DEFAULT_MAX_CONCURRENT_INVOCATIONS: usize = 0;
+/// Default number of data connections per cluster member.
+const DEFAULT_CONNECTION_POOL_SIZE: usize = 1;
 /// Default invocation retry count for retryable operations.
 const DEFAULT_INVOCATION_RETRY_COUNT: u32 = 3;
 /// Default pause between invocation retries (matches Java client's `invocation.retry.pause.millis`).
@@ -2441,6 +2443,7 @@ pub struct ClientConfig {
     user_code_deployment: Option<UserCodeDeploymentConfig>,
     invocation_timeout: Duration,
     max_concurrent_invocations: usize,
+    connection_pool_size: usize,
     redo_operation: bool,
     invocation_retry_count: u32,
     invocation_retry_pause: Duration,
@@ -2537,6 +2540,14 @@ impl ClientConfig {
     /// overloading the cluster. Returns 0 for unlimited (default).
     pub fn max_concurrent_invocations(&self) -> usize {
         self.max_concurrent_invocations
+    }
+
+    /// Returns the number of data connections to open per cluster member.
+    ///
+    /// Higher values reduce write-Mutex contention under concurrent load.
+    /// Default is 1. Recommended: 4-8 for high-throughput workloads.
+    pub fn connection_pool_size(&self) -> usize {
+        self.connection_pool_size.max(1)
     }
 
     /// Returns whether redo operation is enabled.
@@ -2689,6 +2700,7 @@ pub struct ClientConfigBuilder {
     user_code_deployment: Option<UserCodeDeploymentConfig>,
     invocation_timeout: Option<Duration>,
     max_concurrent_invocations: Option<usize>,
+    connection_pool_size: Option<usize>,
     redo_operation: Option<bool>,
     invocation_retry_count: Option<u32>,
     invocation_retry_pause: Option<Duration>,
@@ -2948,6 +2960,16 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the number of data connections per cluster member.
+    ///
+    /// Higher values reduce write-Mutex contention under concurrent load.
+    /// Default: 1. Recommended: 4-8 for high-throughput workloads.
+    /// Clamped to a minimum of 1 and maximum of 32.
+    pub fn connection_pool_size(mut self, size: usize) -> Self {
+        self.connection_pool_size = Some(size.clamp(1, 32));
+        self
+    }
+
     /// Enables or disables redo operation.
     ///
     /// When enabled, even non-idempotent operations (like `put`, `remove`) will be
@@ -3030,6 +3052,7 @@ impl ClientConfigBuilder {
             user_code_deployment: self.user_code_deployment,
             invocation_timeout: self.invocation_timeout.unwrap_or(DEFAULT_INVOCATION_TIMEOUT),
             max_concurrent_invocations: self.max_concurrent_invocations.unwrap_or(DEFAULT_MAX_CONCURRENT_INVOCATIONS),
+            connection_pool_size: self.connection_pool_size.unwrap_or(DEFAULT_CONNECTION_POOL_SIZE),
             redo_operation: self.redo_operation.unwrap_or(false),
             invocation_retry_count: self.invocation_retry_count.unwrap_or(DEFAULT_INVOCATION_RETRY_COUNT),
             invocation_retry_pause: self.invocation_retry_pause.unwrap_or(DEFAULT_INVOCATION_RETRY_PAUSE),

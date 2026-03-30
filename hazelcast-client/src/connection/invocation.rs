@@ -3,9 +3,13 @@
 //! Manages pending operations with correlation-based response routing.
 //! Each connection has a background reader task that routes incoming
 //! messages to the correct waiter by correlation_id.
+//!
+//! Supports connection pooling: multiple data connections per member
+//! to reduce write-Mutex contention under high concurrency.
 
 use std::collections::HashSet;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,14 +24,60 @@ use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
 use hazelcast_core::{HazelcastError, Result};
 use tokio_util::codec::Decoder;
 
+/// A pool of write connections to a single cluster member.
+struct ConnectionPool {
+    /// Write halves of the pooled connections.
+    writers: Vec<Arc<Mutex<OwnedWriteHalf>>>,
+    /// Round-robin counter for selecting the next connection.
+    next: AtomicUsize,
+}
+
+impl ConnectionPool {
+    /// Create a pool with a single connection.
+    fn new(writer: Arc<Mutex<OwnedWriteHalf>>) -> Self {
+        Self {
+            writers: vec![writer],
+            next: AtomicUsize::new(0),
+        }
+    }
+
+    /// Add a connection to the pool.
+    fn add(&mut self, writer: Arc<Mutex<OwnedWriteHalf>>) {
+        self.writers.push(writer);
+    }
+
+    /// Select the next writer via round-robin.
+    fn select(&self) -> &Arc<Mutex<OwnedWriteHalf>> {
+        let idx = self.next.fetch_add(1, Ordering::Relaxed) % self.writers.len();
+        &self.writers[idx]
+    }
+
+    /// Number of connections in the pool.
+    fn size(&self) -> usize {
+        self.writers.len()
+    }
+}
+
+impl std::fmt::Debug for ConnectionPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionPool")
+            .field("size", &self.writers.len())
+            .finish()
+    }
+}
+
 /// Manages concurrent invocations across Hazelcast connections.
 ///
 /// Uses split TCP connections: write halves are protected by per-connection
 /// mutexes, read halves run in background tasks that route responses to
 /// pending operations by correlation_id.
+///
+/// With connection pooling enabled (pool_size > 1), multiple write
+/// connections are opened per member, reducing Mutex contention under
+/// concurrent load.
 pub struct InvocationService {
-    /// Per-connection write halves.
-    writers: RwLock<std::collections::HashMap<SocketAddr, Arc<Mutex<OwnedWriteHalf>>>>,
+    /// Per-member connection pools (each pool has 1..N write halves).
+    pools: RwLock<std::collections::HashMap<SocketAddr, ConnectionPool>>,
     /// Pending operation waiters keyed by correlation_id.
     pending_ops: Arc<DashMap<i64, oneshot::Sender<ClientMessage>>>,
     /// Set of map names for which CreateProxy has been sent.
@@ -50,7 +100,7 @@ impl InvocationService {
     /// Create a new invocation service.
     pub fn new(timeout: Duration) -> Self {
         Self {
-            writers: RwLock::new(std::collections::HashMap::new()),
+            pools: RwLock::new(std::collections::HashMap::new()),
             pending_ops: Arc::new(DashMap::new()),
             created_proxies: RwLock::new(HashSet::new()),
             timeout,
@@ -60,6 +110,9 @@ impl InvocationService {
 
     /// Register a connection by splitting the TCP stream into read/write halves.
     /// The read half is moved to a background task that routes responses.
+    ///
+    /// If a pool already exists for this address, the connection is added to
+    /// the existing pool. Otherwise a new pool is created.
     pub async fn register_connection(
         &self,
         address: SocketAddr,
@@ -68,8 +121,21 @@ impl InvocationService {
         let (read_half, write_half) = stream.into_split();
         let write = Arc::new(Mutex::new(write_half));
 
-        // Store writer
-        self.writers.write().await.insert(address, write);
+        // Add writer to pool (create pool if first connection for this address)
+        {
+            let mut pools = self.pools.write().await;
+            if let Some(pool) = pools.get_mut(&address) {
+                pool.add(write);
+                tracing::info!(
+                    address = %address,
+                    pool_size = pool.size(),
+                    "added connection to pool"
+                );
+            } else {
+                let pool = ConnectionPool::new(write);
+                pools.insert(address, pool);
+            }
+        }
 
         // Spawn background reader
         let pending = Arc::clone(&self.pending_ops);
@@ -165,15 +231,20 @@ impl InvocationService {
     }
 
     /// Send a message without waiting for a response.
+    ///
+    /// Uses round-robin selection across pooled connections to reduce
+    /// contention on any single write Mutex.
     async fn send_raw(
         &self,
         address: SocketAddr,
         message: &mut ClientMessage,
     ) -> Result<()> {
-        let writers = self.writers.read().await;
-        let writer = writers.get(&address).ok_or_else(|| {
+        let pools = self.pools.read().await;
+        let pool = pools.get(&address).ok_or_else(|| {
             HazelcastError::Connection(format!("no connection to {}", address))
         })?;
+
+        let writer = pool.select();
 
         let mut buf = BytesMut::with_capacity(256);
         message.write_to(&mut buf);
@@ -219,11 +290,11 @@ impl InvocationService {
 
     /// Get any available writer address.
     pub async fn any_address(&self) -> Option<SocketAddr> {
-        self.writers.read().await.keys().next().copied()
+        self.pools.read().await.keys().next().copied()
     }
 
     /// Get all connected addresses.
     pub async fn addresses(&self) -> Vec<SocketAddr> {
-        self.writers.read().await.keys().copied().collect()
+        self.pools.read().await.keys().copied().collect()
     }
 }

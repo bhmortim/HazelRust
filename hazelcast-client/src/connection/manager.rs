@@ -493,27 +493,47 @@ impl ConnectionManager {
         // Store auth connection for heartbeats and metadata
         self.connections.write().await.insert(address, connection);
 
-        // Create a SECOND connection for InvocationService (data operations)
-        match self.create_connection(address).await {
-            Ok(mut inv_conn) => {
-                // Authenticate the invocation connection
-                self.authenticate_connection_inline(&mut inv_conn, address).await;
-                // Wait for all cluster events to arrive, then drain them
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                inv_conn.drain_socket().await;
-                // Second drain to catch any stragglers
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                inv_conn.drain_socket().await;
-                // Hand off to InvocationService
-                if let Some(tcp_stream) = inv_conn.into_tcp_stream() {
-                    self.invocation.register_connection(address, tcp_stream).await;
-                    tracing::info!(address = %address, "registered invocation connection");
+        // Create data connections for InvocationService (connection pool)
+        let pool_size = self.config.connection_pool_size();
+        let mut registered = 0usize;
+        for pool_idx in 0..pool_size {
+            match self.create_connection(address).await {
+                Ok(mut inv_conn) => {
+                    // Authenticate the invocation connection
+                    self.authenticate_connection_inline(&mut inv_conn, address).await;
+                    // Wait for cluster events to arrive, then drain them
+                    // Only do the full drain on the first connection; subsequent ones
+                    // use a shorter drain since cluster events are already consumed.
+                    if pool_idx == 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        inv_conn.drain_socket().await;
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    } else {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    inv_conn.drain_socket().await;
+                    // Hand off to InvocationService
+                    if let Some(tcp_stream) = inv_conn.into_tcp_stream() {
+                        self.invocation.register_connection(address, tcp_stream).await;
+                        registered += 1;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        address = %address,
+                        pool_idx = pool_idx,
+                        error = %e,
+                        "failed to create pool connection"
+                    );
                 }
             }
-            Err(e) => {
-                tracing::warn!(address = %address, error = %e, "failed to create invocation connection");
-            }
         }
+        tracing::info!(
+            address = %address,
+            pool_size = registered,
+            requested = pool_size,
+            "registered invocation connection pool"
+        );
 
         let _ = self.event_sender.send(ConnectionEvent::Connected { id, address });
         tracing::info!(id = %id, "connected to cluster member");
