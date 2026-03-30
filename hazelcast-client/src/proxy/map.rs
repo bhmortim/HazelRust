@@ -3147,7 +3147,11 @@ where
                 continue;
             }
 
-            let mut input = ObjectDataInput::new(&frame.content);
+            // Skip 8-byte Data header (partition_hash + type_id)
+            if frame.content.len() < 8 {
+                continue;
+            }
+            let mut input = ObjectDataInput::new(&frame.content[8..]);
             if let Ok(value) = T::deserialize(&mut input) {
                 values.push(value);
             }
@@ -3164,12 +3168,37 @@ where
         let frames = response.frames();
         let mut entries = Vec::new();
 
+        tracing::debug!(
+            total_frames = frames.len(),
+            "decode_entries_response: inspecting response"
+        );
+
+        // Log all frames for debugging
+        for (idx, f) in frames.iter().enumerate() {
+            tracing::debug!(
+                frame_idx = idx,
+                flags = format!("0x{:04x}", f.flags),
+                content_len = f.content.len(),
+                content_hex = if f.content.len() <= 32 {
+                    format!("{:02x?}", &f.content[..])
+                } else {
+                    format!("{:02x?}...", &f.content[..32])
+                },
+                "frame detail"
+            );
+        }
+
         // Skip initial frame, pairs of frames are key/value
         let data_frames: Vec<_> = frames
             .iter()
             .skip(1)
             .filter(|f| f.flags & IS_NULL_FLAG == 0 && !f.content.is_empty())
             .collect();
+
+        tracing::debug!(
+            data_frames_count = data_frames.len(),
+            "decode_entries_response: filtered data frames"
+        );
 
         let mut i = 0;
         while i + 1 < data_frames.len() {
@@ -3180,15 +3209,37 @@ where
                 break;
             }
 
-            let mut key_input = ObjectDataInput::new(&key_frame.content);
-            let mut value_input = ObjectDataInput::new(&value_frame.content);
+            // Skip 8-byte Data header (partition_hash + type_id) in each frame
+            if key_frame.content.len() < 8 || value_frame.content.len() < 8 {
+                i += 2;
+                continue;
+            }
+            let mut key_input = ObjectDataInput::new(&key_frame.content[8..]);
+            let mut value_input = ObjectDataInput::new(&value_frame.content[8..]);
 
-            if let (Ok(key), Ok(value)) = (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
-                entries.push((key, value));
+            match (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
+                (Ok(key), Ok(value)) => {
+                    entries.push((key, value));
+                }
+                (k_result, v_result) => {
+                    tracing::warn!(
+                        frame_idx = i,
+                        key_ok = k_result.is_ok(),
+                        val_ok = v_result.is_ok(),
+                        key_frame_len = key_frame.content.len(),
+                        val_frame_len = value_frame.content.len(),
+                        "decode_entries_response: failed to deserialize entry"
+                    );
+                }
             }
 
             i += 2;
         }
+
+        tracing::debug!(
+            decoded_entries = entries.len(),
+            "decode_entries_response: done"
+        );
 
         Ok(entries)
     }

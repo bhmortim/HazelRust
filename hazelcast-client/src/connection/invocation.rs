@@ -77,7 +77,9 @@ impl std::fmt::Debug for ConnectionPool {
 /// concurrent load.
 pub struct InvocationService {
     /// Per-member connection pools (each pool has 1..N write halves).
-    pools: RwLock<std::collections::HashMap<SocketAddr, ConnectionPool>>,
+    /// Uses DashMap for lock-free reads on the hot path — `send_raw()`
+    /// only needs a per-shard read lock instead of a global RwLock.
+    pools: DashMap<SocketAddr, ConnectionPool>,
     /// Pending operation waiters keyed by correlation_id.
     pending_ops: Arc<DashMap<i64, oneshot::Sender<ClientMessage>>>,
     /// Set of map names for which CreateProxy has been sent.
@@ -100,7 +102,7 @@ impl InvocationService {
     /// Create a new invocation service.
     pub fn new(timeout: Duration) -> Self {
         Self {
-            pools: RwLock::new(std::collections::HashMap::new()),
+            pools: DashMap::new(),
             pending_ops: Arc::new(DashMap::new()),
             created_proxies: RwLock::new(HashSet::new()),
             timeout,
@@ -122,18 +124,18 @@ impl InvocationService {
         let write = Arc::new(Mutex::new(write_half));
 
         // Add writer to pool (create pool if first connection for this address)
-        {
-            let mut pools = self.pools.write().await;
-            if let Some(pool) = pools.get_mut(&address) {
+        match self.pools.entry(address) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                let pool = entry.get_mut();
                 pool.add(write);
                 tracing::info!(
                     address = %address,
                     pool_size = pool.size(),
                     "added connection to pool"
                 );
-            } else {
-                let pool = ConnectionPool::new(write);
-                pools.insert(address, pool);
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(ConnectionPool::new(write));
             }
         }
 
@@ -239,12 +241,12 @@ impl InvocationService {
         address: SocketAddr,
         message: &mut ClientMessage,
     ) -> Result<()> {
-        let pools = self.pools.read().await;
-        let pool = pools.get(&address).ok_or_else(|| {
+        let pool_ref = self.pools.get(&address).ok_or_else(|| {
             HazelcastError::Connection(format!("no connection to {}", address))
         })?;
 
-        let writer = pool.select();
+        let writer = pool_ref.select().clone();
+        drop(pool_ref); // Release DashMap shard lock before awaiting
 
         let mut buf = BytesMut::with_capacity(256);
         message.write_to(&mut buf);
@@ -289,12 +291,12 @@ impl InvocationService {
     }
 
     /// Get any available writer address.
-    pub async fn any_address(&self) -> Option<SocketAddr> {
-        self.pools.read().await.keys().next().copied()
+    pub fn any_address(&self) -> Option<SocketAddr> {
+        self.pools.iter().next().map(|entry| *entry.key())
     }
 
     /// Get all connected addresses.
-    pub async fn addresses(&self) -> Vec<SocketAddr> {
-        self.pools.read().await.keys().copied().collect()
+    pub fn addresses(&self) -> Vec<SocketAddr> {
+        self.pools.iter().map(|entry| *entry.key()).collect()
     }
 }

@@ -1123,7 +1123,7 @@ impl ConnectionManager {
     /// Sends a message and returns the response (backward-compatible wrapper).
     pub async fn send(&self, message: hazelcast_core::ClientMessage) -> Result<hazelcast_core::ClientMessage> {
         // Route through invocation service
-        let address = match self.invocation.any_address().await {
+        let address = match self.invocation.any_address() {
             Some(a) => a,
             None => {
                 let addrs = self.connected_addresses().await;
@@ -1188,7 +1188,7 @@ impl ConnectionManager {
     pub async fn get_connection_for_partition(&self, partition_id: i32) -> Result<SocketAddr> {
         if self.config.network().smart_routing() {
             if let Some(owner_address) = self.get_partition_owner_address(partition_id).await {
-                let inv_addrs = self.invocation.addresses().await;
+                let inv_addrs = self.invocation.addresses();
                 if inv_addrs.contains(&owner_address) {
                     tracing::trace!(address = %owner_address, "using partition owner connection");
                     return Ok(owner_address);
@@ -1204,7 +1204,7 @@ impl ConnectionManager {
             tracing::trace!("smart routing disabled, using any available connection");
         }
 
-        let addresses = self.invocation.addresses().await;
+        let addresses = self.invocation.addresses();
         if !addresses.is_empty() {
             return Ok(addresses[0]);
         }
@@ -1308,7 +1308,7 @@ impl ConnectionManager {
             None => None,
         };
 
-        let address = match self.invocation.any_address().await {
+        let address = match self.invocation.any_address() {
             Some(addr) => addr,
             None => {
                 let addrs = self.connected_addresses().await;
