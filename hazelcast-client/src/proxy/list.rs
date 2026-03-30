@@ -1,7 +1,6 @@
 //! Distributed list proxy implementation.
 
 use std::marker::PhantomData;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::BytesMut;
@@ -363,20 +362,7 @@ where
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
-
-        self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
-    }
-
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        self.connection_manager.invoke_on_random(message).await
     }
 
     fn decode_nullable_response<V: Deserializable>(response: &ClientMessage) -> Result<Option<V>> {

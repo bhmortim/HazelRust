@@ -318,7 +318,7 @@ where
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
 
-        let address = self.get_connection_address().await?;
+        let _address = self.get_connection_address().await?;
 
         for message in messages {
             let message_data = Self::serialize_value(&message)?;
@@ -327,13 +327,7 @@ where
             msg.add_frame(Self::string_frame(&self.name));
             msg.add_frame(Self::data_frame(&message_data));
 
-            self.connection_manager.send_to(address, msg).await?;
-            self.connection_manager
-                .receive_from(address)
-                .await?
-                .ok_or_else(|| {
-                    HazelcastError::Connection("connection closed unexpectedly".to_string())
-                })?;
+            self.connection_manager.invoke_on_random(msg).await?;
         }
 
         Ok(())
@@ -511,13 +505,9 @@ where
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
+        let _address = self.get_connection_address().await?;
 
-        self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+        self.connection_manager.invoke_on_random(message).await
     }
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {

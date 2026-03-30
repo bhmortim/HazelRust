@@ -254,12 +254,8 @@ where
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
-        self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+        let _address = self.get_connection_address().await?;
+        self.connection_manager.invoke_on_random(message).await
     }
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {

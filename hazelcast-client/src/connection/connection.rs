@@ -387,7 +387,7 @@ impl Connection {
     }
 
     /// Sends a message over this connection.
-    pub async fn send(&mut self, mut message: ClientMessage) -> Result<()> {
+    pub async fn send(&mut self, message: ClientMessage) -> Result<()> {
         let msg_type = message.message_type();
         let frame_count = message.frame_count();
 
