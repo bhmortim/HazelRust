@@ -490,11 +490,26 @@ impl ConnectionManager {
             }
         }
 
-        // Register connection with InvocationService for concurrent I/O
-        let conn_addr = connection.address();
-        if let Some(tcp_stream) = connection.into_tcp_stream() {
-            self.invocation.register_connection(conn_addr, tcp_stream).await;
-            tracing::debug!(address = %conn_addr, "registered connection with invocation service");
+        // Store auth connection for heartbeats and metadata
+        self.connections.write().await.insert(address, connection);
+
+        // Create a SECOND connection for InvocationService (data operations)
+        match self.create_connection(address).await {
+            Ok(mut inv_conn) => {
+                // Authenticate the invocation connection
+                self.authenticate_connection_inline(&mut inv_conn, address).await;
+                // Drain any cluster events after auth
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                inv_conn.drain_socket().await;
+                // Hand off to InvocationService
+                if let Some(tcp_stream) = inv_conn.into_tcp_stream() {
+                    self.invocation.register_connection(address, tcp_stream).await;
+                    tracing::info!(address = %address, "registered invocation connection");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(address = %address, error = %e, "failed to create invocation connection");
+            }
         }
 
         let _ = self.event_sender.send(ConnectionEvent::Connected { id, address });
@@ -1417,6 +1432,63 @@ impl ConnectionManager {
         })?;
 
         connection.receive().await
+    }
+
+
+    /// Authenticates a connection inline (for invocation connections).
+    async fn authenticate_connection_inline(&self, connection: &mut Connection, address: SocketAddr) {
+        use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
+        use hazelcast_core::protocol::Frame;
+        use bytes::{BytesMut, BufMut};
+
+        let cluster_name = self.config.cluster_name().to_string();
+        let client_uuid = uuid::Uuid::new_v4();
+
+        let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
+            CLIENT_AUTHENTICATION, PARTITION_ID_ANY
+        );
+
+        if let Some(initial_frame) = auth_msg.frames_mut().first_mut() {
+            let (hi, lo) = client_uuid.as_u64_pair();
+            initial_frame.content.put_u64_le(hi);
+            initial_frame.content.put_u64_le(lo);
+            initial_frame.content.put_u8(0xA8);
+            initial_frame.content.put_u8(1);
+            initial_frame.content.put_u8(0);
+            initial_frame.content.put_u8(0);
+            initial_frame.flags = 0xC100;
+        }
+
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
+        auth_msg.add_frame(Frame::new_null_frame());
+        auth_msg.add_frame(Frame::new_null_frame());
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+        auth_msg.add_frame(Frame::with_flags(0x1000));
+        auth_msg.add_frame(Frame::with_flags(0x2800));
+
+        let mut wire_buf = BytesMut::with_capacity(256);
+        for frame in auth_msg.frames() {
+            frame.write_to(&mut wire_buf);
+        }
+
+        if let Err(e) = connection.send_raw_bytes(&wire_buf).await {
+            tracing::warn!(address = %address, error = %e, "invocation auth send failed");
+            return;
+        }
+
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            connection.receive()
+        ).await {
+            Ok(Ok(Some(_))) => {
+                tracing::debug!(address = %address, "invocation connection authenticated");
+            }
+            _ => {
+                tracing::warn!(address = %address, "invocation auth response failed");
+            }
+        }
     }
 
     fn spawn_heartbeat_task(&self) {
