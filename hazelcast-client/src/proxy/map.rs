@@ -1672,6 +1672,181 @@ where
         Ok(results)
     }
 
+    /// Retrieves values for multiple keys, grouped by partition for optimal routing.
+    ///
+    /// Unlike `get_all()` which sends all keys to a random member (requiring
+    /// server-side fan-out), this method groups keys by partition and dispatches
+    /// one batch RPC per partition in parallel. Each RPC goes directly to the
+    /// partition owner, eliminating cross-member traffic.
+    ///
+    /// For MGET(100 keys) across 3 nodes: instead of 1 RPC → fan-out,
+    /// this sends ~3 parallel RPCs directly to owners.
+    ///
+    /// Returns results in the same order as the input keys (None for missing keys).
+    pub async fn get_all_partitioned(&self, keys: &[K]) -> Result<Vec<Option<V>>>
+    where
+        K: Clone + Eq + Hash,
+    {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Step 1: Serialize keys, check near-cache, group remaining by partition
+        let mut results: Vec<Option<V>> = (0..keys.len()).map(|_| None).collect();
+        // Maps partition_id -> Vec<(original_index, serialized_key_data)>
+        let mut partition_groups: HashMap<i32, Vec<(usize, Vec<u8>)>> = HashMap::new();
+
+        for (idx, key) in keys.iter().enumerate() {
+            let key_data = Self::serialize_value(key)?;
+
+            // Check near-cache first
+            if let Some(ref cache) = self.near_cache {
+                let mut cache_guard = cache.lock().unwrap();
+                if let Some(value_data) = cache_guard.get(&key_data) {
+                    let mut input = ObjectDataInput::new(&value_data);
+                    if let Ok(value) = V::deserialize(&mut input) {
+                        results[idx] = Some(value);
+                        continue;
+                    }
+                }
+            }
+
+            let partition_id = self.partition_index_dynamic(&key_data);
+            partition_groups.entry(partition_id)
+                .or_insert_with(Vec::new)
+                .push((idx, key_data));
+        }
+
+        if partition_groups.is_empty() {
+            return Ok(results); // All hits from near-cache
+        }
+
+        // Step 2: Dispatch one MAP_GET_ALL per partition in parallel
+        let mut handles = Vec::with_capacity(partition_groups.len());
+        for (partition_id, key_entries) in partition_groups {
+            let conn_mgr = self.connection_manager.clone();
+            let map_name = self.name.clone();
+            handles.push(spawn(async move {
+                let mut message = ClientMessage::create_for_encode(MAP_GET_ALL, partition_id);
+                message.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
+                message.add_frame({
+                    let mut buf = BytesMut::with_capacity(4);
+                    buf.extend_from_slice(&(key_entries.len() as i32).to_le_bytes());
+                    Frame::with_content(buf)
+                });
+                for (_, ref kd) in &key_entries {
+                    message.add_frame(Frame::with_content(BytesMut::from(kd.as_slice())));
+                }
+                let response = conn_mgr.invoke_on_partition_with_retry(partition_id, message, true).await?;
+                Ok::<_, HazelcastError>((key_entries, response))
+            }));
+        }
+
+        // Step 3: Collect results, preserving original key order
+        for handle in handles {
+            let (key_entries, response) = handle.await.map_err(|e| {
+                HazelcastError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()).into())
+            })??;
+
+            let fetched: Vec<(K, V)> = Self::decode_entries_response(&response)?;
+            // Build lookup from serialized key data to value
+            let mut value_map: HashMap<Vec<u8>, V> = HashMap::new();
+            for (key, value) in fetched {
+                let kd = Self::serialize_value(&key)?;
+                value_map.insert(kd, value);
+            }
+
+            for (idx, key_data) in key_entries {
+                if let Some(value) = value_map.remove(&key_data) {
+                    // Populate near-cache
+                    if let Some(ref cache) = self.near_cache {
+                        let value_data = Self::serialize_value(&value)?;
+                        let mut cache_guard = cache.lock().unwrap();
+                        cache_guard.put(key_data, value_data);
+                    }
+                    results[idx] = Some(value);
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Puts all entries, grouped by partition for optimal routing.
+    ///
+    /// Unlike `put_all()` which sends all entries to a random member (requiring
+    /// server-side redistribution), this method groups entries by key partition
+    /// and dispatches one batch RPC per partition in parallel. Each RPC goes
+    /// directly to the partition owner.
+    ///
+    /// For MSET(10 keys) across 3 nodes: instead of 1 RPC → redistribution,
+    /// this sends ~3 parallel RPCs directly to owners.
+    pub async fn put_all_partitioned(&self, entries: Vec<(K, V)>) -> Result<()>
+    where
+        K: Clone,
+    {
+        self.check_permission(PermissionAction::Put)?;
+        self.check_quorum(false).await?;
+
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        // Step 1: Serialize and group by partition
+        // Maps partition_id -> Vec<(serialized_key, serialized_value)>
+        let mut partition_groups: HashMap<i32, Vec<(Vec<u8>, Vec<u8>)>> = HashMap::new();
+
+        for (key, value) in &entries {
+            let key_data = Self::serialize_value(key)?;
+            let value_data = Self::serialize_value(value)?;
+
+            // Invalidate near-cache
+            if let Some(ref cache) = self.near_cache {
+                let mut cache_guard = cache.lock().unwrap();
+                cache_guard.invalidate(&key_data);
+            }
+
+            let partition_id = self.partition_index_dynamic(&key_data);
+            partition_groups.entry(partition_id)
+                .or_insert_with(Vec::new)
+                .push((key_data, value_data));
+        }
+
+        // Step 2: Dispatch one MAP_PUT_ALL per partition in parallel
+        let mut handles = Vec::with_capacity(partition_groups.len());
+        for (partition_id, group_entries) in partition_groups {
+            let conn_mgr = self.connection_manager.clone();
+            let map_name = self.name.clone();
+            handles.push(spawn(async move {
+                let mut message = ClientMessage::create_for_encode(MAP_PUT_ALL, partition_id);
+                message.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
+                message.add_frame({
+                    let mut buf = BytesMut::with_capacity(4);
+                    buf.extend_from_slice(&(group_entries.len() as i32).to_le_bytes());
+                    Frame::with_content(buf)
+                });
+                for (kd, vd) in &group_entries {
+                    message.add_frame(Frame::with_content(BytesMut::from(kd.as_slice())));
+                    message.add_frame(Frame::with_content(BytesMut::from(vd.as_slice())));
+                }
+                conn_mgr.invoke_on_partition_with_retry(partition_id, message, false).await?;
+                Ok::<_, HazelcastError>(())
+            }));
+        }
+
+        // Step 3: Wait for all partitions to complete
+        for handle in handles {
+            handle.await.map_err(|e| {
+                HazelcastError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()).into())
+            })??;
+        }
+
+        Ok(())
+    }
+
     /// Removes all entries with the given keys from this map.
     ///
     /// This is a convenience method that removes each key. Unlike `remove`,
