@@ -549,9 +549,12 @@ pub struct IMap<K, V> {
 
 impl<K, V> IMap<K, V> {
     /// Compute partition index using dynamic partition count from the cluster.
+    /// Important: hash only bytes[4:] (skip the 4-byte data type header)
+    /// to match Java's HeapData.getPartitionHash() behavior.
     fn partition_index_dynamic(&self, key_data: &[u8]) -> i32 {
         let count = self.connection_manager.partition_count();
-        partition_index_with_count(key_data, count)
+        let hash_input = if key_data.len() > 4 { &key_data[4..] } else { key_data };
+        partition_index_with_count(hash_input, count)
     }
 
     /// Creates a new map proxy.
