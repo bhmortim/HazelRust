@@ -31,6 +31,7 @@ fn partition_index(key_data: &[u8]) -> i32 {
 }
 
 use hazelcast_core::protocol::constants::{
+    BEGIN_DATA_STRUCTURE_FLAG, END_DATA_STRUCTURE_FLAG,
     END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER,
     MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_ADD_INTERCEPTOR, MAP_AGGREGATE,
     MAP_AGGREGATE_WITH_PREDICATE, MAP_ADD_PARTITION_LOST_LISTENER, MAP_CLEAR, MAP_CONTAINS_KEY,
@@ -1650,12 +1651,12 @@ where
 
         let mut message = ClientMessage::create_for_encode(MAP_GET_ALL, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
-        // Keys encoded as a list: BEGIN frame, key data frames, END frame
-        message.add_frame(Frame::new_begin_frame_empty());
+        // Keys encoded as a list: BEGIN_DATA_STRUCTURE, key data frames, END_DATA_STRUCTURE
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         for key_data in &keys_to_fetch {
             message.add_frame(Self::data_frame(key_data));
         }
-        message.add_frame(Frame::new_end_frame());
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         let response = self.invoke_on_random(message).await?;
         let fetched_entries: Vec<(K, V)> = Self::decode_entries_response(&response)?;
@@ -1733,12 +1734,12 @@ where
             handles.push(spawn(async move {
                 let mut message = ClientMessage::create_for_encode(MAP_GET_ALL, partition_id);
                 message.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
-                // Keys encoded as a list: BEGIN frame, key data frames, END frame
-                message.add_frame(Frame::new_begin_frame_empty());
+                // Keys encoded as a list: BEGIN_DATA_STRUCTURE, key data frames, END_DATA_STRUCTURE
+                message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
                 for (_, ref kd) in &key_entries {
                     message.add_frame(Frame::with_content(BytesMut::from(kd.as_slice())));
                 }
-                message.add_frame(Frame::new_end_frame());
+                message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
                 let response = conn_mgr.invoke_on_partition_with_retry(partition_id, message, true).await?;
                 Ok::<_, HazelcastError>((key_entries, response))
             }));
@@ -3134,13 +3135,16 @@ where
         let frames = response.frames();
         let mut values = Vec::new();
 
-        // Skip initial frame, iterate over data frames
+        // Skip initial frame, iterate over data content frames
         for frame in frames.iter().skip(1) {
             if frame.flags & IS_NULL_FLAG != 0 {
                 continue;
             }
-            if frame.flags & END_FLAG != 0 && frame.content.is_empty() {
-                break;
+            // Skip data structure begin/end frames
+            if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0
+                || frame.flags & END_DATA_STRUCTURE_FLAG != 0
+            {
+                continue;
             }
             if frame.content.is_empty() {
                 continue;
@@ -3187,11 +3191,17 @@ where
             );
         }
 
-        // Skip initial frame, pairs of frames are key/value
+        // Skip initial frame and structural frames (BEGIN/END data structure),
+        // keep only data content frames
         let data_frames: Vec<_> = frames
             .iter()
             .skip(1)
-            .filter(|f| f.flags & IS_NULL_FLAG == 0 && !f.content.is_empty())
+            .filter(|f| {
+                f.flags & IS_NULL_FLAG == 0
+                    && f.flags & BEGIN_DATA_STRUCTURE_FLAG == 0
+                    && f.flags & END_DATA_STRUCTURE_FLAG == 0
+                    && !f.content.is_empty()
+            })
             .collect();
 
         tracing::debug!(
@@ -3203,10 +3213,6 @@ where
         while i + 1 < data_frames.len() {
             let key_frame = data_frames[i];
             let value_frame = data_frames[i + 1];
-
-            if key_frame.flags & END_FLAG != 0 && key_frame.content.is_empty() {
-                break;
-            }
 
             // Skip 8-byte Data header (partition_hash + type_id) in each frame
             if key_frame.content.len() < 8 || value_frame.content.len() < 8 {

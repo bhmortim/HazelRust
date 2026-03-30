@@ -27,6 +27,12 @@ pub const BACKUP_EVENT_FLAG: u16 = 1 << 11;
 /// Null frame flag - indicates a null value.
 pub const IS_NULL_FLAG: u16 = 1 << 10;
 
+/// Begin data structure flag - marks the start of a list/map in the message.
+pub const BEGIN_DATA_STRUCTURE_FLAG: u16 = 1 << 12;
+
+/// End data structure flag - marks the end of a list/map in the message.
+pub const END_DATA_STRUCTURE_FLAG: u16 = 1 << 11;
+
 /// Default frame flags (no special flags set).
 pub const DEFAULT_FLAGS: u16 = 0;
 

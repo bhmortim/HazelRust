@@ -9,3 +9,6 @@
 !.brokk/style.md
 !.brokk/review.md
 !.brokk/project.properties
+
+# Rust build artifacts
+/target/
