@@ -549,11 +549,12 @@ pub struct IMap<K, V> {
 
 impl<K, V> IMap<K, V> {
     /// Compute partition index using dynamic partition count from the cluster.
-    /// Important: hash only bytes[4:] (skip the 4-byte data type header)
-    /// to match Java's HeapData.getPartitionHash() behavior.
+    /// Java's HeapData.getPartitionHash() hashes buffer[8:] (skip 4-byte
+    /// data header + 4-byte type ID) with MurmurHash3 seed 0x01000193.
     fn partition_index_dynamic(&self, key_data: &[u8]) -> i32 {
         let count = self.connection_manager.partition_count();
-        let hash_input = if key_data.len() > 4 { &key_data[4..] } else { key_data };
+        // Skip 8 bytes: [4-byte data header] [4-byte type_id]
+        let hash_input = if key_data.len() > 8 { &key_data[8..] } else { key_data };
         partition_index_with_count(hash_input, count)
     }
 
