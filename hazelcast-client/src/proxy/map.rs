@@ -1650,11 +1650,12 @@ where
 
         let mut message = ClientMessage::create_for_encode(MAP_GET_ALL, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::int_frame(keys_to_fetch.len() as i32));
-
+        // Keys encoded as a list: BEGIN frame, key data frames, END frame
+        message.add_frame(Frame::new_begin_frame_empty());
         for key_data in &keys_to_fetch {
             message.add_frame(Self::data_frame(key_data));
         }
+        message.add_frame(Frame::new_end_frame());
 
         let response = self.invoke_on_random(message).await?;
         let fetched_entries: Vec<(K, V)> = Self::decode_entries_response(&response)?;
@@ -1732,14 +1733,12 @@ where
             handles.push(spawn(async move {
                 let mut message = ClientMessage::create_for_encode(MAP_GET_ALL, partition_id);
                 message.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
-                message.add_frame({
-                    let mut buf = BytesMut::with_capacity(4);
-                    buf.extend_from_slice(&(key_entries.len() as i32).to_le_bytes());
-                    Frame::with_content(buf)
-                });
+                // Keys encoded as a list: BEGIN frame, key data frames, END frame
+                message.add_frame(Frame::new_begin_frame_empty());
                 for (_, ref kd) in &key_entries {
                     message.add_frame(Frame::with_content(BytesMut::from(kd.as_slice())));
                 }
+                message.add_frame(Frame::new_end_frame());
                 let response = conn_mgr.invoke_on_partition_with_retry(partition_id, message, true).await?;
                 Ok::<_, HazelcastError>((key_entries, response))
             }));
