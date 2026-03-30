@@ -498,8 +498,11 @@ impl ConnectionManager {
             Ok(mut inv_conn) => {
                 // Authenticate the invocation connection
                 self.authenticate_connection_inline(&mut inv_conn, address).await;
-                // Drain any cluster events after auth
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                // Wait for all cluster events to arrive, then drain them
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                inv_conn.drain_socket().await;
+                // Second drain to catch any stragglers
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 inv_conn.drain_socket().await;
                 // Hand off to InvocationService
                 if let Some(tcp_stream) = inv_conn.into_tcp_stream() {

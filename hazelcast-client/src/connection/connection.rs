@@ -485,7 +485,7 @@ impl Connection {
         loop {
             let mut drain_buf = bytes::BytesMut::with_capacity(8192);
             match tokio::time::timeout(
-                std::time::Duration::from_millis(50),
+                std::time::Duration::from_millis(200),
                 self.stream.read_buf(&mut drain_buf)
             ).await {
                 Ok(Ok(n)) if n > 0 => {
