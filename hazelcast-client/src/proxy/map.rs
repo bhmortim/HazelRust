@@ -20,7 +20,9 @@ const DEFAULT_PARTITION_COUNT: i32 = 271;
 /// Compute partition index from serialized key data with a given partition count.
 fn partition_index_with_count(key_data: &[u8], partition_count: i32) -> i32 {
     let count = if partition_count > 0 { partition_count } else { DEFAULT_PARTITION_COUNT };
-    (compute_partition_hash(key_data) & 0x7FFFFFFF) % count
+    // Java uses Math.abs(hash) % count, NOT (hash & 0x7FFFFFFF) % count
+    let hash = compute_partition_hash(key_data);
+    hash.abs() % count
 }
 
 /// Compute partition index using default partition count (fallback).
