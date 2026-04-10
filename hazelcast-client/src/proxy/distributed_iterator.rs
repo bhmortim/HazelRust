@@ -219,18 +219,31 @@ where
             return Ok((Vec::new(), -1));
         }
 
-        let initial_frame = &frames[0];
-        let next_table_index = if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 4 {
-            let offset = RESPONSE_HEADER_SIZE;
-            i32::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-            ])
-        } else {
-            -1
-        };
+        // Extract next table index from iterationPointers section
+        // The iterationPointers is an EntryListIntegerIntegerCodec:
+        // BEGIN, [frame with 8 bytes: partition(i32) + tableIndex(i32)], END
+        // We extract the tableIndex from the first entry.
+        let mut next_table_index: i32 = -1;
+        let mut begin_seen = false;
+        for frame in frames.iter().skip(1) {
+            if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
+                if !begin_seen {
+                    begin_seen = true;
+                    continue;
+                }
+                break; // second BEGIN = start of keys section
+            }
+            if frame.flags & END_DATA_STRUCTURE_FLAG != 0 {
+                break; // end of iterationPointers
+            }
+            // Each entry in iterationPointers: 8 bytes = partition(i32) + tableIndex(i32)
+            if begin_seen && frame.content.len() >= 8 {
+                next_table_index = i32::from_le_bytes([
+                    frame.content[4], frame.content[5],
+                    frame.content[6], frame.content[7],
+                ]);
+            }
+        }
 
         // Response structure (MapFetchKeysCodec):
         // [0] Initial frame (response header, empty)
@@ -356,18 +369,22 @@ where
             return Ok((Vec::new(), -1));
         }
 
-        let initial_frame = &frames[0];
-        let next_table_index = if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 4 {
-            let offset = RESPONSE_HEADER_SIZE;
-            i32::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-            ])
-        } else {
-            -1
-        };
+        // Extract next table index from iterationPointers section
+        let mut next_table_index: i32 = -1;
+        let mut ip_begin = false;
+        for frame in frames.iter().skip(1) {
+            if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
+                if !ip_begin { ip_begin = true; continue; }
+                break;
+            }
+            if frame.flags & END_DATA_STRUCTURE_FLAG != 0 { break; }
+            if ip_begin && frame.content.len() >= 8 {
+                next_table_index = i32::from_le_bytes([
+                    frame.content[4], frame.content[5],
+                    frame.content[6], frame.content[7],
+                ]);
+            }
+        }
 
         // Response structure (MapFetchEntriesCodec):
         // [0] Initial frame (response header)
