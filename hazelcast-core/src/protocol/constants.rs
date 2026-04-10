@@ -78,37 +78,37 @@ pub const MAP_PUT: i32 = 0x010100;
 pub const MAP_REMOVE: i32 = 0x010300;
 
 /// Map put all request.
-pub const MAP_PUT_ALL: i32 = 0x010400;
+pub const MAP_PUT_ALL: i32 = 0x012C00;
 
 /// Map set all request.
 pub const MAP_SET_ALL: i32 = 0x012C00;
 
 /// Map get all request.
-pub const MAP_GET_ALL: i32 = 0x010B00;
+pub const MAP_GET_ALL: i32 = 0x012300;
 
 /// Map put if absent request.
-pub const MAP_PUT_IF_ABSENT: i32 = 0x010700;
+pub const MAP_PUT_IF_ABSENT: i32 = 0x010E00;
 
 /// Map contains key request.
-pub const MAP_CONTAINS_KEY: i32 = 0x010900;
+pub const MAP_CONTAINS_KEY: i32 = 0x010600;
 
 /// Map replace request.
-pub const MAP_REPLACE: i32 = 0x010A00;
+pub const MAP_REPLACE: i32 = 0x010400;
 
 /// Map remove if same request.
-pub const MAP_REMOVE_IF_SAME: i32 = 0x010C00;
+pub const MAP_REMOVE_IF_SAME: i32 = 0x010800;
 
 /// Map replace if same request.
-pub const MAP_REPLACE_IF_SAME: i32 = 0x011000;
+pub const MAP_REPLACE_IF_SAME: i32 = 0x010500;
 
 /// Map size request.
-pub const MAP_SIZE: i32 = 0x010500;
+pub const MAP_SIZE: i32 = 0x012A00;
 
 /// Map clear request.
-pub const MAP_CLEAR: i32 = 0x010D00;
+pub const MAP_CLEAR: i32 = 0x012D00;
 
 /// Map remove all request.
-pub const MAP_REMOVE_ALL: i32 = 0x012400;
+pub const MAP_REMOVE_ALL: i32 = 0x013E00;
 
 /// Queue offer request.
 pub const QUEUE_OFFER: i32 = 0x030100;
@@ -372,10 +372,10 @@ pub const CP_ATOMIC_REFERENCE_ALTER: i32 = 0x0A0600;
 pub const CP_ATOMIC_REFERENCE_APPLY: i32 = 0x0A0700;
 
 /// Map lock request.
-pub const MAP_LOCK: i32 = 0x011200;
+pub const MAP_LOCK: i32 = 0x011000;
 
 /// Map try lock request.
-pub const MAP_TRY_LOCK: i32 = 0x011300;
+pub const MAP_TRY_LOCK: i32 = 0x011100;
 
 /// Map add entry listener request.
 pub const MAP_ADD_ENTRY_LISTENER: i32 = 0x011400;
@@ -384,13 +384,13 @@ pub const MAP_ADD_ENTRY_LISTENER: i32 = 0x011400;
 pub const MAP_REMOVE_ENTRY_LISTENER: i32 = 0x011500;
 
 /// Map force unlock request.
-pub const MAP_FORCE_UNLOCK: i32 = 0x011600;
+pub const MAP_FORCE_UNLOCK: i32 = 0x013300;
 
 /// Map unlock request.
-pub const MAP_UNLOCK: i32 = 0x011700;
+pub const MAP_UNLOCK: i32 = 0x011300;
 
 /// Map is locked request.
-pub const MAP_IS_LOCKED: i32 = 0x011800;
+pub const MAP_IS_LOCKED: i32 = 0x011200;
 
 /// Map add entry listener with predicate request.
 pub const MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x011900;
@@ -639,25 +639,25 @@ pub const MAP_KEYS_WITH_PAGING_PREDICATE: i32 = 0x013E00;
 pub const MAP_ENTRIES_WITH_PAGING_PREDICATE: i32 = 0x013F00;
 
 /// Map try put request.
-pub const MAP_TRY_PUT: i32 = 0x010600;
+pub const MAP_TRY_PUT: i32 = 0x010C00;
 
 /// Map put transient request.
-pub const MAP_PUT_TRANSIENT: i32 = 0x010800;
+pub const MAP_PUT_TRANSIENT: i32 = 0x010D00;
 
 /// Map evict request.
-pub const MAP_EVICT: i32 = 0x011A00;
+pub const MAP_EVICT: i32 = 0x011E00;
 
 /// Map evict all request.
-pub const MAP_EVICT_ALL: i32 = 0x011B00;
+pub const MAP_EVICT_ALL: i32 = 0x011F00;
 
 /// Map get entry view request.
-pub const MAP_GET_ENTRY_VIEW: i32 = 0x011E00;
+pub const MAP_GET_ENTRY_VIEW: i32 = 0x011D00;
 
 /// Map flush request.
-pub const MAP_FLUSH: i32 = 0x013200;
+pub const MAP_FLUSH: i32 = 0x010A00;
 
 /// Map set TTL request.
-pub const MAP_SET_TTL: i32 = 0x013500;
+pub const MAP_SET_TTL: i32 = 0x014300;
 
 /// Executor shutdown request.
 pub const EXECUTOR_SHUTDOWN: i32 = 0x080100;
@@ -822,10 +822,10 @@ pub const CARDINALITY_ESTIMATOR_ADD: i32 = 0x160100;
 pub const CARDINALITY_ESTIMATOR_ESTIMATE: i32 = 0x160200;
 
 /// Map add interceptor request.
-pub const MAP_ADD_INTERCEPTOR: i32 = 0x013300;
+pub const MAP_ADD_INTERCEPTOR: i32 = 0x012E00;
 
 /// Map remove interceptor request.
-pub const MAP_REMOVE_INTERCEPTOR: i32 = 0x013400;
+pub const MAP_REMOVE_INTERCEPTOR: i32 = 0x012F00;
 
 /// Map load all keys request.
 pub const MAP_LOAD_ALL: i32 = 0x012000;
@@ -941,25 +941,25 @@ pub const MAP_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x014100;
 pub const MAP_EVENT_JOURNAL_READ: i32 = 0x014200;
 
 /// Map fetch keys request (for iteration).
-pub const MAP_FETCH_KEYS: i32 = 0x014300;
+pub const MAP_FETCH_KEYS: i32 = 0x013700;
 
 /// Map fetch entries request (for iteration).
-pub const MAP_FETCH_ENTRIES: i32 = 0x014400;
+pub const MAP_FETCH_ENTRIES: i32 = 0x013800;
 
 /// Map fetch values request (for iteration).
-pub const MAP_FETCH_VALUES: i32 = 0x014500;
+pub const MAP_FETCH_VALUES: i32 = 0x013900;
 
 /// Map contains value request.
-pub const MAP_CONTAINS_VALUE: i32 = 0x012500;
+pub const MAP_CONTAINS_VALUE: i32 = 0x010700;
 
 /// Map delete request (remove without returning old value).
-pub const MAP_DELETE: i32 = 0x012600;
+pub const MAP_DELETE: i32 = 0x010900;
 
 /// Map set request (put without returning old value).
-pub const MAP_SET: i32 = 0x012700;
+pub const MAP_SET: i32 = 0x010F00;
 
 /// Map is empty request.
-pub const MAP_IS_EMPTY: i32 = 0x012800;
+pub const MAP_IS_EMPTY: i32 = 0x012B00;
 
 /// Client statistics request.
 pub const CLIENT_STATISTICS: i32 = 0x000C00;
