@@ -140,7 +140,7 @@ impl<T> DistributedIterator<T> {
         let partition_cursors: Vec<PartitionCursor> = (0..partition_count)
             .map(|id| PartitionCursor {
                 partition_id: id,
-                table_index: i32::MAX, // Start from beginning (MAX_VALUE per Hazelcast convention)
+                table_index: -1, // Start from beginning (Hazelcast convention: -1 = not started)
                 has_more: true,
             })
             .collect();
@@ -207,13 +207,14 @@ where
             initial_frame.content.put_i32_le(self.batch_size);
         }
         message.add_frame(Self::string_frame(&self.map_name));
-        // iterationPointers: single entry [partition_id -> table_index]
-        // table_index=MAX_VALUE means "start from beginning" in Hazelcast
+        // iterationPointers: list of (tableIndex, tableSize) pairs
+        // For initial iteration: tableIndex=table_index, tableSize=0
+        // For subsequent: use values from response iterationPointers
         message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         {
             let mut buf = BytesMut::with_capacity(8);
-            buf.extend_from_slice(&partition_id.to_le_bytes());
-            buf.extend_from_slice(&table_index.to_le_bytes());
+            buf.extend_from_slice(&table_index.to_le_bytes()); // tableIndex (-1 = start)
+            buf.extend_from_slice(&0i32.to_le_bytes()); // tableSize (0 = unknown)
             message.add_frame(Frame::with_content(buf));
         }
         message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
