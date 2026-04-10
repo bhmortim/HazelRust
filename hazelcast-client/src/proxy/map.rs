@@ -1509,13 +1509,19 @@ where
         }
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT_ALL, PARTITION_ID_ANY);
+        // Fixed-size param: triggerMapLoader (boolean) = true
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_u8(1); // triggerMapLoader = true
+        }
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::int_frame(serialized_entries.len() as i32));
-
+        // Entries as EntryList: BEGIN, [key, val, key, val...], END
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         for (key_data, value_data) in serialized_entries {
             message.add_frame(Self::data_frame(&key_data));
             message.add_frame(Self::data_frame(&value_data));
         }
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         self.invoke_on_random_mutating(message).await?;
         Ok(())
@@ -1589,13 +1595,19 @@ where
         }
 
         let mut message = ClientMessage::create_for_encode(MAP_SET_ALL, PARTITION_ID_ANY);
+        // Fixed-size param: triggerMapLoader (boolean) = true
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_u8(1);
+        }
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::int_frame(serialized_entries.len() as i32));
-
+        // Entries as EntryList: BEGIN, [key, val, key, val...], END
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         for (key_data, value_data) in serialized_entries {
             message.add_frame(Self::data_frame(&key_data));
             message.add_frame(Self::data_frame(&value_data));
         }
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         self.invoke_on_random_mutating(message).await?;
         Ok(())
@@ -2005,11 +2017,15 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_LOCK, partition_id);
+        // Fixed-size params in initial frame: threadId + ttl + referenceId
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(self.thread_id);
+            initial_frame.content.put_i64_le(-1i64); // TTL: indefinite
+            initial_frame.content.put_i64_le(rand::random::<i64>()); // referenceId
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::long_frame(-1)); // TTL: indefinite
-        message.add_frame(Self::invocation_uid_frame());
 
         self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
@@ -2039,12 +2055,16 @@ where
         let timeout_ms = timeout.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode(MAP_TRY_LOCK, partition_id);
+        // Fixed-size params: threadId + ttl + timeout + referenceId
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(self.thread_id);
+            initial_frame.content.put_i64_le(-1i64); // TTL: indefinite once acquired
+            initial_frame.content.put_i64_le(timeout_ms);
+            initial_frame.content.put_i64_le(rand::random::<i64>()); // referenceId
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::long_frame(-1)); // TTL: indefinite once acquired
-        message.add_frame(Self::long_frame(timeout_ms));
-        message.add_frame(Self::invocation_uid_frame());
 
         let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_bool_response(&response)
@@ -2066,10 +2086,14 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_UNLOCK, partition_id);
+        // Fixed-size params: threadId + referenceId
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(self.thread_id);
+            initial_frame.content.put_i64_le(rand::random::<i64>()); // referenceId
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::invocation_uid_frame());
 
         self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
@@ -2090,9 +2114,9 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_IS_LOCKED, partition_id);
+        // MapIsLockedCodec: no extra params in initial frame, just name + key
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::long_frame(self.thread_id));
 
         let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_bool_response(&response)
@@ -2115,10 +2139,13 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_FORCE_UNLOCK, partition_id);
+        // Fixed-size params: referenceId only
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(rand::random::<i64>()); // referenceId
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::invocation_uid_frame());
 
         self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
