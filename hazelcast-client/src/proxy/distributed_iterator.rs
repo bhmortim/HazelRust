@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 use hazelcast_core::protocol::constants::{
-    MAP_FETCH_ENTRIES, MAP_FETCH_KEYS, RESPONSE_HEADER_SIZE, IS_NULL_FLAG, END_FLAG,
+    MAP_FETCH_ENTRIES, MAP_FETCH_KEYS, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE, IS_NULL_FLAG, END_FLAG,
     BEGIN_DATA_STRUCTURE_FLAG, END_DATA_STRUCTURE_FLAG,
 };
 use hazelcast_core::protocol::Frame;
@@ -200,7 +200,7 @@ where
 {
     /// Fetches the next batch of keys from a partition.
     async fn fetch_keys_batch(&mut self, partition_id: i32, table_index: i32) -> Result<(Vec<K>, i32)> {
-        let mut message = ClientMessage::create_for_encode(MAP_FETCH_KEYS, partition_id);
+        let mut message = ClientMessage::create_for_encode(MAP_FETCH_KEYS, PARTITION_ID_ANY);
         // Fixed-size param in initial frame: batch (int) ONLY
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
@@ -366,7 +366,7 @@ where
 {
     /// Fetches the next batch of entries from a partition.
     async fn fetch_entries_batch(&mut self, partition_id: i32, table_index: i32) -> Result<(Vec<(K, V)>, i32)> {
-        let mut message = ClientMessage::create_for_encode(MAP_FETCH_ENTRIES, partition_id);
+        let mut message = ClientMessage::create_for_encode(MAP_FETCH_ENTRIES, PARTITION_ID_ANY);
         // Fixed-size param: batch (int) ONLY
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
