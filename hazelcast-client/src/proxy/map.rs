@@ -793,6 +793,7 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REPLACE, partition_id);
+        Self::write_initial_thread_id(&mut message);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
@@ -834,6 +835,7 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REPLACE_IF_SAME, partition_id);
+        Self::write_initial_thread_id(&mut message);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&old_value_data));
@@ -1042,6 +1044,7 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REMOVE_IF_SAME, partition_id);
+        Self::write_initial_thread_id(&mut message);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
@@ -1175,6 +1178,7 @@ where
         }
 
         let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
+        Self::write_initial_thread_id(&mut message);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -1345,6 +1349,7 @@ where
         let target_data = Self::serialize_value(value)?;
 
         let mut message = ClientMessage::create_for_encode(MAP_CONTAINS_VALUE, PARTITION_ID_ANY);
+        Self::write_initial_thread_id(&mut message);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&target_data));
 
@@ -1906,6 +1911,7 @@ where
             let partition_id = self.partition_index_dynamic(&key_data);
 
             let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
+            Self::write_initial_thread_id(&mut message);
             message.add_frame(Self::string_frame(&self.name));
             message.add_frame(Self::data_frame(&key_data));
 
@@ -2086,6 +2092,7 @@ where
         let mut message = ClientMessage::create_for_encode(MAP_IS_LOCKED, partition_id);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::long_frame(self.thread_id));
 
         let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_bool_response(&response)
@@ -2110,6 +2117,7 @@ where
         let mut message = ClientMessage::create_for_encode(MAP_FORCE_UNLOCK, partition_id);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Self::long_frame(self.thread_id));
         message.add_frame(Self::invocation_uid_frame());
 
         self.invoke_on_partition_mutating(partition_id, message).await?;
@@ -2150,9 +2158,9 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_EVICT, partition_id);
+        Self::write_initial_thread_id(&mut message);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::long_frame(self.thread_id));
 
         let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_bool_response(&response)
@@ -2237,9 +2245,9 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_GET_ENTRY_VIEW, partition_id);
+        Self::write_initial_thread_id(&mut message);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::long_frame(self.thread_id));
 
         let response = self.invoke_on_partition(partition_id, message).await?;
         Self::decode_entry_view_response(&response)
@@ -2380,14 +2388,13 @@ where
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
-        let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+        let _max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+        Self::write_initial_thread_id_and_ttl(&mut message, -1); // threadId + ttl = -1 (no expiry)
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
-        message.add_frame(Self::long_frame(max_idle_ms));
 
         let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
@@ -2441,14 +2448,13 @@ where
 
         let partition_id = self.partition_index_dynamic(&key_data);
         let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
-        let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+        let _max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+        Self::write_initial_thread_id_and_ttl(&mut message, ttl_ms);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(ttl_ms));
-        message.add_frame(Self::long_frame(max_idle_ms));
 
         let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
@@ -2503,14 +2509,13 @@ where
 
         let partition_id = self.partition_index_dynamic(&key_data);
         let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
-        let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+        let _max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+        Self::write_initial_thread_id_and_ttl(&mut message, ttl_ms);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(ttl_ms));
-        message.add_frame(Self::long_frame(max_idle_ms));
 
         self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
@@ -2558,11 +2563,10 @@ where
         let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT_TRANSIENT, partition_id);
+        Self::write_initial_thread_id_and_ttl(&mut message, ttl_ms);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::long_frame(ttl_ms));
 
         self.invoke_on_partition_mutating(partition_id, message).await?;
         Ok(())
@@ -2592,6 +2596,24 @@ where
         let mut buf = BytesMut::with_capacity(8);
         buf.extend_from_slice(&value.to_le_bytes());
         Frame::with_content(buf)
+    }
+
+    /// Write threadId (i64 LE) into the initial frame's fixed-size parameter area.
+    /// Used for single-key data operations that require threadId = 0.
+    fn write_initial_thread_id(message: &mut ClientMessage) {
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0);
+        }
+    }
+
+    /// Write threadId (i64 LE) + ttl (i64 LE) into the initial frame.
+    fn write_initial_thread_id_and_ttl(message: &mut ClientMessage, ttl_ms: i64) {
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId
+            initial_frame.content.put_i64_le(ttl_ms); // ttl
+        }
     }
 
     /// Invokes a read (idempotent) operation on a specific partition with automatic retry.

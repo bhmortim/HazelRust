@@ -243,6 +243,10 @@ where
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_PUT, partition_id);
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
@@ -261,6 +265,10 @@ where
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_GET, partition_id);
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -279,6 +287,10 @@ where
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_REMOVE_ENTRY, partition_id);
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
@@ -299,6 +311,10 @@ where
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_REMOVE, partition_id);
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -316,6 +332,10 @@ where
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_CONTAINS_KEY, partition_id);
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -342,6 +362,10 @@ where
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_CONTAINS_ENTRY, partition_id);
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
@@ -365,6 +389,10 @@ where
         let partition_id = compute_partition_hash(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_VALUE_COUNT, partition_id);
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
