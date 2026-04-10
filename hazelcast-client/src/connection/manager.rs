@@ -1275,14 +1275,27 @@ impl ConnectionManager {
 
         let address = self.get_connection_for_partition(partition_id).await?;
 
-        // Ensure proxy is created for the map
-        let map_name = if message.frame_count() > 1 {
+        // Ensure proxy is created for the distributed object.
+        // Detect the correct service name from the message opcode.
+        let obj_name = if message.frame_count() > 1 {
             String::from_utf8_lossy(&message.frames()[1].content).to_string()
         } else {
             String::new()
         };
-        if !map_name.is_empty() {
-            self.invocation.ensure_proxy(address, &map_name, "hz:impl:mapService").await?;
+        if !obj_name.is_empty() {
+            let opcode = message.message_type().unwrap_or(0);
+            let service = if (0x0601..=0x060F).contains(&(opcode >> 8)) {
+                "hz:impl:setService"
+            } else if (0x0501..=0x050F).contains(&(opcode >> 8)) {
+                "hz:impl:listService"
+            } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
+                "hz:impl:queueService"
+            } else if (0x0701..=0x070F).contains(&(opcode >> 8)) {
+                "hz:impl:topicService"
+            } else {
+                "hz:impl:mapService"
+            };
+            self.invocation.ensure_proxy(address, &obj_name, service).await?;
         }
 
         self.invocation.invoke(address, message).await
@@ -1318,14 +1331,27 @@ impl ConnectionManager {
             }
         };
 
-        // Ensure proxy is created for the map
-        let map_name = if message.frame_count() > 1 {
+        // Ensure proxy is created for the distributed object.
+        // Detect the correct service name from the message opcode.
+        let obj_name = if message.frame_count() > 1 {
             String::from_utf8_lossy(&message.frames()[1].content).to_string()
         } else {
             String::new()
         };
-        if !map_name.is_empty() {
-            self.invocation.ensure_proxy(address, &map_name, "hz:impl:mapService").await?;
+        if !obj_name.is_empty() {
+            let opcode = message.message_type().unwrap_or(0);
+            let service = if (0x0601..=0x060F).contains(&(opcode >> 8)) {
+                "hz:impl:setService"
+            } else if (0x0501..=0x050F).contains(&(opcode >> 8)) {
+                "hz:impl:listService"
+            } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
+                "hz:impl:queueService"
+            } else if (0x0701..=0x070F).contains(&(opcode >> 8)) {
+                "hz:impl:topicService"
+            } else {
+                "hz:impl:mapService"
+            };
+            self.invocation.ensure_proxy(address, &obj_name, service).await?;
         }
 
         self.invocation.invoke(address, message).await

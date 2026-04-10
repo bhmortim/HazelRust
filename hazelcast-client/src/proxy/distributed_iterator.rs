@@ -239,11 +239,13 @@ where
             if frame.flags & END_FLAG != 0 && frame.content.is_empty() {
                 break;
             }
-            if frame.content.is_empty() {
+            if frame.content.len() <= 8 {
                 continue;
             }
 
-            let mut input = ObjectDataInput::new(&frame.content);
+            // Skip 8-byte Data header (partition_hash + type_id)
+            let payload = &frame.content[8..];
+            let mut input = ObjectDataInput::new(payload);
             if let Ok(key) = K::deserialize(&mut input) {
                 keys.push(key);
             }
@@ -350,7 +352,7 @@ where
         let data_frames: Vec<_> = frames
             .iter()
             .skip(1)
-            .filter(|f| f.flags & IS_NULL_FLAG == 0 && !f.content.is_empty())
+            .filter(|f| f.flags & IS_NULL_FLAG == 0 && f.content.len() > 8)
             .collect();
 
         let mut i = 0;
@@ -362,8 +364,11 @@ where
                 break;
             }
 
-            let mut key_input = ObjectDataInput::new(&key_frame.content);
-            let mut value_input = ObjectDataInput::new(&value_frame.content);
+            // Skip 8-byte Data header (partition_hash + type_id) on both key and value
+            let key_payload = &key_frame.content[8..];
+            let value_payload = &value_frame.content[8..];
+            let mut key_input = ObjectDataInput::new(key_payload);
+            let mut value_input = ObjectDataInput::new(value_payload);
 
             if let (Ok(key), Ok(value)) = (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
                 entries.push((key, value));
