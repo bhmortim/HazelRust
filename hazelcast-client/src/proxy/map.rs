@@ -748,10 +748,15 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT_IF_ABSENT, partition_id);
+        // Fixed-size params: threadId (long) + ttl (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0);  // threadId = 0
+            initial_frame.content.put_i64_le(-1i64); // ttl = -1 (no expiry)
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
 
         let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_nullable_response(&response)
@@ -993,6 +998,11 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
+        // Fixed-size params: threadId (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -1048,6 +1058,11 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_CONTAINS_KEY, partition_id);
+        // Fixed-size params: threadId (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -1181,6 +1196,11 @@ where
         let partition_id = compute_partition_hash(&pk_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_CONTAINS_KEY, partition_id);
+        // Fixed-size params: threadId (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -1243,6 +1263,11 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
+        // Fixed-size params: threadId (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
