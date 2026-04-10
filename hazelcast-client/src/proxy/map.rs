@@ -42,7 +42,7 @@ use hazelcast_core::protocol::constants::{
     MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW,
     MAP_IS_LOCKED, MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOAD_ALL,
     MAP_LOAD_GIVEN_KEYS, MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL,
-    MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
+    MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT, MAP_PUT_WITH_MAX_IDLE, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
     MAP_REMOVE_ALL, MAP_REMOVE_INTERCEPTOR, MAP_REMOVE_PARTITION_LOST_LISTENER, MAP_REPLACE,
     MAP_REPLACE_IF_SAME, MAP_SET_ALL, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK,
     MAP_VALUES_WITH_PAGING_PREDICATE,
@@ -2369,11 +2369,15 @@ where
         let timeout_ms = timeout.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode(MAP_TRY_PUT, partition_id);
+        // Fixed-size params: threadId + timeout
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(self.thread_id);
+            initial_frame.content.put_i64_le(timeout_ms);
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::long_frame(timeout_ms));
 
         let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_bool_response(&response)
@@ -2417,8 +2421,15 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
         let _max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
 
-        let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
-        Self::write_initial_thread_id_and_ttl(&mut message, -1); // threadId + ttl = -1 (no expiry)
+        let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+        let mut message = ClientMessage::create_for_encode(MAP_PUT_WITH_MAX_IDLE, partition_id);
+        // Fixed-size params: threadId + ttl + maxIdle
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId
+            initial_frame.content.put_i64_le(-1i64); // ttl = no expiry
+            initial_frame.content.put_i64_le(max_idle_ms);
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));

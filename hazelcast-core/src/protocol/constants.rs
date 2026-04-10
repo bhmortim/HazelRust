@@ -659,6 +659,12 @@ pub const MAP_FLUSH: i32 = 0x010A00;
 /// Map set TTL request.
 pub const MAP_SET_TTL: i32 = 0x014300;
 
+/// Map put with max idle request.
+pub const MAP_PUT_WITH_MAX_IDLE: i32 = 0x014400;
+
+/// Map set with max idle request.
+pub const MAP_SET_WITH_MAX_IDLE: i32 = 0x014700;
+
 /// Executor shutdown request.
 pub const EXECUTOR_SHUTDOWN: i32 = 0x080100;
 
