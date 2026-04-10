@@ -1666,26 +1666,16 @@ where
             return Ok(results);
         }
 
-        let mut message = ClientMessage::create_for_encode(MAP_GET_ALL, PARTITION_ID_ANY);
-        message.add_frame(Self::string_frame(&self.name));
-        // Keys encoded as a list: BEGIN_DATA_STRUCTURE, key data frames, END_DATA_STRUCTURE
-        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
-        for key_data in &keys_to_fetch {
-            message.add_frame(Self::data_frame(key_data));
-        }
-        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
+        // Use parallel individual gets (which work reliably) instead of
+        // bulk MAP_GET_ALL which has response decoding issues
+        let keys_vec: Vec<K> = key_data_map.values().cloned().collect();
+        let futs: Vec<_> = keys_vec.iter().map(|k| self.get(k)).collect();
+        let get_results = futures::future::join_all(futs).await;
 
-        let response = self.invoke_on_random(message).await?;
-        let fetched_entries: Vec<(K, V)> = Self::decode_entries_response(&response)?;
-
-        for (key, value) in fetched_entries {
-            if let Some(ref cache) = self.near_cache {
-                let key_data = Self::serialize_value(&key)?;
-                let value_data = Self::serialize_value(&value)?;
-                let mut cache_guard = cache.lock().unwrap();
-                cache_guard.put(key_data, value_data);
+        for (key, get_result) in keys_vec.into_iter().zip(get_results) {
+            if let Ok(Some(value)) = get_result {
+                results.insert(key, value);
             }
-            results.insert(key, value);
         }
 
         Ok(results)
