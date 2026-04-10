@@ -2763,18 +2763,20 @@ where
         }
 
         let key_frame = &frames[1];
-        if key_frame.content.is_empty() || key_frame.flags & IS_NULL_FLAG != 0 {
+        if key_frame.content.len() <= 8 || key_frame.flags & IS_NULL_FLAG != 0 {
             return Ok(None);
         }
-        let mut key_input = ObjectDataInput::new(&key_frame.content);
+        // Skip 8-byte Data header (partition_hash + type_id)
+        let mut key_input = ObjectDataInput::new(&key_frame.content[8..]);
         let key = K::deserialize(&mut key_input)?;
 
         // Decode value from frame 2
         let value_frame = &frames[2];
-        if value_frame.content.is_empty() || value_frame.flags & IS_NULL_FLAG != 0 {
+        if value_frame.content.len() <= 8 || value_frame.flags & IS_NULL_FLAG != 0 {
             return Ok(None);
         }
-        let mut value_input = ObjectDataInput::new(&value_frame.content);
+        // Skip 8-byte Data header
+        let mut value_input = ObjectDataInput::new(&value_frame.content[8..]);
         let value = V::deserialize(&mut value_input)?;
 
         Ok(Some(EntryView {

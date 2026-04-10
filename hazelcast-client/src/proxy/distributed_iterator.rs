@@ -7,6 +7,7 @@ use std::sync::Arc;
 use bytes::BytesMut;
 use hazelcast_core::protocol::constants::{
     MAP_FETCH_ENTRIES, MAP_FETCH_KEYS, RESPONSE_HEADER_SIZE, IS_NULL_FLAG, END_FLAG,
+    BEGIN_DATA_STRUCTURE_FLAG, END_DATA_STRUCTURE_FLAG,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result};
@@ -233,6 +234,13 @@ where
 
         let mut keys = Vec::new();
         for frame in frames.iter().skip(1) {
+            // Skip structural frames (BEGIN/END list markers)
+            if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
+                continue;
+            }
+            if frame.flags & END_DATA_STRUCTURE_FLAG != 0 {
+                continue;
+            }
             if frame.flags & IS_NULL_FLAG != 0 {
                 continue;
             }
@@ -352,7 +360,12 @@ where
         let data_frames: Vec<_> = frames
             .iter()
             .skip(1)
-            .filter(|f| f.flags & IS_NULL_FLAG == 0 && f.content.len() > 8)
+            .filter(|f| {
+                f.flags & IS_NULL_FLAG == 0
+                    && f.flags & BEGIN_DATA_STRUCTURE_FLAG == 0
+                    && f.flags & END_DATA_STRUCTURE_FLAG == 0
+                    && f.content.len() > 8
+            })
             .collect();
 
         let mut i = 0;
