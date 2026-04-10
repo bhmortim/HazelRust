@@ -299,11 +299,11 @@ where
             let (keys, next_index) = self.fetch_keys_batch(partition_id, table_index).await?;
 
             let cursor = &mut self.partition_cursors[self.current_partition_index];
-            // Continue only if: we got data AND the index advanced (or is positive)
-            // Prevent infinite loop if next_index doesn't change
-            let index_advanced = next_index > table_index || (next_index >= 0 && next_index != table_index);
+            // The server returns a new tableIndex for the next fetch.
+            // If next_index < 0 or didn't advance, no more data in this partition.
+            // If the batch was full (== batch_size), there might be more.
             cursor.table_index = next_index;
-            cursor.has_more = !keys.is_empty() && index_advanced;
+            cursor.has_more = !keys.is_empty() && next_index >= 0 && next_index != table_index;
 
             if keys.is_empty() {
                 self.current_partition_index += 1;
@@ -451,9 +451,8 @@ where
             let (entries, next_index) = self.fetch_entries_batch(partition_id, table_index).await?;
 
             let cursor = &mut self.partition_cursors[self.current_partition_index];
-            let index_advanced = next_index > table_index || (next_index >= 0 && next_index != table_index);
             cursor.table_index = next_index;
-            cursor.has_more = !entries.is_empty() && index_advanced;
+            cursor.has_more = !entries.is_empty() && next_index >= 0 && next_index != table_index;
 
             if entries.is_empty() {
                 self.current_partition_index += 1;
