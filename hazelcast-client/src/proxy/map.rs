@@ -1839,16 +1839,19 @@ where
             let map_name = self.name.clone();
             handles.push(spawn(async move {
                 let mut message = ClientMessage::create_for_encode(MAP_PUT_ALL, partition_id);
+                // Fixed-size param: triggerMapLoader (boolean) = true
+                if let Some(initial_frame) = message.frames_mut().first_mut() {
+                    use bytes::BufMut;
+                    initial_frame.content.put_u8(1); // triggerMapLoader = true
+                }
                 message.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
-                message.add_frame({
-                    let mut buf = BytesMut::with_capacity(4);
-                    buf.extend_from_slice(&(group_entries.len() as i32).to_le_bytes());
-                    Frame::with_content(buf)
-                });
+                // EntryList encoding: BEGIN, [key, value, key, value...], END
+                message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
                 for (kd, vd) in &group_entries {
                     message.add_frame(Frame::with_content(BytesMut::from(kd.as_slice())));
                     message.add_frame(Frame::with_content(BytesMut::from(vd.as_slice())));
                 }
+                message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
                 conn_mgr.invoke_on_partition_with_retry(partition_id, message, false).await?;
                 Ok::<_, HazelcastError>(())
             }));
