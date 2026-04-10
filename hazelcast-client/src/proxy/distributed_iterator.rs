@@ -232,22 +232,35 @@ where
             -1
         };
 
+        // Response structure (MapFetchKeysCodec):
+        // [0] Initial frame (response header, empty)
+        // [1..] iterationPointers: EntryListIntegerIntegerCodec (BEGIN, int pairs, END)
+        // [...] keys: ListMultiFrameCodec (BEGIN, Data key frames, END)
+        //
+        // We need to skip the iterationPointers section and only read the keys section.
+        // Count BEGIN/END pairs: first pair is iterationPointers, second is keys.
         let mut keys = Vec::new();
+        let mut begin_count = 0;
+        let mut in_keys_section = false;
+
         for frame in frames.iter().skip(1) {
-            // Skip structural frames (BEGIN/END list markers)
             if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
+                begin_count += 1;
+                if begin_count == 2 {
+                    in_keys_section = true; // second BEGIN = keys list
+                }
                 continue;
             }
             if frame.flags & END_DATA_STRUCTURE_FLAG != 0 {
+                if in_keys_section {
+                    break; // end of keys list
+                }
                 continue;
             }
-            if frame.flags & IS_NULL_FLAG != 0 {
-                continue;
+            if !in_keys_section {
+                continue; // skip iterationPointers content
             }
-            if frame.flags & END_FLAG != 0 && frame.content.is_empty() {
-                break;
-            }
-            if frame.content.len() <= 8 {
+            if frame.flags & IS_NULL_FLAG != 0 || frame.content.len() <= 8 {
                 continue;
             }
 
@@ -356,17 +369,29 @@ where
             -1
         };
 
+        // Response structure (MapFetchEntriesCodec):
+        // [0] Initial frame (response header)
+        // [...] iterationPointers: EntryListIntegerIntegerCodec (BEGIN, int pairs, END)
+        // [...] entries: EntryListCodec (BEGIN, [key, val, key, val...], END)
         let mut entries = Vec::new();
-        let data_frames: Vec<_> = frames
-            .iter()
-            .skip(1)
-            .filter(|f| {
-                f.flags & IS_NULL_FLAG == 0
-                    && f.flags & BEGIN_DATA_STRUCTURE_FLAG == 0
-                    && f.flags & END_DATA_STRUCTURE_FLAG == 0
-                    && f.content.len() > 8
-            })
-            .collect();
+        let mut begin_count = 0u32;
+        let mut in_entries = false;
+        let mut data_frames = Vec::new();
+        for frame in frames.iter().skip(1) {
+            if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
+                begin_count += 1;
+                if begin_count == 2 { in_entries = true; }
+                continue;
+            }
+            if frame.flags & END_DATA_STRUCTURE_FLAG != 0 {
+                if in_entries { break; }
+                continue;
+            }
+            if !in_entries { continue; }
+            if frame.flags & IS_NULL_FLAG == 0 && frame.content.len() > 8 {
+                data_frames.push(frame);
+            }
+        }
 
         let mut i = 0;
         while i + 1 < data_frames.len() {
