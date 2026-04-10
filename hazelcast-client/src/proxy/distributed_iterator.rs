@@ -140,7 +140,7 @@ impl<T> DistributedIterator<T> {
         let partition_cursors: Vec<PartitionCursor> = (0..partition_count)
             .map(|id| PartitionCursor {
                 partition_id: id,
-                table_index: -1,
+                table_index: 0, // Start from beginning (0, not -1)
                 has_more: true,
             })
             .collect();
@@ -313,7 +313,10 @@ where
 
             let cursor = &mut self.partition_cursors[self.current_partition_index];
             cursor.table_index = next_index;
-            cursor.has_more = next_index >= 0 && !keys.is_empty();
+            // Continue fetching from this partition if we got data AND the
+            // server indicated more data (next_index > table_index or >= 0).
+            // If keys is empty, this partition has no (more) data.
+            cursor.has_more = !keys.is_empty();
 
             if keys.is_empty() {
                 self.current_partition_index += 1;
@@ -460,7 +463,7 @@ where
 
             let cursor = &mut self.partition_cursors[self.current_partition_index];
             cursor.table_index = next_index;
-            cursor.has_more = next_index >= 0 && !entries.is_empty();
+            cursor.has_more = !entries.is_empty();
 
             if entries.is_empty() {
                 self.current_partition_index += 1;
