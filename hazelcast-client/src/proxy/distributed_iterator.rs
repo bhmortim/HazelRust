@@ -201,13 +201,22 @@ where
     /// Fetches the next batch of keys from a partition.
     async fn fetch_keys_batch(&mut self, partition_id: i32, table_index: i32) -> Result<(Vec<K>, i32)> {
         let mut message = ClientMessage::create_for_encode(MAP_FETCH_KEYS, partition_id);
-        // Fixed-size params in initial frame: tableIndex (int) + batch (int)
+        // Fixed-size param in initial frame: batch (int) ONLY
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
-            initial_frame.content.put_i32_le(table_index);
             initial_frame.content.put_i32_le(self.batch_size);
         }
         message.add_frame(Self::string_frame(&self.map_name));
+        // iterationPointers: EntryListIntegerIntegerCodec
+        // Single entry: [partition_id -> table_index]
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        {
+            let mut buf = BytesMut::with_capacity(8);
+            buf.extend_from_slice(&partition_id.to_le_bytes());
+            buf.extend_from_slice(&table_index.to_le_bytes());
+            message.add_frame(Frame::with_content(buf));
+        }
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         let response = self.invoke(partition_id, message).await?;
         Self::decode_keys_response(&response)
@@ -354,13 +363,21 @@ where
     /// Fetches the next batch of entries from a partition.
     async fn fetch_entries_batch(&mut self, partition_id: i32, table_index: i32) -> Result<(Vec<(K, V)>, i32)> {
         let mut message = ClientMessage::create_for_encode(MAP_FETCH_ENTRIES, partition_id);
-        // Fixed-size params in initial frame: tableIndex (int) + batch (int)
+        // Fixed-size param: batch (int) ONLY
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
-            initial_frame.content.put_i32_le(table_index);
             initial_frame.content.put_i32_le(self.batch_size);
         }
         message.add_frame(Self::string_frame(&self.map_name));
+        // iterationPointers: [partition_id -> table_index]
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        {
+            let mut buf = BytesMut::with_capacity(8);
+            buf.extend_from_slice(&partition_id.to_le_bytes());
+            buf.extend_from_slice(&table_index.to_le_bytes());
+            message.add_frame(Frame::with_content(buf));
+        }
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         let response = self.invoke(partition_id, message).await?;
         Self::decode_entries_response(&response)
