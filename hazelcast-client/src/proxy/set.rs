@@ -120,6 +120,19 @@ where
         Ok(self.size().await? == 0)
     }
 
+    /// Returns all elements in this set.
+    ///
+    /// Uses the SET_GET_ALL protocol opcode to retrieve all members in one call.
+    pub async fn get_all(&self) -> Result<Vec<T>> {
+        self.check_permission(PermissionAction::Read)?;
+        self.check_quorum(true).await?;
+        let mut message = ClientMessage::create_for_encode_any_partition(SET_GET_ALL);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke(message).await?;
+        Self::decode_data_list_response(&response)
+    }
+
     /// Removes all elements from this set.
     pub async fn clear(&self) -> Result<()> {
         self.check_permission(PermissionAction::Remove)?;
@@ -242,6 +255,46 @@ where
         let mut buf = BytesMut::with_capacity(16);
         buf.extend_from_slice(uuid.as_bytes());
         Frame::with_content(buf)
+    }
+
+    fn decode_data_list_response(response: &ClientMessage) -> Result<Vec<T>> {
+        let frames = response.frames();
+        if frames.len() < 2 {
+            return Ok(Vec::new());
+        }
+
+        let data_frame = &frames[1];
+        let content = &data_frame.content;
+        if content.len() < 4 {
+            return Ok(Vec::new());
+        }
+
+        let count = i32::from_le_bytes([content[0], content[1], content[2], content[3]]) as usize;
+        let mut items = Vec::with_capacity(count);
+        let mut offset = 4;
+
+        for _ in 0..count {
+            if offset + 4 > content.len() {
+                break;
+            }
+            let item_len = i32::from_le_bytes([
+                content[offset],
+                content[offset + 1],
+                content[offset + 2],
+                content[offset + 3],
+            ]) as usize;
+            offset += 4;
+            if offset + item_len > content.len() {
+                break;
+            }
+            let item_data = &content[offset..offset + item_len];
+            let mut input = hazelcast_core::serialization::ObjectDataInput::new(item_data.to_vec());
+            let item = T::deserialize(&mut input)?;
+            items.push(item);
+            offset += item_len;
+        }
+
+        Ok(items)
     }
 
     fn add_data_list_frames(&self, message: &mut ClientMessage, items: &[T]) -> Result<()> {

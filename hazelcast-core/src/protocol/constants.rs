@@ -200,6 +200,9 @@ pub const SET_ADD_LISTENER: i32 = 0x060A00;
 /// Set remove item listener request.
 pub const SET_REMOVE_LISTENER: i32 = 0x060B00;
 
+/// Set get all items request.
+pub const SET_GET_ALL: i32 = 0x060C00;
+
 /// List size request.
 pub const LIST_SIZE: i32 = 0x050100;
 
