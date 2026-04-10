@@ -2718,64 +2718,78 @@ where
 
     fn decode_entry_view_response(response: &ClientMessage) -> Result<Option<EntryView<K, V>>> {
         let frames = response.frames();
+        // Response structure (MapGetEntryViewCodec):
+        // [0] Response header frame (with maxIdle long at RESPONSE_HEADER_SIZE)
+        // [1] BEGIN frame for nullable SimpleEntryView
+        // [2] SimpleEntryView internal frame (10 longs: cost, creationTime, etc.)
+        // [3] Key Data frame
+        // [4] Value Data frame
+        // [5] END frame
+        // OR if null: [1] is a NULL_FLAG frame
+
         if frames.len() < 2 {
             return Ok(None);
         }
 
-        let initial_frame = &frames[0];
-
-        // Check if null response
-        if initial_frame.flags & IS_NULL_FLAG != 0 {
+        // Check if the entry view is null (frame[1] has NULL flag)
+        let entry_start = &frames[1];
+        if entry_start.flags & IS_NULL_FLAG != 0 {
             return Ok(None);
         }
 
-        // Decode fixed-size fields from initial frame
-        let mut offset = RESPONSE_HEADER_SIZE;
-        let content = &initial_frame.content;
-
-        if content.len() < offset + 88 {
+        // Need at least 5 frames for a non-null entry view
+        if frames.len() < 5 {
             return Ok(None);
         }
 
-        let cost = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
-        offset += 8;
-        let creation_time = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
-        offset += 8;
-        let expiration_time = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
-        offset += 8;
-        let hits = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
-        offset += 8;
-        let last_access_time = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
-        offset += 8;
-        let last_stored_time = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
-        offset += 8;
-        let last_update_time = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
-        offset += 8;
-        let version = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
-        offset += 8;
-        let ttl = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
-        offset += 8;
-        let max_idle = i64::from_le_bytes(content[offset..offset + 8].try_into().unwrap());
+        // Find the SimpleEntryView internal frame (skip BEGIN frame)
+        // It could be frames[1] (if no explicit BEGIN) or frames[2] (if BEGIN present)
+        let ev_frame_idx = if entry_start.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
+            2 // BEGIN at [1], internal frame at [2]
+        } else {
+            1 // No explicit BEGIN, internal frame at [1]
+        };
 
-        // Decode key from frame 1
-        if frames.len() < 3 {
+        let ev_frame = &frames[ev_frame_idx];
+        let content = &ev_frame.content;
+
+        // Decode 10 long fields from the SimpleEntryView internal frame
+        if content.len() < 80 {
+            // Not enough data for 10 longs
             return Ok(None);
         }
 
-        let key_frame = &frames[1];
+        let mut off = 0;
+        let cost = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
+        let creation_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
+        let expiration_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
+        let hits = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
+        let last_access_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
+        let last_stored_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
+        let last_update_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
+        let version = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
+        let ttl = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
+        let max_idle = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
+
+        // Key is at ev_frame_idx + 1, value at ev_frame_idx + 2
+        let key_idx = ev_frame_idx + 1;
+        let val_idx = ev_frame_idx + 2;
+
+        if frames.len() <= val_idx {
+            return Ok(None);
+        }
+
+        let key_frame = &frames[key_idx];
         if key_frame.content.len() <= 8 || key_frame.flags & IS_NULL_FLAG != 0 {
             return Ok(None);
         }
-        // Skip 8-byte Data header (partition_hash + type_id)
         let mut key_input = ObjectDataInput::new(&key_frame.content[8..]);
         let key = K::deserialize(&mut key_input)?;
 
-        // Decode value from frame 2
-        let value_frame = &frames[2];
+        let value_frame = &frames[val_idx];
         if value_frame.content.len() <= 8 || value_frame.flags & IS_NULL_FLAG != 0 {
             return Ok(None);
         }
-        // Skip 8-byte Data header
         let mut value_input = ObjectDataInput::new(&value_frame.content[8..]);
         let value = V::deserialize(&mut value_input)?;
 
