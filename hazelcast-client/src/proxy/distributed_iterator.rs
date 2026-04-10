@@ -207,15 +207,8 @@ where
             initial_frame.content.put_i32_le(self.batch_size);
         }
         message.add_frame(Self::string_frame(&self.map_name));
-        // iterationPointers: EntryListIntegerIntegerCodec
-        // Single entry: [partition_id -> table_index]
+        // iterationPointers: empty list (server will use default cursor)
         message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
-        {
-            let mut buf = BytesMut::with_capacity(8);
-            buf.extend_from_slice(&partition_id.to_be_bytes());
-            buf.extend_from_slice(&table_index.to_be_bytes());
-            message.add_frame(Frame::with_content(buf));
-        }
         message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         let response = self.invoke(partition_id, message).await?;
@@ -258,7 +251,7 @@ where
             }
             // Each entry in iterationPointers: 8 bytes = partition(i32) + tableIndex(i32)
             if begin_seen && frame.content.len() >= 8 {
-                next_table_index = i32::from_be_bytes([
+                next_table_index = i32::from_le_bytes([
                     frame.content[4], frame.content[5],
                     frame.content[6], frame.content[7],
                 ]);
@@ -384,8 +377,8 @@ where
         message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         {
             let mut buf = BytesMut::with_capacity(8);
-            buf.extend_from_slice(&partition_id.to_be_bytes());
-            buf.extend_from_slice(&table_index.to_be_bytes());
+            buf.extend_from_slice(&partition_id.to_le_bytes());
+            buf.extend_from_slice(&table_index.to_le_bytes());
             message.add_frame(Frame::with_content(buf));
         }
         message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
@@ -410,7 +403,7 @@ where
             }
             if frame.flags & END_DATA_STRUCTURE_FLAG != 0 { break; }
             if ip_begin && frame.content.len() >= 8 {
-                next_table_index = i32::from_be_bytes([
+                next_table_index = i32::from_le_bytes([
                     frame.content[4], frame.content[5],
                     frame.content[6], frame.content[7],
                 ]);
