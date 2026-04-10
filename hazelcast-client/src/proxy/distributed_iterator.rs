@@ -208,9 +208,13 @@ where
     /// Fetches the next batch of keys from a partition.
     async fn fetch_keys_batch(&mut self, partition_id: i32, table_index: i32) -> Result<(Vec<K>, i32)> {
         let mut message = ClientMessage::create_for_encode(MAP_FETCH_KEYS, partition_id);
+        // Fixed-size params in initial frame: tableIndex (int) + batch (int)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i32_le(table_index);
+            initial_frame.content.put_i32_le(self.batch_size);
+        }
         message.add_frame(Self::string_frame(&self.map_name));
-        message.add_frame(Self::int_frame(table_index));
-        message.add_frame(Self::int_frame(self.batch_size));
 
         let response = self.invoke(message).await?;
         Self::decode_keys_response(&response)
@@ -319,9 +323,13 @@ where
     /// Fetches the next batch of entries from a partition.
     async fn fetch_entries_batch(&mut self, partition_id: i32, table_index: i32) -> Result<(Vec<(K, V)>, i32)> {
         let mut message = ClientMessage::create_for_encode(MAP_FETCH_ENTRIES, partition_id);
+        // Fixed-size params in initial frame: tableIndex (int) + batch (int)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i32_le(table_index);
+            initial_frame.content.put_i32_le(self.batch_size);
+        }
         message.add_frame(Self::string_frame(&self.map_name));
-        message.add_frame(Self::int_frame(table_index));
-        message.add_frame(Self::int_frame(self.batch_size));
 
         let response = self.invoke(message).await?;
         Self::decode_entries_response(&response)

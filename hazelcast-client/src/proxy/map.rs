@@ -2275,9 +2275,13 @@ where
         let ttl_ms = ttl.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode(MAP_SET_TTL, partition_id);
+        // Fixed-size params: ttl (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(ttl_ms);
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::long_frame(ttl_ms));
 
         let response = self.invoke_on_partition_mutating(partition_id, message).await?;
         Self::decode_bool_response(&response)
