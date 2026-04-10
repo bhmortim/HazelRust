@@ -1,58 +1,32 @@
-# HazelRust Remaining Protocol Issues
+# HazelRust Remaining Issues (7/50 IMap Tests)
 
-## Status After ThreadId Fix
+## Status: 43/50 IMap Functional Tests Pass (86%)
 
-- **23/50 IMap functional tests pass** (46%)
-- **20/20 IMap performance benchmarks pass** (100%, zero errors)
-- **7/7 MultiMap data ops fixed** (threadId added)
+### Fixed in this round:
+- Lock operations: lock/try_lock/unlock/is_locked/force_unlock (moved params to initial frame)
+- try_put: moved threadId + timeout to initial frame
+- put_with_max_idle: new MAP_PUT_WITH_MAX_IDLE opcode (0x014400)
 
-## Working Methods (Confirmed)
+### Still Failing (7 tests):
 
-These methods work correctly end-to-end:
-- `put()`, `get()`, `remove()`, `delete()`, `set()`
-- `contains_key()`, `compute()`, `compute_if_absent()`, `compute_if_present()`
-- `put_returns_old()`, `remove_returns_old()`
-- `get_nonexistent()`, `size_empty()`, `evict_all()`, `flush()`
-- `put_with_ttl()`, `set_with_ttl_and_max_idle()`
-- `empty_key_and_value()`, `special_characters()`, `large_values()`
-- `integer_keys_values()`, `clone_shares_state()`
+1. **put_all** — MapPutAllCodec frame encoding mismatch
+   - Entries stored via EntryListCodec (BEGIN/END frames) but server doesn't process them
+   - May need partition-grouped sending instead of random member
 
-## Remaining Failures (Deeper Issues)
+2. **set_all** — Same issue as put_all
 
-### Category 1: Response Decoding Mismatches
-These methods execute without error but return wrong values:
-- `replace()` — returns None instead of old value
-- `replace_if_equal()` — CAS match returns false
-- `put_if_absent()` — returns None AND doesn't store the value
-- `remove_if_equal()` — always returns false
+3. **put_all_large_batch** — Same issue (larger scale)
 
-Root cause: The server may interpret the frame layout differently
-than expected, causing the response to have a different structure
-than `decode_nullable_response()` expects.
+4. **get_all** — Response decoding returns empty
+   - Request encoding looks correct (BEGIN/END list frames)
+   - decode_entries_response may skip valid data frames
 
-### Category 2: Lock Operations
-- `lock()`, `try_lock()`, `unlock()`, `is_locked()`, `force_unlock()`
-All lock ops fail. These use Pattern B (separate frames with
-self.thread_id) which may have incorrect frame ordering.
+5. **key_set_collects_all** — DistributedIterator returns empty
+   - Data header skip applied but may be incorrect
+   - Partition iteration may miss data
 
-### Category 3: Collection Operations
-- `size()` — returns 0 for non-empty maps
-- `is_empty()` — returns true for non-empty maps
-- `clear()` — may not actually clear
-- `key_set()`, `entry_set()` — return empty (iterator issue)
-- `put_all()`, `set_all()`, `get_all()` — batch ops fail
+6. **entry_set_collects_all** — Same as key_set
 
-### Category 4: Advanced Operations
-- `evict()`, `get_entry_view()`, `put_transient()`
-- `put_with_max_idle()`, `contains_value()`
-
-## Recommended Next Steps
-
-1. **Packet capture comparison**: Run the same operations from the
-   Java Hazelcast client and the Rust client, compare wire format
-2. **Opcode verification**: Cross-reference every opcode constant
-   against the Hazelcast 5.x protocol specification
-3. **Response frame analysis**: Add debug logging to dump response
-   frames for failing methods, compare with expected format
-4. **Lock thread_id investigation**: Verify that self.thread_id is
-   initialized correctly and matches the server's expectations
+7. **get_entry_view** — Complex EntryView response decoding
+   - Response has many typed fields (key, value, cost, creation_time, etc.)
+   - Decoder may not handle the multi-field response correctly
