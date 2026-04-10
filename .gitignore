@@ -12,3 +12,4 @@
 
 # Rust build artifacts
 /target/
+.claude/worktrees/
