@@ -140,7 +140,7 @@ impl<T> DistributedIterator<T> {
         let partition_cursors: Vec<PartitionCursor> = (0..partition_count)
             .map(|id| PartitionCursor {
                 partition_id: id,
-                table_index: -1, // Start from beginning (Hazelcast convention: -1 = not started)
+                table_index: 0, // Start from slot 0
                 has_more: true,
             })
             .collect();
