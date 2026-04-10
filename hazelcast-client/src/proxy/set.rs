@@ -288,7 +288,7 @@ where
                 break;
             }
             let item_data = &content[offset..offset + item_len];
-            let mut input = hazelcast_core::serialization::ObjectDataInput::new(item_data.to_vec());
+            let mut input = hazelcast_core::serialization::ObjectDataInput::new(item_data);
             let item = T::deserialize(&mut input)?;
             items.push(item);
             offset += item_len;
