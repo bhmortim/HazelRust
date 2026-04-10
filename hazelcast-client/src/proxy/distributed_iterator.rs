@@ -2,7 +2,6 @@
 
 use std::collections::VecDeque;
 use std::marker::PhantomData;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::BytesMut;
@@ -188,16 +187,9 @@ impl<T> DistributedIterator<T> {
         Frame::with_content(buf)
     }
 
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
-    }
-
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let _address = self.get_connection_address().await?;
-        self.connection_manager.invoke_on_random(message).await
+    async fn invoke(&self, partition_id: i32, message: ClientMessage) -> Result<ClientMessage> {
+        // Route to partition owner for partition-specific fetch operations
+        self.connection_manager.invoke_on_partition(partition_id, message).await
     }
 }
 
@@ -216,7 +208,7 @@ where
         }
         message.add_frame(Self::string_frame(&self.map_name));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke(partition_id, message).await?;
         Self::decode_keys_response(&response)
     }
 
@@ -331,7 +323,7 @@ where
         }
         message.add_frame(Self::string_frame(&self.map_name));
 
-        let response = self.invoke(message).await?;
+        let response = self.invoke(partition_id, message).await?;
         Self::decode_entries_response(&response)
     }
 
