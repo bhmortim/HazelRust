@@ -207,17 +207,15 @@ where
             initial_frame.content.put_i32_le(self.batch_size);
         }
         message.add_frame(Self::string_frame(&self.map_name));
-        // iterationPointers: list of (tableIndex, tableSize) pairs
-        // For initial iteration: tableIndex=table_index, tableSize=0
-        // For subsequent: use values from response iterationPointers
-        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        // iterationPointers: EntryListIntegerIntegerCodec
+        // Single frame with packed int pairs: [key0(4) val0(4) key1(4) val1(4) ...]
+        // For a single-partition fetch: one entry (tableIndex, tableSize)
         {
             let mut buf = BytesMut::with_capacity(8);
-            buf.extend_from_slice(&table_index.to_le_bytes()); // tableIndex (-1 = start)
-            buf.extend_from_slice(&0i32.to_le_bytes()); // tableSize (0 = unknown)
+            buf.extend_from_slice(&table_index.to_le_bytes());
+            buf.extend_from_slice(&0i32.to_le_bytes()); // tableSize = 0 (unknown)
             message.add_frame(Frame::with_content(buf));
         }
-        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         let response = self.invoke(partition_id, message).await?;
         Self::decode_keys_response(&response)
@@ -229,64 +227,43 @@ where
             return Ok((Vec::new(), -1));
         }
 
-        // Extract next table index from iterationPointers section
-        // The iterationPointers is an EntryListIntegerIntegerCodec:
-        // BEGIN, [frame with 8 bytes: partition(i32) + tableIndex(i32)], END
-        // We extract the tableIndex from the first entry.
+        // Response structure (MapFetchKeysCodec):
+        // [0] Initial frame (response header)
+        // [1] iterationPointers: SINGLE frame with packed int pairs (EntryListIntegerIntegerCodec)
+        // [2] ListMultiFrameCodec BEGIN frame
+        // [3..N-1] Data key frames
+        // [N] ListMultiFrameCodec END frame
+
+        // Extract next table index from iterationPointers (frame[1])
         let mut next_table_index: i32 = -1;
-        let mut begin_seen = false;
-        for frame in frames.iter().skip(1) {
-            if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
-                if !begin_seen {
-                    begin_seen = true;
-                    continue;
-                }
-                break; // second BEGIN = start of keys section
-            }
-            if frame.flags & END_DATA_STRUCTURE_FLAG != 0 {
-                break; // end of iterationPointers
-            }
-            // Each entry in iterationPointers: 8 bytes = partition(i32) + tableIndex(i32)
-            if begin_seen && frame.content.len() >= 8 {
+        if frames.len() >= 2 {
+            let ip_frame = &frames[1];
+            if ip_frame.content.len() >= 8 {
+                // First entry: key=tableIndex(i32), value=tableSize(i32)
                 next_table_index = i32::from_le_bytes([
-                    frame.content[4], frame.content[5],
-                    frame.content[6], frame.content[7],
+                    ip_frame.content[0], ip_frame.content[1],
+                    ip_frame.content[2], ip_frame.content[3],
                 ]);
             }
         }
 
-        // Response structure (MapFetchKeysCodec):
-        // [0] Initial frame (response header, empty)
-        // [1..] iterationPointers: EntryListIntegerIntegerCodec (BEGIN, int pairs, END)
-        // [...] keys: ListMultiFrameCodec (BEGIN, Data key frames, END)
-        //
-        // We need to skip the iterationPointers section and only read the keys section.
-        // Count BEGIN/END pairs: first pair is iterationPointers, second is keys.
+        // Read keys from frames[2..] (ListMultiFrameCodec: BEGIN, data frames, END)
         let mut keys = Vec::new();
-        let mut begin_count = 0;
-        let mut in_keys_section = false;
-
-        for frame in frames.iter().skip(1) {
+        let mut in_list = false;
+        for frame in frames.iter().skip(2) {
             if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
-                begin_count += 1;
-                if begin_count == 2 {
-                    in_keys_section = true; // second BEGIN = keys list
-                }
+                in_list = true;
                 continue;
             }
             if frame.flags & END_DATA_STRUCTURE_FLAG != 0 {
-                if in_keys_section {
-                    break; // end of keys list
-                }
-                continue;
+                break;
             }
-            if !in_keys_section {
-                continue; // skip iterationPointers content
+            if !in_list {
+                continue;
             }
             if frame.flags & IS_NULL_FLAG != 0 || frame.content.len() <= 8 {
                 continue;
             }
-
             // Skip 8-byte Data header (partition_hash + type_id)
             let payload = &frame.content[8..];
             let mut input = ObjectDataInput::new(payload);
@@ -390,42 +367,36 @@ where
             return Ok((Vec::new(), -1));
         }
 
-        // Extract next table index from iterationPointers section
+        // Response structure (MapFetchEntriesCodec):
+        // [0] Initial frame (response header)
+        // [1] iterationPointers: SINGLE frame (EntryListIntegerIntegerCodec)
+        // [2] EntryListCodec BEGIN frame
+        // [3..N-1] alternating key/value Data frames
+        // [N] EntryListCodec END frame
+
         let mut next_table_index: i32 = -1;
-        let mut ip_begin = false;
-        for frame in frames.iter().skip(1) {
-            if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
-                if !ip_begin { ip_begin = true; continue; }
-                break;
-            }
-            if frame.flags & END_DATA_STRUCTURE_FLAG != 0 { break; }
-            if ip_begin && frame.content.len() >= 8 {
+        if frames.len() >= 2 {
+            let ip_frame = &frames[1];
+            if ip_frame.content.len() >= 8 {
                 next_table_index = i32::from_le_bytes([
-                    frame.content[4], frame.content[5],
-                    frame.content[6], frame.content[7],
+                    ip_frame.content[0], ip_frame.content[1],
+                    ip_frame.content[2], ip_frame.content[3],
                 ]);
             }
         }
 
-        // Response structure (MapFetchEntriesCodec):
-        // [0] Initial frame (response header)
-        // [...] iterationPointers: EntryListIntegerIntegerCodec (BEGIN, int pairs, END)
-        // [...] entries: EntryListCodec (BEGIN, [key, val, key, val...], END)
         let mut entries = Vec::new();
-        let mut begin_count = 0u32;
-        let mut in_entries = false;
+        let mut in_list = false;
         let mut data_frames = Vec::new();
-        for frame in frames.iter().skip(1) {
+        for frame in frames.iter().skip(2) {
             if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
-                begin_count += 1;
-                if begin_count == 2 { in_entries = true; }
+                in_list = true;
                 continue;
             }
             if frame.flags & END_DATA_STRUCTURE_FLAG != 0 {
-                if in_entries { break; }
-                continue;
+                break;
             }
-            if !in_entries { continue; }
+            if !in_list { continue; }
             if frame.flags & IS_NULL_FLAG == 0 && frame.content.len() > 8 {
                 data_frames.push(frame);
             }
