@@ -140,7 +140,7 @@ impl<T> DistributedIterator<T> {
         let partition_cursors: Vec<PartitionCursor> = (0..partition_count)
             .map(|id| PartitionCursor {
                 partition_id: id,
-                table_index: 0, // Start from beginning (0, not -1)
+                table_index: i32::MAX, // Start from beginning (MAX_VALUE per Hazelcast convention)
                 has_more: true,
             })
             .collect();
@@ -200,15 +200,22 @@ where
 {
     /// Fetches the next batch of keys from a partition.
     async fn fetch_keys_batch(&mut self, partition_id: i32, table_index: i32) -> Result<(Vec<K>, i32)> {
-        let mut message = ClientMessage::create_for_encode(MAP_FETCH_KEYS, PARTITION_ID_ANY);
+        let mut message = ClientMessage::create_for_encode(MAP_FETCH_KEYS, partition_id);
         // Fixed-size param in initial frame: batch (int) ONLY
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
             initial_frame.content.put_i32_le(self.batch_size);
         }
         message.add_frame(Self::string_frame(&self.map_name));
-        // iterationPointers: empty list (server will use default cursor)
+        // iterationPointers: single entry [partition_id -> table_index]
+        // table_index=MAX_VALUE means "start from beginning" in Hazelcast
         message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        {
+            let mut buf = BytesMut::with_capacity(8);
+            buf.extend_from_slice(&partition_id.to_le_bytes());
+            buf.extend_from_slice(&table_index.to_le_bytes());
+            message.add_frame(Frame::with_content(buf));
+        }
         message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         let response = self.invoke(partition_id, message).await?;
@@ -366,7 +373,7 @@ where
 {
     /// Fetches the next batch of entries from a partition.
     async fn fetch_entries_batch(&mut self, partition_id: i32, table_index: i32) -> Result<(Vec<(K, V)>, i32)> {
-        let mut message = ClientMessage::create_for_encode(MAP_FETCH_ENTRIES, PARTITION_ID_ANY);
+        let mut message = ClientMessage::create_for_encode(MAP_FETCH_ENTRIES, partition_id);
         // Fixed-size param: batch (int) ONLY
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
