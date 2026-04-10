@@ -1487,44 +1487,11 @@ where
     where
         K: Clone,
     {
-        self.check_permission(PermissionAction::Put)?;
-        self.check_quorum(false).await?;
-
-        if entries.is_empty() {
-            return Ok(());
-        }
-
-        let mut serialized_entries = Vec::with_capacity(entries.len());
-        for (key, value) in &entries {
-            let key_data = Self::serialize_value(key)?;
-            let value_data = Self::serialize_value(value)?;
-            serialized_entries.push((key_data, value_data));
-        }
-
-        if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache.lock().unwrap();
-            for (key_data, _) in &serialized_entries {
-                cache_guard.invalidate(key_data);
-            }
-        }
-
-        let mut message = ClientMessage::create_for_encode(MAP_PUT_ALL, PARTITION_ID_ANY);
-        // Fixed-size param: triggerMapLoader (boolean) = true
-        if let Some(initial_frame) = message.frames_mut().first_mut() {
-            use bytes::BufMut;
-            initial_frame.content.put_u8(1); // triggerMapLoader = true
-        }
-        message.add_frame(Self::string_frame(&self.name));
-        // Entries as EntryList: BEGIN, [key, val, key, val...], END
-        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
-        for (key_data, value_data) in serialized_entries {
-            message.add_frame(Self::data_frame(&key_data));
-            message.add_frame(Self::data_frame(&value_data));
-        }
-        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
-
-        self.invoke_on_random_mutating(message).await?;
-        Ok(())
+        // Delegate to put_all_partitioned which groups entries by partition
+        // and sends per-partition MAP_PUT_ALL requests. Sending all entries
+        // to a random member doesn't work — the server needs partition-local data.
+        let pairs: Vec<(K, V)> = entries.into_iter().collect();
+        self.put_all_partitioned(pairs).await
     }
 
     /// Asynchronously puts all entries from the given map into this map.
@@ -1573,9 +1540,17 @@ where
     where
         K: Clone,
     {
-        self.check_permission(PermissionAction::Put)?;
-        self.check_quorum(false).await?;
+        // Delegate to put_all_partitioned
+        let pairs: Vec<(K, V)> = entries.into_iter().collect();
+        self.put_all_partitioned(pairs).await
+    }
 
+    #[doc(hidden)]
+    #[allow(dead_code, unreachable_code)]
+    async fn _set_all_original(&self, entries: HashMap<K, V>) -> Result<()>
+    where
+        K: Clone,
+    {
         if entries.is_empty() {
             return Ok(());
         }
