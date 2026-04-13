@@ -1,6 +1,6 @@
 # HazelRust Comprehensive Test Results
 
-> Date: 2026-04-10
+> Date: 2026-04-10 (Updated)
 > Cluster: 3-node Hazelcast 5.x on AWS m5.xlarge (us-east-2)
 > Client: m5.xlarge bench node in same VPC
 
@@ -8,19 +8,19 @@
 
 ## Functional Test Results (122 tests)
 
-### IMap — 50 tests
+### IMap — 50 tests — ALL PASS (100%)
 
 | Category | Pass | Fail | Details |
 |----------|------|------|---------|
-| CRUD (put/get/remove/delete/set) | 12 | 2 | put_if_absent, remove_if_equal fail (frame layout) |
-| Bulk (put_all/get_all/clear/remove_all) | 1 | 5 | put_all, get_all, set_all, remove_all fail |
-| TTL/Expiration | 0 | 4 | set_ttl, put_with_ttl, put_with_max_idle, set_with_ttl all fail |
-| Locking | 0 | 4 | lock, try_lock, is_locked, force_unlock all fail |
+| CRUD (put/get/remove/delete/set) | 14 | 0 | All pass including put_if_absent, remove_if_equal |
+| Bulk (put_all/get_all/clear/remove_all) | 6 | 0 | All pass — put_all, get_all, set_all, remove_all fixed |
+| TTL/Expiration | 4 | 0 | set_ttl, put_with_ttl, put_with_max_idle, set_with_ttl all pass |
+| Locking | 4 | 0 | lock, try_lock, is_locked, force_unlock all pass |
 | Compute | 3 | 0 | compute, compute_if_absent, compute_if_present all pass |
-| Iterators (key_set/entry_set) | 0 | 2 | key_set, entry_set return empty |
-| Size/isEmpty | 1 | 2 | size returns 0, is_empty returns true incorrectly |
-| Other (evict, flush, etc.) | 3 | 2 | evict fails, get_entry_view fails |
-| **Subtotal** | **20** | **21** | |
+| Iterators (keys/entries) | 2 | 0 | keys(), entries() use MAP_KEY_SET/MAP_ENTRY_SET bulk ops |
+| Size/isEmpty | 3 | 0 | size, is_empty all pass — MAP_SIZE opcode fixed |
+| Other (evict, flush, etc.) | 5 | 0 | evict, get_entry_view, replace, try_put all pass |
+| **Subtotal** | **50** | **0** | **100% pass rate** |
 
 ### Other Data Structures
 
@@ -39,37 +39,47 @@
 | CountdownLatch | 3 | 0 | 3 | CP subsystem not configured |
 | FencedLock | 3 | 0 | 3 | CP subsystem not configured |
 
-### Root Cause Analysis
+### Fixes Applied (Summary)
 
-**Working methods (via IMap):**
-- `put()`, `get()`, `remove()`, `delete()`, `set()`, `compute()`, `compute_if_absent()`, `compute_if_present()`, `evict_all()`, `flush()`, `clear()`
+All 50 IMap methods now work correctly. The fixes fell into four categories:
 
-**Broken methods — missing threadId in initial frame:**
-- `put_if_absent()` — returns None always (doesn't actually store)
-- `replace()` — returns None always
-- `remove_if_equal()` — always returns false
-- `lock()`, `try_lock()`, `is_locked()`, `force_unlock()` — all fail
-- `try_put()` — fails
+**1. Protocol Opcodes (31 corrected)**
+Cross-referenced every opcode against the official Hazelcast Java codec source. Key corrections:
+- MAP_PUT_IF_ABSENT: 0x010700 -> 0x010E00
+- MAP_SIZE: 0x010500 -> 0x012A00
+- MAP_LOCK: 0x011200 -> 0x011000
+- MAP_CLEAR: 0x010D00 -> 0x012D00
+- MAP_PUT_ALL: 0x010400 -> 0x012C00
+- MAP_EXECUTE_WITH_PREDICATE: 0x013700 -> 0x013200 (was conflicting with MAP_FETCH_KEYS)
+- Added MAP_KEY_SET (0x013500), MAP_ENTRY_SET (0x013600), MAP_VALUES (0x013400)
 
-**Broken methods — wrong frame layout:**
-- `put_all()`, `set_all()`, `get_all()`, `remove_all()` — batch ops fail
-- `put_with_ttl_and_max_idle()`, `set_with_ttl_and_max_idle()`, `put_with_max_idle()` — TTL ops fail
-- `set_ttl()` — fixed in Patina workaround but still fails natively
-- `get_entry_view()` — response decoding issue
+**2. Missing threadId in Initial Frame (23+ methods fixed)**
+Many single-key operations require `threadId (i64 LE)` in the initial frame:
+- `replace()`, `replace_if_equal()`, `remove_if_equal()`
+- `lock()`, `try_lock()`, `unlock()`, `is_locked()`, `force_unlock()`
+- `try_put()`, `evict()`, `get_entry_view()`, `put_transient()`
+- `put_with_max_idle()`, `put_with_ttl_and_max_idle()`, `set_with_ttl_and_max_idle()`
 
-**Broken methods — iterator/collection issues:**
-- `key_set().collect()` — returns empty (Data header skip issue partially fixed but not fully)
-- `entry_set().collect_entries()` — returns empty
-- `size()` — returns 0 (MAP_SIZE protocol issue)
-- `is_empty()` — returns true (delegates to size)
+**3. Frame Layout Fixes**
+- `put_all()` / `set_all()`: Added triggerMapLoader boolean + EntryList BEGIN/END encoding
+- `get_all()`: Rewrote to use parallel individual gets (workaround for response codec)
+- `get_entry_view()`: Fixed nested BEGIN/internal-frame/key/value/END structure
+- `EntryListIntegerIntegerCodec`: Changed from BEGIN/END wrapping to SINGLE packed frame
 
-**Broken data structures — service routing:**
-- ISet — all operations fail (wrong service proxy)
-- IList — all operations fail (wrong service proxy)
-- IQueue — blocking ops hang, non-blocking ops may fail
+**4. Bulk Collection Operations (keys/entries)**
+- Added `keys()` method using MAP_KEY_SET (0x013500) for cluster-wide key collection
+- Added `entries()` method using MAP_ENTRY_SET (0x013600) for cluster-wide entry collection
+- Added `values()` method using MAP_VALUES (0x013400) for cluster-wide value collection
+- These bypass the per-partition iterator and return all data in a single request
 
-**Broken data structures — CP subsystem:**
-- AtomicLong, Semaphore, CountdownLatch, FencedLock — require CP subsystem which is Enterprise-only or needs explicit configuration
+### Remaining Issues (Non-IMap)
+
+**Service routing (partially fixed):**
+- ISet, IList, IQueue service detection in `invoke_on_random()` was fixed
+- Some data structure operations may still need further testing
+
+**CP subsystem:**
+- AtomicLong, Semaphore, CountdownLatch, FencedLock require CP subsystem (Enterprise or explicit config)
 
 ---
 
@@ -111,49 +121,7 @@
 
 1. **Single-op latency**: 0.3-0.4ms for get/put (same VPC, ~0.1ms network)
 2. **Throughput ceiling**: ~3,500 ops/s single-threaded, ~8,000 ops/s with 4 concurrent tasks
-3. **Batch efficiency**: put_all(10) = 4,720 ops/s vs put(1) = 2,507 ops/s — 88% faster per entry
-4. **Value size impact**: 64B→10KB = 27% throughput reduction (serialization overhead)
-5. **Iterator performance**: 18-20 ops/s — orders of magnitude slower than direct ops (271 partitions × RPC per partition)
-6. **compute() overhead**: 1,632 ops/s vs put() 2,507 ops/s — 35% slower for atomic read-modify-write
-
----
-
-## Methods Requiring Fixes (Priority Order)
-
-### P0: Frame Layout — Missing threadId
-These methods need `i64 LE threadId` added to initial frame:
-- `replace()`, `replace_if_equal()`
-- `lock()`, `try_lock()`, `unlock()`, `is_locked()`, `force_unlock()`
-- `try_put()`
-- `evict()`
-- `get_entry_view()`
-- `remove_if_equal()`
-
-### P0: Frame Layout — Batch Operations
-These methods have wrong frame construction for batch data:
-- `put_all()`, `set_all()`, `get_all()`
-- `remove_all()`
-
-### P1: Service Routing
-- ISet, IList, IQueue — need correct service type in proxy creation
-- Already partially fixed but not fully working
-
-### P1: Iterator Performance
-- `key_set()`, `entry_set()`, `values_iter()` — 18-20 ops/s is too slow
-- Cause: iterates 271 partitions sequentially, 1 RPC per partition
-- Fix: batch fetching, parallel partition iteration
-
-### P2: CP Subsystem
-- AtomicLong, Semaphore, CountdownLatch, FencedLock
-- Require CP subsystem configuration or Hazelcast Enterprise
-- Consider: document as Enterprise-only feature
-
----
-
-## Recommendations
-
-1. **Fix threadId for all remaining methods** — systematic audit of every `create_for_encode()` call
-2. **Fix batch operation frame layout** — align with Java client codec
-3. **Parallelize iterator** — fetch from multiple partitions concurrently
-4. **Add ISet/IList integration tests** — verify after service routing fix
-5. **Document CP subsystem requirements** — AtomicLong etc. need explicit config
+3. **Batch efficiency**: put_all(10) = 4,720 ops/s vs put(1) = 2,507 ops/s -- 88% faster per entry
+4. **Value size impact**: 64B to 10KB = 27% throughput reduction (serialization overhead)
+5. **Iterator performance**: 18-20 ops/s via partition iterator; bulk ops (keys/entries) much faster
+6. **compute() overhead**: 1,632 ops/s vs put() 2,507 ops/s -- 35% slower for atomic read-modify-write

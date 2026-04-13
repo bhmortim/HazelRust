@@ -612,7 +612,7 @@ pub const MAP_EXECUTE_ON_KEYS: i32 = 0x012F00;
 pub const MAP_EXECUTE_ON_ALL_KEYS: i32 = 0x013000;
 
 /// Map execute on entries with predicate request.
-pub const MAP_EXECUTE_WITH_PREDICATE: i32 = 0x013700;
+pub const MAP_EXECUTE_WITH_PREDICATE: i32 = 0x013200;
 
 /// Map add index request.
 pub const MAP_ADD_INDEX: i32 = 0x013100;
@@ -946,13 +946,22 @@ pub const MAP_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x014100;
 /// Map event journal read request.
 pub const MAP_EVENT_JOURNAL_READ: i32 = 0x014200;
 
-/// Map fetch keys request (for iteration).
+/// Map values request (returns all values from the entire map).
+pub const MAP_VALUES: i32 = 0x013400;
+
+/// Map key set request (returns all keys from the entire map).
+pub const MAP_KEY_SET: i32 = 0x013500;
+
+/// Map entry set request (returns all entries from the entire map).
+pub const MAP_ENTRY_SET: i32 = 0x013600;
+
+/// Map fetch keys request (for partition-level iteration).
 pub const MAP_FETCH_KEYS: i32 = 0x013700;
 
-/// Map fetch entries request (for iteration).
+/// Map fetch entries request (for partition-level iteration).
 pub const MAP_FETCH_ENTRIES: i32 = 0x013800;
 
-/// Map fetch values request (for iteration).
+/// Map fetch values request (for partition-level iteration).
 pub const MAP_FETCH_VALUES: i32 = 0x013900;
 
 /// Map contains value request.

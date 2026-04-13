@@ -347,15 +347,15 @@ where
             initial_frame.content.put_i32_le(self.batch_size);
         }
         message.add_frame(Self::string_frame(&self.map_name));
-        // iterationPointers: [partition_id -> table_index]
-        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        // iterationPointers: EntryListIntegerIntegerCodec
+        // Single frame with packed int pairs: [key0(4) val0(4) key1(4) val1(4) ...]
+        // For a single-partition fetch: one entry (tableIndex, tableSize)
         {
             let mut buf = BytesMut::with_capacity(8);
-            buf.extend_from_slice(&partition_id.to_le_bytes());
             buf.extend_from_slice(&table_index.to_le_bytes());
+            buf.extend_from_slice(&0i32.to_le_bytes()); // tableSize = 0 (unknown)
             message.add_frame(Frame::with_content(buf));
         }
-        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         let response = self.invoke(partition_id, message).await?;
         Self::decode_entries_response(&response)

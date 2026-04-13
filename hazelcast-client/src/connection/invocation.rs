@@ -299,4 +299,20 @@ impl InvocationService {
     pub fn addresses(&self) -> Vec<SocketAddr> {
         self.pools.iter().map(|entry| *entry.key()).collect()
     }
+
+    /// Check if a specific address has an active connection pool (O(1) DashMap lookup).
+    pub fn has_address(&self, addr: &SocketAddr) -> bool {
+        self.pools.contains_key(addr)
+    }
+
+    /// Check if a proxy has been created for the given name (fast byte-level check).
+    /// Avoids String allocation on the hot path.
+    pub fn is_proxy_created_bytes(&self, name_bytes: &[u8]) -> bool {
+        if let Ok(name) = std::str::from_utf8(name_bytes) {
+            if let Ok(proxies) = self.created_proxies.try_read() {
+                return proxies.contains(name);
+            }
+        }
+        false // Conservative: if lock contended, do the full ensure_proxy
+    }
 }

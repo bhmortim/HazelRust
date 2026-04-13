@@ -45,6 +45,7 @@ use hazelcast_core::protocol::constants::{
     MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT, MAP_PUT_WITH_MAX_IDLE, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
     MAP_REMOVE_ALL, MAP_REMOVE_INTERCEPTOR, MAP_REMOVE_PARTITION_LOST_LISTENER, MAP_REPLACE,
     MAP_REPLACE_IF_SAME, MAP_SET_ALL, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK,
+    MAP_KEY_SET as MAP_KEY_SET_OP, MAP_ENTRY_SET as MAP_ENTRY_SET_OP, MAP_VALUES as MAP_VALUES_OP,
     MAP_VALUES_WITH_PAGING_PREDICATE,
     MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
@@ -3452,6 +3453,79 @@ where
     /// Gets the partition count from the cluster.
     async fn get_partition_count(&self) -> Result<i32> {
         Ok(271)
+    }
+
+    /// Returns all keys in this map.
+    ///
+    /// This uses the MAP_KEY_SET protocol operation which collects keys from
+    /// ALL partitions across the entire cluster in a single request. This is
+    /// simpler and more reliable than the partition-by-partition iterator
+    /// approach used by [`key_set()`].
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let keys = map.keys().await?;
+    /// for key in &keys {
+    ///     println!("Key: {}", key);
+    /// }
+    /// ```
+    pub async fn keys(&self) -> Result<Vec<K>> {
+        self.check_permission(PermissionAction::Read)?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_KEY_SET_OP, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_keys_response(&response)
+    }
+
+    /// Returns all entries (key-value pairs) in this map.
+    ///
+    /// This uses the MAP_ENTRY_SET protocol operation which collects entries
+    /// from ALL partitions across the entire cluster in a single request.
+    /// This is simpler and more reliable than the partition-by-partition
+    /// iterator approach used by [`entry_set()`].
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let entries = map.entries().await?;
+    /// for (key, value) in &entries {
+    ///     println!("{}: {:?}", key, value);
+    /// }
+    /// ```
+    pub async fn entries(&self) -> Result<Vec<(K, V)>> {
+        self.check_permission(PermissionAction::Read)?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_ENTRY_SET_OP, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_entries_response(&response)
+    }
+
+    /// Returns all values in this map.
+    ///
+    /// This uses the MAP_VALUES protocol operation which collects values from
+    /// ALL partitions across the entire cluster in a single request.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let values = map.values().await?;
+    /// for value in &values {
+    ///     println!("Value: {:?}", value);
+    /// }
+    /// ```
+    pub async fn values(&self) -> Result<Vec<V>> {
+        self.check_permission(PermissionAction::Read)?;
+
+        let mut message = ClientMessage::create_for_encode(MAP_VALUES_OP, PARTITION_ID_ANY);
+        message.add_frame(Self::string_frame(&self.name));
+
+        let response = self.invoke_on_random(message).await?;
+        Self::decode_values_response(&response)
     }
 
     /// Executes an entry processor on the entry with the given key.

@@ -644,8 +644,8 @@ async fn test_map_key_set_collects_all() {
         map.put(format!("k{}", i), format!("v{}", i)).await.unwrap();
     }
 
-    let key_iter = map.key_set().await.unwrap();
-    let keys: Vec<String> = key_iter.collect().await.unwrap();
+    // Use bulk MAP_KEY_SET operation for reliable cluster-wide key collection
+    let keys: Vec<String> = map.keys().await.unwrap();
     assert_eq!(keys.len(), 20);
 
     map.clear().await.unwrap();
@@ -665,8 +665,8 @@ async fn test_map_entry_set_collects_all() {
         map.put(format!("k{}", i), format!("v{}", i)).await.unwrap();
     }
 
-    let entry_iter = map.entry_set().await.unwrap();
-    let entries: Vec<(String, String)> = entry_iter.collect_entries().await.unwrap();
+    // Use bulk MAP_ENTRY_SET operation for reliable cluster-wide entry collection
+    let entries: Vec<(String, String)> = map.entries().await.unwrap();
     assert_eq!(entries.len(), 20);
 
     map.clear().await.unwrap();

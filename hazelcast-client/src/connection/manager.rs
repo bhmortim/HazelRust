@@ -77,6 +77,9 @@ pub struct ConnectionManager {
     members: Arc<RwLock<HashMap<Uuid, Member>>>,
     partition_table: Arc<RwLock<HashMap<i32, Uuid>>>,
     partition_count: AtomicI32,
+    /// Fast partition→address cache: indexed by partition_id, zero-lock lookup.
+    /// Rebuilt atomically when partition table or member list changes.
+    partition_address_cache: std::sync::RwLock<Vec<Option<SocketAddr>>>,
     event_sender: broadcast::Sender<ConnectionEvent>,
     membership_sender: broadcast::Sender<MemberEvent>,
     lifecycle_sender: broadcast::Sender<LifecycleEvent>,
@@ -148,6 +151,7 @@ impl ConnectionManager {
             members: Arc::new(RwLock::new(HashMap::new())),
             partition_table: Arc::new(RwLock::new(HashMap::new())),
             partition_count: AtomicI32::new(0),
+            partition_address_cache: std::sync::RwLock::new(Vec::new()),
             event_sender,
             membership_sender,
             lifecycle_sender,
@@ -215,6 +219,7 @@ impl ConnectionManager {
             members: Arc::new(RwLock::new(HashMap::new())),
             partition_table: Arc::new(RwLock::new(HashMap::new())),
             partition_count: AtomicI32::new(0),
+            partition_address_cache: std::sync::RwLock::new(Vec::new()),
             event_sender,
             membership_sender,
             lifecycle_sender,
@@ -1058,16 +1063,12 @@ impl ConnectionManager {
     /// - The quorum is present (enough cluster members)
     ///
     /// Returns `Err(HazelcastError::QuorumNotPresent)` if quorum is not met.
-    #[instrument(
-        name = "connection_manager.check_quorum",
-        skip(self),
-        fields(
-            data_structure = %name,
-            operation = if is_read_operation { "read" } else { "write" }
-        ),
-        level = "debug"
-    )]
+    // NOTE: #[instrument] removed for hot-path performance (Opt 4).
     pub async fn check_quorum(&self, name: &str, is_read_operation: bool) -> Result<()> {
+        // Opt 3: fast-path when no quorum configs exist (common case)
+        if self.config.quorum_configs().is_empty() {
+            return Ok(());
+        }
         if let Some(quorum_config) = self.config.find_quorum_config(name) {
             if quorum_config.protects_operation(is_read_operation) {
                 let members = self.members().await;
@@ -1143,6 +1144,8 @@ impl ConnectionManager {
         let mut table = self.partition_table.write().await;
         *table = partitions;
         self.partition_count.store(count, std::sync::atomic::Ordering::Release);
+        drop(table);
+        self.rebuild_partition_address_cache().await;
         tracing::debug!(partition_count = count, "updated partition table");
     }
 
@@ -1153,7 +1156,37 @@ impl ConnectionManager {
         let count = table.len() as i32;
         drop(table);
         self.partition_count.store(count, std::sync::atomic::Ordering::Release);
+        self.rebuild_partition_address_cache().await;
         tracing::trace!(partition_id = partition_id, owner = %owner, "updated partition owner");
+    }
+
+    /// Rebuilds the fast partition→address cache from the partition table and members map.
+    /// This is called whenever partition assignments or member list changes.
+    async fn rebuild_partition_address_cache(&self) {
+        let table = self.partition_table.read().await;
+        let members = self.members.read().await;
+        let max_partition = table.keys().copied().max().unwrap_or(0) as usize;
+        let mut cache = vec![None; max_partition + 1];
+        for (&pid, &uuid) in table.iter() {
+            if let Some(member) = members.get(&uuid) {
+                cache[pid as usize] = Some(member.address());
+            }
+        }
+        drop(members);
+        drop(table);
+        if let Ok(mut c) = self.partition_address_cache.write() {
+            *c = cache;
+        }
+    }
+
+    /// Fast, zero-lock lookup of partition owner address from the cache.
+    /// Returns None if the cache hasn't been built yet or partition is unknown.
+    fn get_cached_partition_address(&self, partition_id: i32) -> Option<SocketAddr> {
+        if let Ok(cache) = self.partition_address_cache.read() {
+            cache.get(partition_id as usize).copied().flatten()
+        } else {
+            None
+        }
     }
 
     /// Returns the UUID of the member that owns the specified partition.
@@ -1179,29 +1212,27 @@ impl ConnectionManager {
     /// - Returns any available connection without partition-aware routing.
     ///
     /// Returns an error only if no connections are available at all.
-    #[instrument(
-        name = "connection_manager.get_connection_for_partition",
-        skip(self),
-        fields(partition_id = partition_id, smart_routing = self.config.network().smart_routing()),
-        level = "debug"
-    )]
+    // NOTE: #[instrument] intentionally removed from this hot-path function for performance.
     pub async fn get_connection_for_partition(&self, partition_id: i32) -> Result<SocketAddr> {
         if self.config.network().smart_routing() {
-            if let Some(owner_address) = self.get_partition_owner_address(partition_id).await {
-                let inv_addrs = self.invocation.addresses();
-                if inv_addrs.contains(&owner_address) {
-                    tracing::trace!(address = %owner_address, "using partition owner connection");
+            // FAST PATH: use zero-lock partition address cache (Opt 1)
+            if let Some(owner_address) = self.get_cached_partition_address(partition_id) {
+                // Verify the address is actually connected (cheap DashMap point lookup)
+                if self.invocation.has_address(&owner_address) {
                     return Ok(owner_address);
                 }
-
-                tracing::debug!(address = %owner_address, "partition owner not connected, attempting connection");
+                // Owner known but not connected — try to connect
                 if self.connect_to(owner_address).await.is_ok() {
                     return Ok(owner_address);
                 }
-                tracing::warn!(address = %owner_address, "failed to connect to partition owner, falling back");
+                tracing::warn!(address = %owner_address, "failed to connect to partition owner");
             }
-        } else {
-            tracing::trace!("smart routing disabled, using any available connection");
+            // SLOW PATH: cache miss, fall back to RwLock-based lookup
+            if let Some(owner_address) = self.get_partition_owner_address(partition_id).await {
+                if self.invocation.has_address(&owner_address) {
+                    return Ok(owner_address);
+                }
+            }
         }
 
         let addresses = self.invocation.addresses();
@@ -1255,12 +1286,7 @@ impl ConnectionManager {
     ///
     /// This method sends the message to the partition owner if smart routing is enabled
     /// and the owner is known, otherwise falls back to any available connection.
-    #[instrument(
-        name = "connection_manager.invoke_on_partition",
-        skip(self, message),
-        fields(partition_id = partition_id),
-        level = "debug"
-    )]
+    // NOTE: #[instrument] removed for hot-path performance (Opt 4).
     pub async fn invoke_on_partition(
         &self,
         partition_id: i32,
@@ -1275,27 +1301,26 @@ impl ConnectionManager {
 
         let address = self.get_connection_for_partition(partition_id).await?;
 
-        // Ensure proxy is created for the distributed object.
-        // Detect the correct service name from the message opcode.
-        let obj_name = if message.frame_count() > 1 {
-            String::from_utf8_lossy(&message.frames()[1].content).to_string()
-        } else {
-            String::new()
-        };
-        if !obj_name.is_empty() {
-            let opcode = message.message_type().unwrap_or(0);
-            let service = if (0x0601..=0x060F).contains(&(opcode >> 8)) {
-                "hz:impl:setService"
-            } else if (0x0501..=0x050F).contains(&(opcode >> 8)) {
-                "hz:impl:listService"
-            } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
-                "hz:impl:queueService"
-            } else if (0x0701..=0x070F).contains(&(opcode >> 8)) {
-                "hz:impl:topicService"
-            } else {
-                "hz:impl:mapService"
-            };
-            self.invocation.ensure_proxy(address, &obj_name, service).await?;
+        // Opt 2: ensure_proxy uses a fast DashSet check internally.
+        // Only parse the object name if proxy hasn't been created yet.
+        if message.frame_count() > 1 {
+            let name_bytes = &message.frames()[1].content;
+            if !self.invocation.is_proxy_created_bytes(name_bytes) {
+                let obj_name = String::from_utf8_lossy(name_bytes);
+                let opcode = message.message_type().unwrap_or(0);
+                let service = if (0x0601..=0x060F).contains(&(opcode >> 8)) {
+                    "hz:impl:setService"
+                } else if (0x0501..=0x050F).contains(&(opcode >> 8)) {
+                    "hz:impl:listService"
+                } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
+                    "hz:impl:queueService"
+                } else if (0x0701..=0x070F).contains(&(opcode >> 8)) {
+                    "hz:impl:topicService"
+                } else {
+                    "hz:impl:mapService"
+                };
+                self.invocation.ensure_proxy(address, &obj_name, service).await?;
+            }
         }
 
         self.invocation.invoke(address, message).await
@@ -1305,11 +1330,7 @@ impl ConnectionManager {
     ///
     /// This is used for operations that are not partition-specific, such as
     /// cluster-wide queries or operations on replicated data structures.
-    #[instrument(
-        name = "connection_manager.invoke_on_random",
-        skip(self, message),
-        level = "debug"
-    )]
+    // NOTE: #[instrument] removed for hot-path performance (Opt 4).
     pub async fn invoke_on_random(
         &self,
         message: hazelcast_core::ClientMessage,
@@ -1331,27 +1352,25 @@ impl ConnectionManager {
             }
         };
 
-        // Ensure proxy is created for the distributed object.
-        // Detect the correct service name from the message opcode.
-        let obj_name = if message.frame_count() > 1 {
-            String::from_utf8_lossy(&message.frames()[1].content).to_string()
-        } else {
-            String::new()
-        };
-        if !obj_name.is_empty() {
-            let opcode = message.message_type().unwrap_or(0);
-            let service = if (0x0601..=0x060F).contains(&(opcode >> 8)) {
-                "hz:impl:setService"
-            } else if (0x0501..=0x050F).contains(&(opcode >> 8)) {
-                "hz:impl:listService"
-            } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
-                "hz:impl:queueService"
-            } else if (0x0701..=0x070F).contains(&(opcode >> 8)) {
-                "hz:impl:topicService"
-            } else {
-                "hz:impl:mapService"
-            };
-            self.invocation.ensure_proxy(address, &obj_name, service).await?;
+        // Opt 2: fast proxy check avoids String allocation + RwLock on hot path
+        if message.frame_count() > 1 {
+            let name_bytes = &message.frames()[1].content;
+            if !self.invocation.is_proxy_created_bytes(name_bytes) {
+                let obj_name = String::from_utf8_lossy(name_bytes);
+                let opcode = message.message_type().unwrap_or(0);
+                let service = if (0x0601..=0x060F).contains(&(opcode >> 8)) {
+                    "hz:impl:setService"
+                } else if (0x0501..=0x050F).contains(&(opcode >> 8)) {
+                    "hz:impl:listService"
+                } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
+                    "hz:impl:queueService"
+                } else if (0x0701..=0x070F).contains(&(opcode >> 8)) {
+                    "hz:impl:topicService"
+                } else {
+                    "hz:impl:mapService"
+                };
+                self.invocation.ensure_proxy(address, &obj_name, service).await?;
+            }
         }
 
         self.invocation.invoke(address, message).await
@@ -1372,30 +1391,37 @@ impl ConnectionManager {
         message: hazelcast_core::ClientMessage,
         idempotent: bool,
     ) -> Result<hazelcast_core::ClientMessage> {
+        // Opt 5: avoid cloning the message on the success path (99.9% of calls).
+        // First attempt uses the original message by value.
         let retryable = idempotent || self.redo_operation;
         let max_attempts = if retryable { self.invocation_retry_count } else { 0 };
-        let mut last_err = None;
+
+        if max_attempts == 0 {
+            // No retries configured — pass message by value, zero clones
+            return self.invoke_on_partition(partition_id, message).await;
+        }
+
+        // Retries configured — clone only for the retry path
+        let mut last_err;
         let retry_pause = self.invocation_retry_pause;
 
-        for attempt in 0..=max_attempts {
+        match self.invoke_on_partition(partition_id, message.clone()).await {
+            Ok(resp) => return Ok(resp),
+            Err(e) if !e.is_retryable() => return Err(e),
+            Err(e) => last_err = e,
+        }
+
+        for attempt in 1..=max_attempts {
+            tracing::debug!(attempt, max_attempts, "retrying partition invocation");
+            tokio::time::sleep(retry_pause).await;
             match self.invoke_on_partition(partition_id, message.clone()).await {
                 Ok(resp) => return Ok(resp),
-                Err(e) if e.is_retryable() && attempt < max_attempts => {
-                    tracing::debug!(
-                        attempt = attempt + 1,
-                        max_attempts = max_attempts,
-                        pause_ms = retry_pause.as_millis() as u64,
-                        error = %e,
-                        "retrying partition invocation"
-                    );
-                    tokio::time::sleep(retry_pause).await;
-                    last_err = Some(e);
-                }
+                Err(e) if e.is_retryable() && attempt < max_attempts => { last_err = e; }
                 Err(e) => return Err(e),
             }
         }
 
-        Err(last_err.unwrap())
+        Err(last_err)
     }
 
     /// Invokes a request on a random connection with automatic retry for retryable errors.
@@ -1414,28 +1440,31 @@ impl ConnectionManager {
     ) -> Result<hazelcast_core::ClientMessage> {
         let retryable = idempotent || self.redo_operation;
         let max_attempts = if retryable { self.invocation_retry_count } else { 0 };
-        let mut last_err = None;
+
+        if max_attempts == 0 {
+            return self.invoke_on_random(message).await;
+        }
+
+        let mut last_err;
         let retry_pause = self.invocation_retry_pause;
 
-        for attempt in 0..=max_attempts {
+        match self.invoke_on_random(message.clone()).await {
+            Ok(resp) => return Ok(resp),
+            Err(e) if !e.is_retryable() => return Err(e),
+            Err(e) => last_err = e,
+        }
+
+        for attempt in 1..=max_attempts {
+            tracing::debug!(attempt, max_attempts, "retrying random invocation");
+            tokio::time::sleep(retry_pause).await;
             match self.invoke_on_random(message.clone()).await {
                 Ok(resp) => return Ok(resp),
-                Err(e) if e.is_retryable() && attempt < max_attempts => {
-                    tracing::debug!(
-                        attempt = attempt + 1,
-                        max_attempts = max_attempts,
-                        pause_ms = retry_pause.as_millis() as u64,
-                        error = %e,
-                        "retrying random invocation"
-                    );
-                    tokio::time::sleep(retry_pause).await;
-                    last_err = Some(e);
-                }
+                Err(e) if e.is_retryable() && attempt < max_attempts => { last_err = e; }
                 Err(e) => return Err(e),
             }
         }
 
-        Err(last_err.unwrap())
+        Err(last_err)
     }
 
     /// Clears the partition table. Called during reconnection or cluster state reset.
