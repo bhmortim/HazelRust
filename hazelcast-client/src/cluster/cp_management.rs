@@ -248,7 +248,7 @@ impl CPSubsystemManagementService {
         }
 
         // Check if first data frame is a null frame
-        if frames.get(1).map_or(true, |f| f.is_null_frame()) {
+        if frames.get(1).is_none_or(|f| f.is_null_frame()) {
             return Ok(None);
         }
 

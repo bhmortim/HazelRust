@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use hazelcast_client::{ClientConfig, ClientConfigBuilder, HazelcastClient, IQueue};
+use hazelcast_client::{ClientConfigBuilder, HazelcastClient, IQueue};
 
 async fn create_test_client() -> Option<HazelcastClient> {
     let config = ClientConfigBuilder::new()

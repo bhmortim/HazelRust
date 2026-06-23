@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hazelcast_client::{
-    ClientConfigBuilder, EvictionPolicy, HazelcastClient, InMemoryFormat, NearCacheConfig,
+    ClientConfigBuilder, EvictionPolicy, HazelcastClient, NearCacheConfig,
 };
 
 use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};

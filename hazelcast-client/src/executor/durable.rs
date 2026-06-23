@@ -473,7 +473,7 @@ mod tests {
         };
         for _ in 0..100 {
             let partition = service.select_partition();
-            assert!(partition >= 0 && partition < 271);
+            assert!((0..271).contains(&partition));
         }
     }
 }

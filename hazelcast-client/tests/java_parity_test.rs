@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use hazelcast_client::config::ClientConfig;
 use hazelcast_client::proxy::IMap;
-use hazelcast_client::query::{Aggregators, Predicates, Projections};
+use hazelcast_client::query::{Predicates, Projections};
 use hazelcast_client::HazelcastClient;
 
 /// Test helper to create a client connected to a local cluster.
@@ -958,7 +958,7 @@ async fn test_get_entry_view() {
 
 use hazelcast_client::proxy::EntryProcessor;
 use hazelcast_core::serialization::{
-    DataInput, DataOutput, Deserializable, ObjectDataOutput, Serializable,
+    DataOutput, Serializable,
 };
 
 struct IncrementProcessor {

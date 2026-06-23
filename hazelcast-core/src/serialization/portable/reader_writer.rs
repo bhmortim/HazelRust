@@ -1053,7 +1053,7 @@ mod tests {
 
     #[test]
     fn test_nested_portable_write_read() {
-        let inner_class_def = ClassDefinition::with_fields(
+        let _inner_class_def = ClassDefinition::with_fields(
             TEST_FACTORY_ID,
             INNER_CLASS_ID,
             1,

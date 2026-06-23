@@ -611,7 +611,7 @@ impl CredentialProvider for KubernetesCredentialProvider {
 mod tests {
     use super::*;
     use std::env;
-    use std::io::Write;
+    
     use std::sync::Mutex;
 
     /// Mutex to serialize tests that manipulate environment variables.

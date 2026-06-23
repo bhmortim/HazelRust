@@ -4,10 +4,12 @@ use std::path::PathBuf;
 
 /// TLS protocol versions supported by the client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum TlsProtocolVersion {
     /// TLS 1.2 protocol.
     Tls1_2,
     /// TLS 1.3 protocol (recommended).
+    #[default]
     Tls1_3,
 }
 
@@ -31,11 +33,6 @@ impl TlsProtocolVersion {
     }
 }
 
-impl Default for TlsProtocolVersion {
-    fn default() -> Self {
-        TlsProtocolVersion::Tls1_3
-    }
-}
 
 /// Common TLS cipher suites.
 ///

@@ -362,7 +362,7 @@ async fn test_listener_stats_during_operations() {
     let map = client.get_map::<String, String>(&map_name);
 
     let stats = map.listener_stats();
-    let initial_messages = stats.messages_received();
+    let _initial_messages = stats.messages_received();
     let initial_errors = stats.errors();
 
     map.put("key1".to_string(), "value1".to_string())

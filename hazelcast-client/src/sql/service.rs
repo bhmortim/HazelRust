@@ -328,7 +328,7 @@ impl SqlService {
 
         // Parse rows from page data
         let rows = if row_page_present {
-            self.parse_row_page(&frames, row_metadata.as_ref())?
+            self.parse_row_page(frames, row_metadata.as_ref())?
         } else {
             VecDeque::new()
         };
@@ -741,7 +741,7 @@ impl SqlResult {
 
         // Parse rows
         if frames.len() > 1 {
-            let new_rows = service.parse_row_page(&frames, self.row_metadata.as_ref())?;
+            let new_rows = service.parse_row_page(frames, self.row_metadata.as_ref())?;
             self.rows.extend(new_rows);
         }
 

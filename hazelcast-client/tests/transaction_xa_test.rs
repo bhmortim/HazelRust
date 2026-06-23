@@ -4,7 +4,6 @@
 //! Requires a Hazelcast cluster running at 127.0.0.1:5701
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use hazelcast_client::transaction::TransactionOptions;

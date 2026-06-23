@@ -2001,7 +2001,7 @@ mod tests {
             .unwrap();
 
         let manager = ConnectionManager::from_config(config);
-        let mut events = manager.subscribe();
+        let _events = manager.subscribe();
 
         let reconnect_handle = tokio::spawn({
             let manager_addr = addr;

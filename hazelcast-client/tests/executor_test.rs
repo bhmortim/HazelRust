@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use hazelcast_client::{ClientConfig, HazelcastClient};
-use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
+use hazelcast_core::serialization::DataOutput;
 use hazelcast_core::{Result, Serializable};
 
 /// A simple callable task that echoes a message.
@@ -113,8 +113,8 @@ async fn test_submit_task() {
         }
     };
 
-    let executor = client.get_executor_service("test-executor");
-    let task = EchoTask::new("Hello from Rust client!");
+    let _executor = client.get_executor_service("test-executor");
+    let _task = EchoTask::new("Hello from Rust client!");
 
     // Note: Actual task execution requires server-side task implementation
     println!("Submitting echo task...");
@@ -135,7 +135,7 @@ async fn test_executor_with_different_task_types() {
         }
     };
 
-    let executor = client.get_executor_service("compute-executor");
+    let _executor = client.get_executor_service("compute-executor");
 
     // Create various task types to verify serialization
     let echo = EchoTask::new("test");
@@ -199,8 +199,8 @@ async fn test_executor_service_with_member_selection() {
         println!("  Member: {} ({})", member.address(), member.uuid());
     }
 
-    let executor = client.get_executor_service("member-aware-executor");
-    let task = EchoTask::new("Task for specific member");
+    let _executor = client.get_executor_service("member-aware-executor");
+    let _task = EchoTask::new("Task for specific member");
 
     // In a full implementation, we could submit to specific members
     println!("Executor created, task prepared for submission");

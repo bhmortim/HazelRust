@@ -47,6 +47,10 @@
 //! [`ServerErrorCode`] variants that mirror the Java Hazelcast exception hierarchy.
 
 #![warn(missing_docs)]
+// See note in hazelcast-client/src/lib.rs: complex generic signatures in the
+// serialization/protocol layer; aliasing tracked separately.
+#![allow(clippy::type_complexity)]
+#![allow(clippy::multiple_bound_locations)]
 
 pub mod error;
 pub mod partition_aware;

@@ -463,7 +463,7 @@ mod tests {
     fn test_primitive_types_via_serde() {
         assert_eq!(round_trip(42i32), 42i32);
         assert_eq!(round_trip(3.14f64), 3.14f64);
-        assert_eq!(round_trip(true), true);
+        assert!(round_trip(true));
         assert_eq!(round_trip("hello".to_string()), "hello");
     }
 

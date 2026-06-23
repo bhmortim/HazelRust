@@ -472,7 +472,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_permission_denied_add() {
-        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
+        use crate::config::{ClientConfigBuilder, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 

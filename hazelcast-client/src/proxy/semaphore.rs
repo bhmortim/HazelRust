@@ -390,7 +390,7 @@ impl Semaphore {
         }
 
         let initial_frame = &frames[0];
-        if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 1 {
+        if initial_frame.content.len() > RESPONSE_HEADER_SIZE {
             let value = initial_frame.content[RESPONSE_HEADER_SIZE] != 0;
             Ok(value)
         } else {

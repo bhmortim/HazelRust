@@ -2,7 +2,6 @@
 
 mod common;
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use hazelcast_client::HazelcastClient;

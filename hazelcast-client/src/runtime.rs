@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn test_tokio_runtime_default() {
-        let _rt = TokioRuntime::default();
+        let _rt = TokioRuntime;
     }
 
     #[test]

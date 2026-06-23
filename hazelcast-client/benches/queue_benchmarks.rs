@@ -139,7 +139,7 @@ fn bench_queue_batch_operations(c: &mut Criterion) {
                 b.iter(|| {
                     let serialized: Vec<_> = data
                         .iter()
-                        .map(|item| simulate_queue_offer_serialization(item))
+                        .map(simulate_queue_offer_serialization)
                         .collect();
                     black_box(serialized)
                 })

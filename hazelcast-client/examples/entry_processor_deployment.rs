@@ -39,9 +39,7 @@
 //! }
 //! ```
 
-use std::path::Path;
 
-use hazelcast_client::config::ConfigError;
 use hazelcast_client::proxy::EntryProcessor;
 use hazelcast_client::{
     ClassDefinition, ClassProviderMode, ClientConfigBuilder, UserCodeDeploymentConfig,
@@ -183,7 +181,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 6: Using the entry processor
     println!("\n=== Example 6: Entry Processor Usage ===\n");
 
-    let processor = IncrementProcessor::new(5);
+    let _processor = IncrementProcessor::new(5);
     println!("Created IncrementProcessor with delta = 5");
     println!();
     println!("In a real application, you would use it like this:");

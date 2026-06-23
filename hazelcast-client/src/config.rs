@@ -1971,9 +1971,11 @@ impl ReconnectMode {
 ///
 /// Controls how the client routes operations to cluster members.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum RoutingMode {
     /// Connect to all members. Operations are routed to the member that owns
     /// the partition for the operation's key (smart routing).
+    #[default]
     AllMembers,
     /// Connect to a single member only. All operations go through one connection
     /// (unisocket mode).
@@ -1986,11 +1988,6 @@ pub enum RoutingMode {
     },
 }
 
-impl Default for RoutingMode {
-    fn default() -> Self {
-        RoutingMode::AllMembers
-    }
-}
 
 impl RoutingMode {
     /// Returns `true` if this mode connects to all cluster members.
@@ -4034,7 +4031,7 @@ mod tests {
 
     #[test]
     fn test_network_config_no_discovery_by_default() {
-        let config = NetworkConfigBuilder::new().build().unwrap();
+        let _config = NetworkConfigBuilder::new().build().unwrap();
 
         #[cfg(feature = "aws")]
         assert!(config.aws_discovery().is_none());

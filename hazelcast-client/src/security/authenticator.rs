@@ -664,7 +664,7 @@ mod tests {
 
         let bytes = auth.serialize_credentials(&creds);
 
-        assert!(bytes.len() > 0);
+        assert!(!bytes.is_empty());
         let type_len = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         assert_eq!(type_len, 9);
     }

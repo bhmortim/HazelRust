@@ -126,6 +126,13 @@
 //! | `config-file` | Declarative configuration from YAML/TOML files |
 
 #![warn(missing_docs)]
+// The protocol/proxy layer has inherently complex generic signatures; aliasing
+// every one of them is a readability nicety tracked in EXECUTION_PLAN.md, not a
+// correctness concern, so the lint is allowed crate-wide for now.
+#![allow(clippy::type_complexity)]
+// Style lint: some generic bounds are written in both the parameter list and a
+// `where` clause. Harmless; allowed crate-wide pending a tidy-up pass.
+#![allow(clippy::multiple_bound_locations)]
 
 pub mod cache;
 mod client;

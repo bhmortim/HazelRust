@@ -573,8 +573,8 @@ impl SchemaRegistry {
         let schema_id = schema.schema_id();
         let type_name = schema.type_name().to_string();
 
-        if !self.schemas_by_id.contains_key(&schema_id) {
-            self.schemas_by_id.insert(schema_id, schema);
+        if let std::collections::hash_map::Entry::Vacant(e) = self.schemas_by_id.entry(schema_id) {
+            e.insert(schema);
             self.schemas_by_type
                 .entry(type_name)
                 .or_default()
@@ -2339,7 +2339,7 @@ mod tests {
         let mut reader = DefaultCompactReader::from_bytes(&bytes, schema).unwrap();
 
         assert_eq!(reader.read_int32("missing").unwrap(), 0);
-        assert_eq!(reader.read_boolean("missing").unwrap(), false);
+        assert!(!reader.read_boolean("missing").unwrap());
         assert_eq!(reader.read_string("missing").unwrap(), None);
     }
 
@@ -3046,8 +3046,8 @@ mod java_interop_tests {
         let bytes = writer.to_bytes();
         let mut reader = DefaultCompactReader::from_bytes(&bytes, schema).unwrap();
 
-        assert_eq!(reader.read_boolean("bool_true").unwrap(), true);
-        assert_eq!(reader.read_boolean("bool_false").unwrap(), false);
+        assert!(reader.read_boolean("bool_true").unwrap());
+        assert!(!reader.read_boolean("bool_false").unwrap());
         assert_eq!(reader.read_int8("byte_min").unwrap(), i8::MIN);
         assert_eq!(reader.read_int8("byte_max").unwrap(), i8::MAX);
         assert_eq!(reader.read_int16("short_min").unwrap(), i16::MIN);

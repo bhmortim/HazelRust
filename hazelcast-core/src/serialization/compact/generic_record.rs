@@ -721,7 +721,7 @@ mod tests {
     use super::*;
     use crate::serialization::compact::{
         Compact, CompactReader, CompactSerializer, CompactWriter, DefaultCompactReader,
-        DefaultCompactWriter, Schema,
+        DefaultCompactWriter,
     };
 
     #[test]
@@ -799,7 +799,7 @@ mod tests {
             .set_float64("f64", 2.718281828)
             .build();
 
-        assert_eq!(record.get_boolean("bool").unwrap(), true);
+        assert!(record.get_boolean("bool").unwrap());
         assert_eq!(record.get_int8("i8").unwrap(), -42);
         assert_eq!(record.get_int16("i16").unwrap(), 1000);
         assert_eq!(record.get_int32("i32").unwrap(), 100_000);
@@ -812,7 +812,7 @@ mod tests {
     fn test_generic_record_missing_field_defaults() {
         let record = GenericRecordBuilder::new("Empty").build();
 
-        assert_eq!(record.get_boolean("missing").unwrap(), false);
+        assert!(!record.get_boolean("missing").unwrap());
         assert_eq!(record.get_int32("missing").unwrap(), 0);
         assert_eq!(record.get_string("missing").unwrap(), None);
     }

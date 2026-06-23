@@ -1,7 +1,6 @@
 //! Integration tests for client failover functionality.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use hazelcast_client::config::{ClientConfigBuilder, ClientFailoverConfig};

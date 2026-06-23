@@ -7,7 +7,7 @@
 //!
 //! Requires a Hazelcast cluster running on localhost:5701.
 
-use hazelcast_client::{ClientConfig, HazelcastClient, SqlStatement, SqlValue};
+use hazelcast_client::{ClientConfig, HazelcastClient, SqlStatement};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

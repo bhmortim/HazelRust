@@ -1759,7 +1759,7 @@ where
             let partition_id = self.partition_index_dynamic(&key_data);
             partition_groups
                 .entry(partition_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((idx, key_data));
         }
 
@@ -1792,7 +1792,7 @@ where
         for handle in handles {
             let (key_entries, response) = handle.await.map_err(|e| {
                 HazelcastError::Io(
-                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string()).into(),
+                    std::io::Error::other(e.to_string()).into(),
                 )
             })??;
 
@@ -1857,7 +1857,7 @@ where
             let partition_id = self.partition_index_dynamic(&key_data);
             partition_groups
                 .entry(partition_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((key_data, value_data));
         }
 
@@ -1892,7 +1892,7 @@ where
         for handle in handles {
             handle.await.map_err(|e| {
                 HazelcastError::Io(
-                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string()).into(),
+                    std::io::Error::other(e.to_string()).into(),
                 )
             })??;
         }
@@ -6120,7 +6120,7 @@ mod tests {
 
     #[test]
     fn test_near_cache_stats_initial() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6137,7 +6137,7 @@ mod tests {
 
     #[test]
     fn test_local_stats_initial() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6157,7 +6157,7 @@ mod tests {
 
     #[test]
     fn test_local_stats_with_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6171,7 +6171,7 @@ mod tests {
 
     #[test]
     fn test_local_stats_shared_on_clone() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6184,7 +6184,7 @@ mod tests {
 
     #[test]
     fn test_near_cache_clone_shares_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6206,7 +6206,7 @@ mod tests {
 
     #[test]
     fn test_invalidate_near_cache_entry() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6220,7 +6220,7 @@ mod tests {
 
     #[test]
     fn test_clear_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6307,7 +6307,7 @@ mod tests {
 
     #[test]
     fn test_decode_empty_values_response() {
-        let mut message = ClientMessage::create_for_encode(0, -1);
+        let message = ClientMessage::create_for_encode(0, -1);
         let values: Vec<String> = IMap::<String, String>::decode_values_response(&message).unwrap();
         assert!(values.is_empty());
     }
@@ -6500,7 +6500,7 @@ mod tests {
 
     #[test]
     fn test_invalidation_registration_initial_state() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6513,7 +6513,7 @@ mod tests {
 
     #[test]
     fn test_invalidation_registration_not_active_without_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6525,7 +6525,7 @@ mod tests {
 
     #[test]
     fn test_invalidation_registration_shared_on_clone() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6545,7 +6545,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_invalidation_no_op_without_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6560,7 +6560,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_invalidation_returns_false_when_not_active() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6574,7 +6574,7 @@ mod tests {
 
     #[test]
     fn test_put_all_empty_map() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6586,7 +6586,7 @@ mod tests {
 
     #[test]
     fn test_get_all_empty_keys() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6598,7 +6598,7 @@ mod tests {
 
     #[test]
     fn test_set_all_empty_map() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6610,7 +6610,7 @@ mod tests {
 
     #[test]
     fn test_remove_all_empty_keys() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6860,7 +6860,7 @@ mod tests {
 
     #[test]
     fn test_remove_all_with_predicate_clears_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -7568,7 +7568,7 @@ mod tests {
 
     #[test]
     fn test_evict_invalidates_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -7581,7 +7581,7 @@ mod tests {
 
     #[test]
     fn test_try_put_invalidates_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -7594,7 +7594,7 @@ mod tests {
 
     #[test]
     fn test_put_transient_invalidates_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -7986,7 +7986,7 @@ mod tests {
 
     #[test]
     fn test_put_with_max_idle_invalidates_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -7999,7 +7999,7 @@ mod tests {
 
     #[test]
     fn test_put_with_ttl_and_max_idle_invalidates_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8012,7 +8012,7 @@ mod tests {
 
     #[test]
     fn test_set_with_ttl_and_max_idle_invalidates_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8025,7 +8025,7 @@ mod tests {
 
     #[test]
     fn test_set_all_invalidates_near_cache() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8401,7 +8401,7 @@ mod tests {
 
     #[test]
     fn test_load_all_keys_clears_near_cache_when_replacing() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8414,7 +8414,7 @@ mod tests {
 
     #[test]
     fn test_load_all_invalidates_near_cache_when_replacing() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8587,7 +8587,7 @@ mod tests {
     #[test]
     fn test_get_async_returns_join_handle() {
         fn assert_join_handle<T>(_: tokio::task::JoinHandle<T>) {}
-        fn check_return_type<K, V>(map: &IMap<K, V>)
+        fn check_return_type<K, V>(_map: &IMap<K, V>)
         where
             K: Serializable + Deserializable + Send + Sync + 'static,
             V: Serializable + Deserializable + Send + Sync + 'static,
@@ -8664,7 +8664,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_methods_spawn_tasks() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8683,7 +8683,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bulk_async_methods_spawn_tasks() {
-        use crate::connection::ConnectionManager;
+        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8726,7 +8726,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_submit_to_key_spawns_task() {
-        use crate::connection::ConnectionManager;
+        
         use crate::proxy::EntryProcessor;
         use std::net::SocketAddr;
 
