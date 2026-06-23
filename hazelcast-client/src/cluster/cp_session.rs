@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use bytes::BytesMut;
 use hazelcast_core::protocol::constants::{
-    CP_SESSION_CLOSE_SESSION, CP_SESSION_CREATE_SESSION, CP_SESSION_GENERATE_THREAD_ID,
-    CP_SESSION_HEARTBEAT, PARTITION_ID_ANY,
+    BEGIN_DATA_STRUCTURE_FLAG, CP_SESSION_CLOSE_SESSION, CP_SESSION_CREATE_SESSION,
+    CP_SESSION_GENERATE_THREAD_ID, CP_SESSION_HEARTBEAT, END_DATA_STRUCTURE_FLAG, PARTITION_ID_ANY,
 };
 use hazelcast_core::protocol::{ClientMessage, Frame};
 use hazelcast_core::{HazelcastError, Result};
@@ -305,10 +305,9 @@ impl CPSessionManager {
     ///
     /// Returns `(session_id, ttl_ms, heartbeat_interval_ms)`.
     async fn create_session(&self, group_id: &CPGroupId) -> Result<(i64, i64, i64)> {
-        let mut request = ClientMessage::new_request(CP_SESSION_CREATE_SESSION);
-        request.set_partition_id(PARTITION_ID_ANY);
-
-        // Encode: group name, then group seed and id
+        let mut request =
+            ClientMessage::create_for_encode_any_partition(CP_SESSION_CREATE_SESSION);
+        // Encode: groupId data structure, then endpoint name.
         Self::encode_group_id(&mut request, group_id);
 
         // Encode: endpoint name (client name)
@@ -357,15 +356,11 @@ impl CPSessionManager {
 
     /// Sends a heartbeat for a specific session.
     async fn heartbeat_session(&self, group_id: &CPGroupId, session_id: i64) -> Result<()> {
-        let mut request = ClientMessage::new_request(CP_SESSION_HEARTBEAT);
-        request.set_partition_id(PARTITION_ID_ANY);
-
-        // Encode: group id
+        let mut request = ClientMessage::create_for_encode_any_partition(CP_SESSION_HEARTBEAT);
+        if let Some(initial) = request.frames_mut().first_mut() {
+            initial.content.extend_from_slice(&session_id.to_le_bytes());
+        }
         Self::encode_group_id(&mut request, group_id);
-
-        // Encode: session id
-        let session_bytes = BytesMut::from(session_id.to_le_bytes().as_slice());
-        request.add_frame(Frame::with_content(session_bytes));
 
         let _response = self.connection_manager.send(request).await?;
 
@@ -379,15 +374,11 @@ impl CPSessionManager {
 
     /// Closes a CP session on the server.
     async fn close_session(&self, group_id: &CPGroupId, session_id: i64) -> Result<()> {
-        let mut request = ClientMessage::new_request(CP_SESSION_CLOSE_SESSION);
-        request.set_partition_id(PARTITION_ID_ANY);
-
-        // Encode: group id
+        let mut request = ClientMessage::create_for_encode_any_partition(CP_SESSION_CLOSE_SESSION);
+        if let Some(initial) = request.frames_mut().first_mut() {
+            initial.content.extend_from_slice(&session_id.to_le_bytes());
+        }
         Self::encode_group_id(&mut request, group_id);
-
-        // Encode: session id
-        let session_bytes = BytesMut::from(session_id.to_le_bytes().as_slice());
-        request.add_frame(Frame::with_content(session_bytes));
 
         let _response = self.connection_manager.send(request).await?;
 
@@ -401,10 +392,8 @@ impl CPSessionManager {
 
     /// Requests a unique thread ID from the server.
     async fn request_thread_id(&self, group_id: &CPGroupId) -> Result<i64> {
-        let mut request = ClientMessage::new_request(CP_SESSION_GENERATE_THREAD_ID);
-        request.set_partition_id(PARTITION_ID_ANY);
-
-        // Encode: group id
+        let mut request =
+            ClientMessage::create_for_encode_any_partition(CP_SESSION_GENERATE_THREAD_ID);
         Self::encode_group_id(&mut request, group_id);
 
         let response = self.connection_manager.send(request).await?;
@@ -437,17 +426,14 @@ impl CPSessionManager {
 
     /// Encodes a CPGroupId into a request message.
     fn encode_group_id(message: &mut ClientMessage, group_id: &CPGroupId) {
-        // Group name
-        let name_bytes = BytesMut::from(group_id.name().as_bytes());
-        message.add_frame(Frame::with_content(name_bytes));
-
-        // Group seed
-        let seed_bytes = BytesMut::from(group_id.seed().to_le_bytes().as_slice());
-        message.add_frame(Frame::with_content(seed_bytes));
-
-        // Group id
-        let id_bytes = BytesMut::from(group_id.id().to_le_bytes().as_slice());
-        message.add_frame(Frame::with_content(id_bytes));
+        // RaftGroupId data structure: BEGIN / [seed(8) id(8)] / name(String) / END.
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        let mut fixed = BytesMut::with_capacity(16);
+        fixed.extend_from_slice(&group_id.seed().to_le_bytes());
+        fixed.extend_from_slice(&group_id.id().to_le_bytes());
+        message.add_frame(Frame::with_content(fixed));
+        message.add_frame(Frame::with_content(BytesMut::from(group_id.name().as_bytes())));
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
     }
 
     /// The background heartbeat loop. Runs until aborted.
