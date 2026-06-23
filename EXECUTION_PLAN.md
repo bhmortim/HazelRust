@@ -60,6 +60,47 @@ Owner: fill in a name; **no item on the money path may be reviewed by only its a
 - [ ] Run all 165 currently-`#[ignore]`'d tests in CI via `testcontainers` — *Owner: ___*
 - [ ] Matrix: Hazelcast server versions (N-1/N/N+1), TLS on/off, cluster sizes 1→5+ — *Owner: ___*
 
+**First real-cluster run (2026-06, AWS) — findings.** A 3-node **Hazelcast 5.7
+Enterprise** cluster (CP subsystem enabled, `CPMemberCount=3`, license loaded) was
+stood up on AWS (`c5.2xlarge`, us-east-2) and the `#[ignore]`'d integration suite was
+run against it. Results so far:
+- [x] **IMap / Hash / Set / String / key-mgmt paths:** exercised against the live
+  cluster; behavior matches expectations.
+- [x] **CP `AtomicLong`: bug found, root-caused, fixed, and VERIFIED on a real cluster
+  → [issue #12](https://github.com/bhmortim/HazelRust/issues/12).**
+  Against a real CP subsystem, every op returned `0` / silently no-op'd. **Three**
+  defects, all in `proxy/atomic_long.rs`, fixed in commit `41316dd`: (1) CP requests
+  omitted the Raft `groupId`; (2) the `RaftGroupId` was mis-framed as plain frames
+  instead of a `BEGIN/[seed,id]/name/END` data structure; (3) the `hazelcast_core`
+  `CP_ATOMIC_LONG_*` message-type constants are mislabeled (`…_ADD_AND_GET = 0x090500`
+  is really *Get*), so `add_and_get` was invoking *Get* and never mutating. Fix resolves
+  the group via `CPGroupCreateCPGroup` (`0x1E0100`) and uses correct local message types.
+  **Verified 2026-06-23 against a 3-node Hazelcast 5.7 *Enterprise* CP cluster (license
+  loaded, CP subsystem initialized with 3 CP members): `atomic_long_integration_test`
+  17/17 and `atomic_long_test` 11/11 pass — 28/28 — including `concurrent_increments`
+  (1000 increments → exactly 1000) and `concurrent_cas` (100 CAS), which prove the ops
+  now mutate cluster state atomically.** Note: in Hazelcast 5.7 the CP subsystem is an
+  *Enterprise* feature (OSS members refuse to start it), so an EE license is mandatory
+  for any CP testing.
+- [ ] **CP `AtomicReference` shares the same `groupId` bug — masked by weak tests.**
+  `proxy/atomic_reference.rs` builds every CP request the pre-fix way (object name as a
+  plain frame, **no `RaftGroupId`**). Its 11 `--ignored` tests pass against the real EE
+  cluster only because they are smoke tests: they `println!` results and assert nothing
+  about returned values (the single hard check is `set(...).expect("set should work")`,
+  which an Ok-but-wrong no-op satisfies). Apply the AtomicLong fix (resolve + encode the
+  `RaftGroupId`, verify the `CP_ATOMIC_REFERENCE_*` message types against the protocol),
+  **and** rewrite the tests to assert round-trip values (`get`, `get_and_set`,
+  `compare_and_set` success/failure) so the bug can't hide again. — *Owner: ___*
+- [ ] **Follow-up:** `cp_session.rs` `encode_group_id` also writes plain frames rather
+  than the data-structure framing — audit whether any live CP path depends on it, and
+  correct the mislabeled `CP_ATOMIC_LONG_*` / `CP_SUBSYSTEM_*` constants at the source in
+  `hazelcast-core/src/protocol/constants.rs` (currently only shadowed locally). — *Owner: ___*
+- [ ] **Follow-up:** the mislabeled `CP_ATOMIC_LONG_*` / `CP_SUBSYSTEM_*` constants in
+  `hazelcast-core/src/protocol/constants.rs` should be corrected at the source (not just
+  shadowed locally) and cross-checked against the generated protocol definitions. — *Owner: ___*
+- [ ] **Follow-up:** separate live-cluster hangs/failures observed (IMap lock test hang;
+  ~15 `java_parity` failures) — triage independently. — *Owner: ___*
+
 ### Layer 8 — Performance, load & endurance
 - [ ] Move perf measurement off shared CI runners onto dedicated, isolated hardware — *Owner: ___*
 - [ ] Define and gate p50/p99/p999/p9999/max latency SLOs with statistically sound regression checks — *Owner: ___*
