@@ -3,7 +3,6 @@
 //! These tests require a running Hazelcast cluster and are ignored by default.
 //! Run with: cargo test --test paging_predicate_integration_test -- --ignored
 
-
 /// Custom comparator for testing that sorts by key length.
 /// This demonstrates implementing a custom comparator.
 #[derive(Debug, Clone)]

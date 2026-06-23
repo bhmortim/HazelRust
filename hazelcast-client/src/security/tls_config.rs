@@ -3,8 +3,7 @@
 use std::path::PathBuf;
 
 /// TLS protocol versions supported by the client.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TlsProtocolVersion {
     /// TLS 1.2 protocol.
     Tls1_2,
@@ -32,7 +31,6 @@ impl TlsProtocolVersion {
         vec![TlsProtocolVersion::Tls1_2, TlsProtocolVersion::Tls1_3]
     }
 }
-
 
 /// Common TLS cipher suites.
 ///

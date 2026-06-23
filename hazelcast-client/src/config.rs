@@ -1970,8 +1970,7 @@ impl ReconnectMode {
 /// Routing mode for client operations.
 ///
 /// Controls how the client routes operations to cluster members.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RoutingMode {
     /// Connect to all members. Operations are routed to the member that owns
     /// the partition for the operation's key (smart routing).
@@ -1987,7 +1986,6 @@ pub enum RoutingMode {
         member_count: usize,
     },
 }
-
 
 impl RoutingMode {
     /// Returns `true` if this mode connects to all cluster members.

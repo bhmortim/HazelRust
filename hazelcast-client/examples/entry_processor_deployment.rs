@@ -39,7 +39,6 @@
 //! }
 //! ```
 
-
 use hazelcast_client::proxy::EntryProcessor;
 use hazelcast_client::{
     ClassDefinition, ClassProviderMode, ClientConfigBuilder, UserCodeDeploymentConfig,

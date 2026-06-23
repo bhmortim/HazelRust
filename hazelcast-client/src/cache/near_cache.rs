@@ -183,10 +183,12 @@ where
         self.remove_expired_entries(now);
 
         // Check if we need to evict (only for new keys)
-        if !self.store.contains_key(&key) && self.store.len() >= self.config.max_size() as usize
-            && !self.evict_one() {
-                return false;
-            }
+        if !self.store.contains_key(&key)
+            && self.store.len() >= self.config.max_size() as usize
+            && !self.evict_one()
+        {
+            return false;
+        }
 
         self.store.insert(key, CacheEntry::new(value, now));
         true

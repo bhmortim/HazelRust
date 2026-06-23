@@ -1138,11 +1138,13 @@ async fn test_map_special_characters() {
     let map_name = unique_name("cft-map-sc");
     let map = client.get_map::<String, String>(&map_name);
 
-    let keys = ["spaces in key",
+    let keys = [
+        "spaces in key",
         "key:colons",
         "key/slashes",
         "unicode-\u{1F680}",
-        "newline\nkey"];
+        "newline\nkey",
+    ];
     for (i, k) in keys.iter().enumerate() {
         map.put(k.to_string(), format!("v{}", i)).await.unwrap();
     }

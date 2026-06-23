@@ -1792,11 +1792,9 @@ where
 
         // Step 3: Collect results, preserving original key order
         for handle in handles {
-            let (key_entries, response) = handle.await.map_err(|e| {
-                HazelcastError::Io(
-                    std::io::Error::other(e.to_string()).into(),
-                )
-            })??;
+            let (key_entries, response) = handle
+                .await
+                .map_err(|e| HazelcastError::Io(std::io::Error::other(e.to_string()).into()))??;
 
             let fetched: Vec<(K, V)> = Self::decode_entries_response(&response)?;
             // Build lookup from serialized key data to value
@@ -1892,11 +1890,9 @@ where
 
         // Step 3: Wait for all partitions to complete
         for handle in handles {
-            handle.await.map_err(|e| {
-                HazelcastError::Io(
-                    std::io::Error::other(e.to_string()).into(),
-                )
-            })??;
+            handle
+                .await
+                .map_err(|e| HazelcastError::Io(std::io::Error::other(e.to_string()).into()))??;
         }
 
         Ok(())
@@ -6122,7 +6118,6 @@ mod tests {
 
     #[test]
     fn test_near_cache_stats_initial() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6139,7 +6134,6 @@ mod tests {
 
     #[test]
     fn test_local_stats_initial() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6159,7 +6153,6 @@ mod tests {
 
     #[test]
     fn test_local_stats_with_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6173,7 +6166,6 @@ mod tests {
 
     #[test]
     fn test_local_stats_shared_on_clone() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6186,7 +6178,6 @@ mod tests {
 
     #[test]
     fn test_near_cache_clone_shares_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6208,7 +6199,6 @@ mod tests {
 
     #[test]
     fn test_invalidate_near_cache_entry() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6222,7 +6212,6 @@ mod tests {
 
     #[test]
     fn test_clear_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6502,7 +6491,6 @@ mod tests {
 
     #[test]
     fn test_invalidation_registration_initial_state() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6515,7 +6503,6 @@ mod tests {
 
     #[test]
     fn test_invalidation_registration_not_active_without_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6527,7 +6514,6 @@ mod tests {
 
     #[test]
     fn test_invalidation_registration_shared_on_clone() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6547,7 +6533,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_invalidation_no_op_without_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6562,7 +6547,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_invalidation_returns_false_when_not_active() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6576,7 +6560,6 @@ mod tests {
 
     #[test]
     fn test_put_all_empty_map() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6588,7 +6571,6 @@ mod tests {
 
     #[test]
     fn test_get_all_empty_keys() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6600,7 +6582,6 @@ mod tests {
 
     #[test]
     fn test_set_all_empty_map() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6612,7 +6593,6 @@ mod tests {
 
     #[test]
     fn test_remove_all_empty_keys() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -6862,7 +6842,6 @@ mod tests {
 
     #[test]
     fn test_remove_all_with_predicate_clears_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -7570,7 +7549,6 @@ mod tests {
 
     #[test]
     fn test_evict_invalidates_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -7583,7 +7561,6 @@ mod tests {
 
     #[test]
     fn test_try_put_invalidates_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -7596,7 +7573,6 @@ mod tests {
 
     #[test]
     fn test_put_transient_invalidates_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -7988,7 +7964,6 @@ mod tests {
 
     #[test]
     fn test_put_with_max_idle_invalidates_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8001,7 +7976,6 @@ mod tests {
 
     #[test]
     fn test_put_with_ttl_and_max_idle_invalidates_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8014,7 +7988,6 @@ mod tests {
 
     #[test]
     fn test_set_with_ttl_and_max_idle_invalidates_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8027,7 +8000,6 @@ mod tests {
 
     #[test]
     fn test_set_all_invalidates_near_cache() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8403,7 +8375,6 @@ mod tests {
 
     #[test]
     fn test_load_all_keys_clears_near_cache_when_replacing() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8416,7 +8387,6 @@ mod tests {
 
     #[test]
     fn test_load_all_invalidates_near_cache_when_replacing() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8666,7 +8636,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_methods_spawn_tasks() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8685,7 +8654,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_bulk_async_methods_spawn_tasks() {
-        
         use std::net::SocketAddr;
 
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -8728,7 +8696,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_submit_to_key_spawns_task() {
-        
         use crate::proxy::EntryProcessor;
         use std::net::SocketAddr;
 

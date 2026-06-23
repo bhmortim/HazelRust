@@ -957,9 +957,7 @@ async fn test_get_entry_view() {
 // ============================================================================
 
 use hazelcast_client::proxy::EntryProcessor;
-use hazelcast_core::serialization::{
-    DataOutput, Serializable,
-};
+use hazelcast_core::serialization::{DataOutput, Serializable};
 
 struct IncrementProcessor {
     increment: i64,

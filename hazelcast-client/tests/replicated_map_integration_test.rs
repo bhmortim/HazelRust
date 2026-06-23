@@ -1,6 +1,5 @@
 //! Integration tests for ReplicatedMap TTL and bulk operations.
 
-
 /// Tests that put_with_ttl stores a value that expires after the TTL.
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster"]
@@ -114,11 +113,10 @@ async fn test_put_all_updates_stats() {
 
 #[cfg(test)]
 mod unit_tests {
-    
 
     #[test]
     fn test_stats_default() {
-        
+
         // ReplicatedMapStats is created via Default trait
     }
 }
