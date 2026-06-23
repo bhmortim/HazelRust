@@ -240,7 +240,7 @@ where
     pub async fn put(&self, key: K, value: V) -> Result<bool> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_PUT, partition_id);
         if let Some(initial_frame) = message.frames_mut().first_mut() {
@@ -262,7 +262,7 @@ where
     /// Returns an empty vector if the key does not exist.
     pub async fn get(&self, key: &K) -> Result<Vec<V>> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_GET, partition_id);
         if let Some(initial_frame) = message.frames_mut().first_mut() {
@@ -284,7 +284,7 @@ where
     pub async fn remove(&self, key: &K, value: &V) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
         let value_data = Self::serialize_value(value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_REMOVE_ENTRY, partition_id);
         if let Some(initial_frame) = message.frames_mut().first_mut() {
@@ -308,7 +308,7 @@ where
     /// Returns all removed values.
     pub async fn remove_all(&self, key: &K) -> Result<Vec<V>> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_REMOVE, partition_id);
         if let Some(initial_frame) = message.frames_mut().first_mut() {
@@ -329,7 +329,7 @@ where
     /// Returns `true` if this multi-map contains the specified key.
     pub async fn contains_key(&self, key: &K) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_CONTAINS_KEY, partition_id);
         if let Some(initial_frame) = message.frames_mut().first_mut() {
@@ -359,7 +359,7 @@ where
     pub async fn contains_entry(&self, key: &K, value: &V) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
         let value_data = Self::serialize_value(value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_CONTAINS_ENTRY, partition_id);
         if let Some(initial_frame) = message.frames_mut().first_mut() {
@@ -386,7 +386,7 @@ where
     /// Returns the number of values associated with the given key.
     pub async fn value_count(&self, key: &K) -> Result<usize> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_VALUE_COUNT, partition_id);
         if let Some(initial_frame) = message.frames_mut().first_mut() {
@@ -449,7 +449,7 @@ where
     /// times. Each `lock` call must be balanced by a corresponding `unlock`.
     pub async fn lock(&self, key: &K) -> Result<()> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_LOCK, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -470,7 +470,7 @@ where
     /// Returns `true` if the lock was acquired, `false` if the timeout expired.
     pub async fn try_lock(&self, key: &K, timeout: Duration) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
         let timeout_ms = timeout.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_TRY_LOCK, partition_id);
@@ -501,7 +501,7 @@ where
         lease_time: Duration,
     ) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
         let timeout_ms = timeout.as_millis() as i64;
         let lease_ms = lease_time.as_millis() as i64;
 
@@ -524,7 +524,7 @@ where
     /// number of times before other threads can acquire it.
     pub async fn unlock(&self, key: &K) -> Result<()> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_UNLOCK, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -541,7 +541,7 @@ where
     /// Returns `true` if the key is locked by any thread, `false` otherwise.
     pub async fn is_locked(&self, key: &K) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_IS_LOCKED, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -557,7 +557,7 @@ where
     /// semantics and lead to data inconsistency if used incorrectly.
     pub async fn force_unlock(&self, key: &K) -> Result<()> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = self.key_partition(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MULTI_MAP_FORCE_UNLOCK, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -569,9 +569,22 @@ where
     }
 
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
+        use hazelcast_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
+        output.write_int(0)?;
+        output.write_int(value.type_id())?;
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
+    }
+
+    fn skip8(d: &[u8]) -> &[u8] {
+        if d.len() > 8 { &d[8..] } else { d }
+    }
+
+    fn key_partition(&self, key_data: &[u8]) -> i32 {
+        let count = self.connection_manager.partition_count();
+        let count = if count > 0 { count } else { 271 };
+        compute_partition_hash(Self::skip8(key_data)).abs() % count
     }
 
     fn string_frame(s: &str) -> Frame {
@@ -662,7 +675,7 @@ where
                 continue;
             }
 
-            let mut input = ObjectDataInput::new(&frame.content);
+            let mut input = ObjectDataInput::new(Self::skip8(&frame.content));
             if let Ok(value) = T::deserialize(&mut input) {
                 result.push(value);
             }
@@ -686,8 +699,8 @@ where
             let key_frame = data_frames[i];
             let value_frame = data_frames[i + 1];
 
-            let mut key_input = ObjectDataInput::new(&key_frame.content);
-            let mut value_input = ObjectDataInput::new(&value_frame.content);
+            let mut key_input = ObjectDataInput::new(Self::skip8(&key_frame.content));
+            let mut value_input = ObjectDataInput::new(Self::skip8(&value_frame.content));
 
             if let (Ok(key), Ok(value)) = (
                 K::deserialize(&mut key_input),
@@ -818,7 +831,7 @@ where
 
         let key_frame = &frames[2];
         let key = if !key_frame.content.is_empty() && key_frame.flags & IS_NULL_FLAG == 0 {
-            let mut input = ObjectDataInput::new(&key_frame.content);
+            let mut input = ObjectDataInput::new(Self::skip8(&key_frame.content));
             K::deserialize(&mut input)?
         } else {
             return Err(HazelcastError::Serialization(
@@ -831,7 +844,7 @@ where
             let old_value = if !old_value_frame.content.is_empty()
                 && old_value_frame.flags & IS_NULL_FLAG == 0
             {
-                let mut input = ObjectDataInput::new(&old_value_frame.content);
+                let mut input = ObjectDataInput::new(Self::skip8(&old_value_frame.content));
                 V::deserialize(&mut input).ok()
             } else {
                 None
@@ -841,7 +854,7 @@ where
             let new_value = if !new_value_frame.content.is_empty()
                 && new_value_frame.flags & IS_NULL_FLAG == 0
             {
-                let mut input = ObjectDataInput::new(&new_value_frame.content);
+                let mut input = ObjectDataInput::new(Self::skip8(&new_value_frame.content));
                 V::deserialize(&mut input).ok()
             } else {
                 None

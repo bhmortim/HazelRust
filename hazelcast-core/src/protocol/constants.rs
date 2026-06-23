@@ -267,25 +267,25 @@ pub const MULTI_MAP_GET: i32 = 0x020200;
 pub const MULTI_MAP_REMOVE: i32 = 0x020300;
 
 /// MultiMap clear request.
-pub const MULTI_MAP_CLEAR: i32 = 0x020600;
+pub const MULTI_MAP_CLEAR: i32 = 0x020B00;
 
 /// MultiMap size request.
-pub const MULTI_MAP_SIZE: i32 = 0x020700;
+pub const MULTI_MAP_SIZE: i32 = 0x020A00;
 
 /// MultiMap value count request.
-pub const MULTI_MAP_VALUE_COUNT: i32 = 0x020800;
+pub const MULTI_MAP_VALUE_COUNT: i32 = 0x020C00;
 
 /// MultiMap contains key request.
-pub const MULTI_MAP_CONTAINS_KEY: i32 = 0x020900;
+pub const MULTI_MAP_CONTAINS_KEY: i32 = 0x020700;
 
 /// MultiMap contains value request.
-pub const MULTI_MAP_CONTAINS_VALUE: i32 = 0x020A00;
+pub const MULTI_MAP_CONTAINS_VALUE: i32 = 0x020800;
 
 /// MultiMap contains entry request.
-pub const MULTI_MAP_CONTAINS_ENTRY: i32 = 0x020B00;
+pub const MULTI_MAP_CONTAINS_ENTRY: i32 = 0x020900;
 
 /// MultiMap remove entry request.
-pub const MULTI_MAP_REMOVE_ENTRY: i32 = 0x020C00;
+pub const MULTI_MAP_REMOVE_ENTRY: i32 = 0x021500;
 
 /// MultiMap key set request.
 pub const MULTI_MAP_KEY_SET: i32 = 0x020400;
@@ -294,28 +294,28 @@ pub const MULTI_MAP_KEY_SET: i32 = 0x020400;
 pub const MULTI_MAP_VALUES: i32 = 0x020500;
 
 /// MultiMap entry set request.
-pub const MULTI_MAP_ENTRY_SET: i32 = 0x020D00;
+pub const MULTI_MAP_ENTRY_SET: i32 = 0x020600;
 
 /// MultiMap lock request.
-pub const MULTI_MAP_LOCK: i32 = 0x020E00;
+pub const MULTI_MAP_LOCK: i32 = 0x021000;
 
 /// MultiMap try lock request.
-pub const MULTI_MAP_TRY_LOCK: i32 = 0x020F00;
+pub const MULTI_MAP_TRY_LOCK: i32 = 0x021100;
 
 /// MultiMap unlock request.
-pub const MULTI_MAP_UNLOCK: i32 = 0x021000;
+pub const MULTI_MAP_UNLOCK: i32 = 0x021300;
 
 /// MultiMap is locked request.
-pub const MULTI_MAP_IS_LOCKED: i32 = 0x021100;
+pub const MULTI_MAP_IS_LOCKED: i32 = 0x021200;
 
 /// MultiMap force unlock request.
-pub const MULTI_MAP_FORCE_UNLOCK: i32 = 0x021200;
+pub const MULTI_MAP_FORCE_UNLOCK: i32 = 0x021400;
 
 /// MultiMap add entry listener request.
-pub const MULTI_MAP_ADD_ENTRY_LISTENER: i32 = 0x021300;
+pub const MULTI_MAP_ADD_ENTRY_LISTENER: i32 = 0x020E00;
 
 /// MultiMap remove entry listener request.
-pub const MULTI_MAP_REMOVE_ENTRY_LISTENER: i32 = 0x021400;
+pub const MULTI_MAP_REMOVE_ENTRY_LISTENER: i32 = 0x020F00;
 
 /// MultiMap add entry listener with predicate request.
 pub const MULTI_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x021500;
