@@ -1,7 +1,12 @@
 //! Integration tests for AtomicReference operations.
 //!
-//! These tests require a running Hazelcast cluster with CP subsystem enabled.
-//! Run with: `cargo test --test atomic_reference_test -- --ignored`
+//! These tests require a running Hazelcast cluster with the CP subsystem enabled
+//! (an Enterprise feature in Hazelcast 5.7+). Run with:
+//! `cargo test --test atomic_reference_test -- --ignored`
+//!
+//! Unlike smoke tests, these assert the *returned values* of every operation, so a
+//! regression that silently no-ops (e.g. dropping the Raft groupId — issue #12) fails
+//! the suite instead of passing quietly.
 
 use std::net::SocketAddr;
 
@@ -20,6 +25,12 @@ async fn create_test_client() -> HazelcastClient {
         .expect("Failed to connect to Hazelcast")
 }
 
+/// Unique per-process object name so repeated runs against a persistent CP cluster
+/// don't collide on leftover state.
+fn ref_name(base: &str) -> String {
+    format!("{}-{}", base, std::process::id())
+}
+
 #[test]
 fn test_atomic_reference_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
@@ -33,44 +44,66 @@ fn test_atomic_reference_is_send_sync() {
 async fn test_atomic_reference_creation() {
     let client = create_test_client().await;
     let reference = client.get_atomic_reference::<String>("test-ref");
-
     assert_eq!(reference.name(), "test-ref");
-
     client.shutdown().await.expect("shutdown failed");
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster with CP subsystem"]
-async fn test_atomic_reference_clone() {
+async fn test_atomic_reference_name_preserved_on_clone() {
     let client = create_test_client().await;
     let reference = client.get_atomic_reference::<String>("ref1");
     let cloned = reference.clone();
-
     assert_eq!(reference.name(), cloned.name());
+    client.shutdown().await.expect("shutdown failed");
+}
+
+#[tokio::test]
+#[ignore = "requires running Hazelcast cluster with CP subsystem"]
+async fn test_atomic_reference_set_and_get() {
+    let client = create_test_client().await;
+    let reference = client.get_atomic_reference::<String>(&ref_name("test-set-get"));
+
+    reference
+        .set(Some("hello".to_string()))
+        .await
+        .expect("set should succeed");
+
+    let value = reference.get().await.expect("get should succeed");
+    assert_eq!(value, Some("hello".to_string()));
 
     client.shutdown().await.expect("shutdown failed");
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster with CP subsystem"]
-async fn test_atomic_reference_get() {
+async fn test_atomic_reference_set_null_then_get() {
     let client = create_test_client().await;
-    let reference = client.get_atomic_reference::<String>("test-get");
+    let reference = client.get_atomic_reference::<String>(&ref_name("test-set-null"));
 
-    let result = reference.get().await;
-    println!("Get result: {:?}", result);
+    reference
+        .set(Some("not-null".to_string()))
+        .await
+        .expect("set should succeed");
+    assert_eq!(
+        reference.get().await.expect("get should succeed"),
+        Some("not-null".to_string())
+    );
+
+    reference.set(None).await.expect("set(None) should succeed");
+    assert_eq!(reference.get().await.expect("get should succeed"), None);
 
     client.shutdown().await.expect("shutdown failed");
 }
 
 #[tokio::test]
 #[ignore = "requires running Hazelcast cluster with CP subsystem"]
-async fn test_atomic_reference_set() {
+async fn test_atomic_reference_get_initial_is_null() {
     let client = create_test_client().await;
-    let reference = client.get_atomic_reference::<String>("test-set");
+    let reference = client.get_atomic_reference::<String>(&ref_name("test-initial-null"));
 
-    let result = reference.set(Some("value".to_string())).await;
-    println!("Set result: {:?}", result);
+    assert_eq!(reference.get().await.expect("get should succeed"), None);
+    assert!(reference.is_null().await.expect("is_null should succeed"));
 
     client.shutdown().await.expect("shutdown failed");
 }
@@ -79,20 +112,21 @@ async fn test_atomic_reference_set() {
 #[ignore = "requires running Hazelcast cluster with CP subsystem"]
 async fn test_atomic_reference_get_and_set() {
     let client = create_test_client().await;
-    let reference = client.get_atomic_reference::<String>("test-get-and-set");
+    let reference = client.get_atomic_reference::<String>(&ref_name("test-get-and-set"));
 
-    // Set initial value
     reference
         .set(Some("initial".to_string()))
         .await
-        .expect("set should work");
+        .expect("set should succeed");
 
-    // Get and set
-    let old = reference.get_and_set(Some("updated".to_string())).await;
-    println!("Old value: {:?}", old);
+    let old = reference
+        .get_and_set(Some("updated".to_string()))
+        .await
+        .expect("get_and_set should succeed");
+    assert_eq!(old, Some("initial".to_string()));
 
-    let current = reference.get().await;
-    println!("Current value: {:?}", current);
+    let current = reference.get().await.expect("get should succeed");
+    assert_eq!(current, Some("updated".to_string()));
 
     client.shutdown().await.expect("shutdown failed");
 }
@@ -101,27 +135,55 @@ async fn test_atomic_reference_get_and_set() {
 #[ignore = "requires running Hazelcast cluster with CP subsystem"]
 async fn test_atomic_reference_compare_and_set() {
     let client = create_test_client().await;
-    let reference = client.get_atomic_reference::<String>("test-cas");
+    let reference = client.get_atomic_reference::<String>(&ref_name("test-cas"));
 
-    // Set initial value
     reference
         .set(Some("original".to_string()))
         .await
-        .expect("set should work");
+        .expect("set should succeed");
 
-    // Compare and set with correct expected value
     let expected = "original".to_string();
-    let result = reference
+    let ok = reference
         .compare_and_set(Some(&expected), Some("updated".to_string()))
-        .await;
-    println!("CAS result (should succeed): {:?}", result);
+        .await
+        .expect("compare_and_set should succeed");
+    assert!(ok, "CAS with correct expected value must succeed");
+    assert_eq!(
+        reference.get().await.expect("get should succeed"),
+        Some("updated".to_string())
+    );
 
-    // Compare and set with wrong expected value
     let wrong = "wrong".to_string();
-    let result = reference
+    let ok = reference
         .compare_and_set(Some(&wrong), Some("should-not-set".to_string()))
-        .await;
-    println!("CAS result (should fail): {:?}", result);
+        .await
+        .expect("compare_and_set should succeed");
+    assert!(!ok, "CAS with wrong expected value must fail");
+    assert_eq!(
+        reference.get().await.expect("get should succeed"),
+        Some("updated".to_string())
+    );
+
+    client.shutdown().await.expect("shutdown failed");
+}
+
+#[tokio::test]
+#[ignore = "requires running Hazelcast cluster with CP subsystem"]
+async fn test_atomic_reference_compare_and_set_from_null() {
+    let client = create_test_client().await;
+    let reference = client.get_atomic_reference::<String>(&ref_name("test-cas-null"));
+
+    reference.set(None).await.expect("set(None) should succeed");
+
+    let ok = reference
+        .compare_and_set(None, Some("first".to_string()))
+        .await
+        .expect("compare_and_set should succeed");
+    assert!(ok, "CAS from null must succeed");
+    assert_eq!(
+        reference.get().await.expect("get should succeed"),
+        Some("first".to_string())
+    );
 
     client.shutdown().await.expect("shutdown failed");
 }
@@ -130,18 +192,21 @@ async fn test_atomic_reference_compare_and_set() {
 #[ignore = "requires running Hazelcast cluster with CP subsystem"]
 async fn test_atomic_reference_contains() {
     let client = create_test_client().await;
-    let reference = client.get_atomic_reference::<String>("test-contains");
+    let reference = client.get_atomic_reference::<String>(&ref_name("test-contains"));
 
     reference
-        .set(Some("hello".to_string()))
+        .set(Some("present".to_string()))
         .await
-        .expect("set should work");
+        .expect("set should succeed");
 
-    let result = reference.contains(&"hello".to_string()).await;
-    println!("Contains 'hello': {:?}", result);
-
-    let result = reference.contains(&"world".to_string()).await;
-    println!("Contains 'world': {:?}", result);
+    assert!(reference
+        .contains(&"present".to_string())
+        .await
+        .expect("contains should succeed"));
+    assert!(!reference
+        .contains(&"absent".to_string())
+        .await
+        .expect("contains should succeed"));
 
     client.shutdown().await.expect("shutdown failed");
 }
@@ -150,17 +215,16 @@ async fn test_atomic_reference_contains() {
 #[ignore = "requires running Hazelcast cluster with CP subsystem"]
 async fn test_atomic_reference_is_null() {
     let client = create_test_client().await;
-    let reference = client.get_atomic_reference::<String>("test-is-null");
+    let reference = client.get_atomic_reference::<String>(&ref_name("test-is-null"));
 
-    let result = reference.is_null().await;
-    println!("Is null (initial): {:?}", result);
+    reference.set(None).await.expect("set(None) should succeed");
+    assert!(reference.is_null().await.expect("is_null should succeed"));
 
     reference
         .set(Some("value".to_string()))
         .await
-        .expect("set should work");
-    let result = reference.is_null().await;
-    println!("Is null (after set): {:?}", result);
+        .expect("set should succeed");
+    assert!(!reference.is_null().await.expect("is_null should succeed"));
 
     client.shutdown().await.expect("shutdown failed");
 }
@@ -169,18 +233,37 @@ async fn test_atomic_reference_is_null() {
 #[ignore = "requires running Hazelcast cluster with CP subsystem"]
 async fn test_atomic_reference_clear() {
     let client = create_test_client().await;
-    let reference = client.get_atomic_reference::<String>("test-clear");
+    let reference = client.get_atomic_reference::<String>(&ref_name("test-clear"));
 
     reference
         .set(Some("value".to_string()))
         .await
-        .expect("set should work");
+        .expect("set should succeed");
+    assert!(!reference.is_null().await.expect("is_null should succeed"));
 
-    let result = reference.clear().await;
-    println!("Clear result: {:?}", result);
+    reference.clear().await.expect("clear should succeed");
+    assert_eq!(reference.get().await.expect("get should succeed"), None);
+    assert!(reference.is_null().await.expect("is_null should succeed"));
 
-    let is_null = reference.is_null().await;
-    println!("Is null after clear: {:?}", is_null);
+    client.shutdown().await.expect("shutdown failed");
+}
+
+#[tokio::test]
+#[ignore = "requires running Hazelcast cluster with CP subsystem"]
+async fn test_atomic_reference_clone_shares_state() {
+    let client = create_test_client().await;
+    let reference = client.get_atomic_reference::<String>(&ref_name("test-clone-shared"));
+    let cloned = reference.clone();
+
+    reference
+        .set(Some("via-original".to_string()))
+        .await
+        .expect("set should succeed");
+
+    assert_eq!(
+        cloned.get().await.expect("get should succeed"),
+        Some("via-original".to_string())
+    );
 
     client.shutdown().await.expect("shutdown failed");
 }
@@ -190,22 +273,16 @@ async fn test_atomic_reference_clear() {
 async fn test_atomic_reference_with_different_types() {
     let client = create_test_client().await;
 
-    let _string_ref = client.get_atomic_reference::<String>("str-ref");
-    let _i64_ref = client.get_atomic_reference::<i64>("i64-ref");
-    let _vec_ref = client.get_atomic_reference::<Vec<u8>>("vec-ref");
+    let int_ref = client.get_atomic_reference::<i64>(&ref_name("test-int"));
+    int_ref.set(Some(42)).await.expect("set i64 should succeed");
+    assert_eq!(int_ref.get().await.expect("get should succeed"), Some(42));
 
-    client.shutdown().await.expect("shutdown failed");
-}
-
-#[tokio::test]
-#[ignore = "requires running Hazelcast cluster with CP subsystem"]
-async fn test_atomic_reference_name_preserved_on_clone() {
-    let client = create_test_client().await;
-    let original = client.get_atomic_reference::<i32>("counter");
-    let cloned = original.clone();
-
-    assert_eq!(original.name(), "counter");
-    assert_eq!(cloned.name(), "counter");
+    let old = int_ref
+        .get_and_set(Some(-7))
+        .await
+        .expect("get_and_set i64 should succeed");
+    assert_eq!(old, Some(42));
+    assert_eq!(int_ref.get().await.expect("get should succeed"), Some(-7));
 
     client.shutdown().await.expect("shutdown failed");
 }

@@ -82,15 +82,19 @@ run against it. Results so far:
   now mutate cluster state atomically.** Note: in Hazelcast 5.7 the CP subsystem is an
   *Enterprise* feature (OSS members refuse to start it), so an EE license is mandatory
   for any CP testing.
-- [ ] **CP `AtomicReference` shares the same `groupId` bug — masked by weak tests.**
-  `proxy/atomic_reference.rs` builds every CP request the pre-fix way (object name as a
-  plain frame, **no `RaftGroupId`**). Its 11 `--ignored` tests pass against the real EE
-  cluster only because they are smoke tests: they `println!` results and assert nothing
-  about returned values (the single hard check is `set(...).expect("set should work")`,
-  which an Ok-but-wrong no-op satisfies). Apply the AtomicLong fix (resolve + encode the
-  `RaftGroupId`, verify the `CP_ATOMIC_REFERENCE_*` message types against the protocol),
-  **and** rewrite the tests to assert round-trip values (`get`, `get_and_set`,
-  `compare_and_set` success/failure) so the bug can't hide again. — *Owner: ___*
+- [x] **CP `AtomicReference` had the same `groupId` bug (masked by smoke tests) — now
+  fixed and VERIFIED.** `proxy/atomic_reference.rs` built every CP request the pre-fix way
+  (object name as a plain frame, **no `RaftGroupId`**, mislabeled `CP_ATOMIC_REFERENCE_*`
+  message types, no `Set` `returnOldValue` flag, `null` encoded as an empty frame instead
+  of an `IS_NULL_FLAG` frame, and the response value decoded from the wrong frame). Its 11
+  old tests passed only because they were smoke tests (`println!`, no value assertions).
+  Rewrote the proxy with the same `RaftGroupId` resolve/encode as AtomicLong + the correct
+  AtomicRef message types (`Get 0x0A0400`, `Set 0x0A0500` with `returnOldValue`,
+  `CompareAndSet 0x0A0200`, `Contains 0x0A0300`, all verified against the Hazelcast client
+  protocol codecs) and nullable-`Data` framing, and **rewrote the tests to assert
+  round-trip values**. **Verified 2026-06-23 against the same 3-node 5.7 EE CP cluster:
+  `atomic_reference_test` 13/13 pass** (set/get, get_and_set returns old, CAS
+  success/failure/from-null, contains, is_null, clear, clone-shares-state, i64 values).
 - [ ] **Follow-up:** `cp_session.rs` `encode_group_id` also writes plain frames rather
   than the data-structure framing — audit whether any live CP path depends on it, and
   correct the mislabeled `CP_ATOMIC_LONG_*` / `CP_SUBSYSTEM_*` constants at the source in
