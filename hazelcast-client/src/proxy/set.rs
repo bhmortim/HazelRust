@@ -234,7 +234,10 @@ where
     }
 
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
+        use hazelcast_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
+        output.write_int(0)?; // partition_hash placeholder
+        output.write_int(-11)?; // TYPE_STRING
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }
@@ -290,7 +293,8 @@ where
                 break;
             }
             let item_data = &content[offset..offset + item_len];
-            let mut input = hazelcast_core::serialization::ObjectDataInput::new(item_data);
+            let item_payload = if item_data.len() > 8 { &item_data[8..] } else { item_data };
+            let mut input = hazelcast_core::serialization::ObjectDataInput::new(item_payload);
             let item = T::deserialize(&mut input)?;
             items.push(item);
             offset += item_len;
@@ -313,8 +317,22 @@ where
         Ok(())
     }
 
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_random(message).await
+    fn name_partition_id(&self) -> i32 {
+        let count = self.connection_manager.partition_count();
+        let count = if count > 0 { count } else { 271 };
+        match Self::serialize_value(&self.name) {
+            Ok(data) => {
+                let hash_input = if data.len() > 8 { &data[8..] } else { &data[..] };
+                hazelcast_core::compute_partition_hash(hash_input).abs() % count
+            }
+            Err(_) => 0,
+        }
+    }
+
+    async fn invoke(&self, mut message: ClientMessage) -> Result<ClientMessage> {
+        let pid = self.name_partition_id();
+        message.set_partition_id(pid);
+        self.connection_manager.invoke_on_partition(pid, message).await
     }
 
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
