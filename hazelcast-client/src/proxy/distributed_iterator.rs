@@ -182,6 +182,7 @@ impl<T> DistributedIterator<T> {
         Frame::with_content(BytesMut::from(s.as_bytes()))
     }
 
+    #[allow(dead_code)] // per-type frame helper; unused in this module
     fn int_frame(value: i32) -> Frame {
         let mut buf = BytesMut::with_capacity(4);
         buf.extend_from_slice(&value.to_le_bytes());

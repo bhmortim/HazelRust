@@ -30,6 +30,7 @@ fn partition_index_with_count(key_data: &[u8], partition_count: i32) -> i32 {
 }
 
 /// Compute partition index using default partition count (fallback).
+#[allow(dead_code)] // fallback wrapper, not currently called
 fn partition_index(key_data: &[u8]) -> i32 {
     partition_index_with_count(key_data, DEFAULT_PARTITION_COUNT)
 }
@@ -525,6 +526,7 @@ impl Default for IndexConfigBuilder {
         Self::new()
     }
 }
+#[allow(dead_code)]
 static INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 use crate::config::PermissionAction;

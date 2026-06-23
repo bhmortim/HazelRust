@@ -97,7 +97,7 @@ jobs:
         run: cargo fmt --all --check
 
   clippy:
-    name: Clippy — observe (ratchet to -D warnings)
+    name: Clippy (default features) — observe
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -106,10 +106,12 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # TODO(plan/Layer-1): change to `-- -D warnings` once the warning
-      # backlog is cleared, then drop continue-on-error on this job.
-      - name: cargo clippy --all-targets --all-features
-        run: cargo clippy --all-targets --all-features --locked
+      # Default features so this runs on Linux (all-features needs native rdkafka).
+      # Observe-only: a warning backlog remains (approx_constant in test data,
+      # missing-docs, a few dead-code items). Burn it down, then flip to
+      # `-- -D clippy::all` blocking — tracked in EXECUTION_PLAN.md.
+      - name: cargo clippy --all-targets
+        run: cargo clippy --all-targets --locked
 
   # Supply-chain gate (advisories + licenses + bans + sources). cargo-deny uses
   # the same RustSec advisory DB as cargo-audit and is a strict superset, so it

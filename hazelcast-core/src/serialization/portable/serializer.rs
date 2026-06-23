@@ -580,7 +580,7 @@ mod tests {
             }),
             work_address: Some(NestedAddress {
                 city: "Boston".to_string(),
-                zip: 02101,
+                zip: 2101,
             }),
         };
 

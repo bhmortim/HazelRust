@@ -88,6 +88,8 @@ pub struct ConnectionManager {
     failover_config: Option<ClientFailoverConfig>,
     current_cluster_index: AtomicUsize,
     current_try_count: AtomicUsize,
+    // TODO(Layer-1): configured but not yet enforced on invocations
+    #[allow(dead_code)]
     invocation_timeout: std::time::Duration,
     invocation_semaphore: Option<Arc<tokio::sync::Semaphore>>,
     redo_operation: bool,
@@ -567,6 +569,8 @@ impl ConnectionManager {
         Connection::connect(address).await
     }
     /// Authenticates a fresh connection with the Hazelcast cluster.
+    // TODO(Layer-1): this auth path is not currently invoked — verify the connect handshake wires it in.
+    #[allow(dead_code)]
     async fn authenticate_connection(
         &self,
         connection: &mut Connection,

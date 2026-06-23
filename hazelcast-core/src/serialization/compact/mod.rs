@@ -450,6 +450,7 @@ impl Schema {
         true
     }
 
+    #[allow(clippy::match_like_matches_macro)] // explicit match reads clearer than matches! here
     fn are_field_kinds_compatible(kind1: FieldKind, kind2: FieldKind) -> bool {
         if kind1 == kind2 {
             return true;

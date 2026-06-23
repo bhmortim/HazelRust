@@ -171,7 +171,6 @@ impl Connection {
         let mut conn = Self::new(stream, address);
 
         // Send Hazelcast open binary client protocol header "CB2"
-        use tokio::io::AsyncWriteExt;
         conn.stream.write_all(b"CP2").await.map_err(|e| {
             HazelcastError::Connection(format!(
                 "failed to send protocol header to {}: {}",

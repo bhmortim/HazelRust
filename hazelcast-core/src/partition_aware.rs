@@ -42,6 +42,7 @@ pub trait PartitionAware: Send + Sync {
 mod tests {
     use super::*;
 
+    #[allow(dead_code)] // test fixture: not every field is read
     struct CustomerOrderKey {
         order_id: u64,
         customer_id: String,
