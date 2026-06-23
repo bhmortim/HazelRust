@@ -325,10 +325,7 @@ impl NearCacheConfigBuilder {
     /// Enables preloading with default settings.
     pub fn preload_enabled(mut self, enabled: bool) -> Self {
         let config = self.preload_config.take().unwrap_or_default();
-        self.preload_config = Some(PreloadConfig {
-            enabled,
-            ..config
-        });
+        self.preload_config = Some(PreloadConfig { enabled, ..config });
         self
     }
 
@@ -368,7 +365,9 @@ impl NearCacheConfigBuilder {
 
         let max_size = self.max_size.unwrap_or(DEFAULT_MAX_SIZE);
         if max_size == 0 {
-            return Err(ConfigError::new("near-cache max_size must be greater than zero"));
+            return Err(ConfigError::new(
+                "near-cache max_size must be greater than zero",
+            ));
         }
 
         Ok(NearCacheConfig {
@@ -431,14 +430,20 @@ mod tests {
     fn test_near_cache_config_empty_name_fails() {
         let result = NearCacheConfig::builder("").build();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("name must not be empty"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("name must not be empty"));
     }
 
     #[test]
     fn test_near_cache_config_zero_max_size_fails() {
         let result = NearCacheConfig::builder("test").max_size(0).build();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("max_size must be greater than zero"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("max_size must be greater than zero"));
     }
 
     #[test]

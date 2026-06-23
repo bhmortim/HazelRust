@@ -9,7 +9,7 @@ mod scheduled;
 mod service;
 
 pub use durable::{DurableExecutorService, DurableFuture};
-pub use scheduled::{ScheduledExecutorService, ScheduledFuture, ScheduleType, TimeUnit};
+pub use scheduled::{ScheduleType, ScheduledExecutorService, ScheduledFuture, TimeUnit};
 pub use service::ExecutorFuture;
 
 // Note: Callable, ExecutionCallback, ExecutionTarget, ExecutorService,

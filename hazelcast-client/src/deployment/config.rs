@@ -163,7 +163,10 @@ impl UserCodeDeploymentConfig {
     /// Serializes this configuration to bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, ConfigError> {
         bincode::serialize(self).map_err(|e| {
-            ConfigError::new(format!("failed to serialize user code deployment config: {}", e))
+            ConfigError::new(format!(
+                "failed to serialize user code deployment config: {}",
+                e
+            ))
         })
     }
 
@@ -356,9 +359,8 @@ impl SerializableArgument {
     /// Creates a new serializable argument from any serializable value.
     pub fn new<T: Serialize>(value: T) -> Result<Self, ConfigError> {
         let type_name = std::any::type_name::<T>().to_string();
-        let data = bincode::serialize(&value).map_err(|e| {
-            ConfigError::new(format!("failed to serialize argument: {}", e))
-        })?;
+        let data = bincode::serialize(&value)
+            .map_err(|e| ConfigError::new(format!("failed to serialize argument: {}", e)))?;
 
         Ok(Self { type_name, data })
     }
@@ -375,9 +377,8 @@ impl SerializableArgument {
 
     /// Deserializes the argument back to its original type.
     pub fn deserialize<T: for<'de> Deserialize<'de>>(&self) -> Result<T, ConfigError> {
-        bincode::deserialize(&self.data).map_err(|e| {
-            ConfigError::new(format!("failed to deserialize argument: {}", e))
-        })
+        bincode::deserialize(&self.data)
+            .map_err(|e| ConfigError::new(format!("failed to deserialize argument: {}", e)))
     }
 }
 
@@ -430,10 +431,7 @@ mod tests {
 
     #[test]
     fn test_user_code_deployment_config_add_classes() {
-        let classes = vec![
-            test_class("com.example.A"),
-            test_class("com.example.B"),
-        ];
+        let classes = vec![test_class("com.example.A"), test_class("com.example.B")];
 
         let config = UserCodeDeploymentConfig::builder()
             .add_classes(classes)

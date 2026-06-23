@@ -325,11 +325,7 @@ impl TlsConfigBuilder {
     ///     .build()
     ///     .unwrap();
     /// ```
-    pub fn client_auth(
-        self,
-        cert_path: impl Into<PathBuf>,
-        key_path: impl Into<PathBuf>,
-    ) -> Self {
+    pub fn client_auth(self, cert_path: impl Into<PathBuf>, key_path: impl Into<PathBuf>) -> Self {
         self.client_cert_path(cert_path).client_key_path(key_path)
     }
 
@@ -461,7 +457,9 @@ impl TlsConfigBuilder {
             ca_cert_path: self.ca_cert_path,
             client_cert_path: self.client_cert_path,
             client_key_path: self.client_key_path,
-            hostname_verification: self.hostname_verification.unwrap_or(HostnameVerification::Strict),
+            hostname_verification: self
+                .hostname_verification
+                .unwrap_or(HostnameVerification::Strict),
             cipher_suites: self.cipher_suites,
             protocol_versions: self.protocol_versions,
             sni_hostname: self.sni_hostname,
@@ -554,16 +552,10 @@ mod tests {
             .unwrap();
         assert!(!none.verify_hostname());
 
-        let via_bool_true = TlsConfig::builder()
-            .verify_hostname(true)
-            .build()
-            .unwrap();
+        let via_bool_true = TlsConfig::builder().verify_hostname(true).build().unwrap();
         assert!(via_bool_true.verify_hostname());
 
-        let via_bool_false = TlsConfig::builder()
-            .verify_hostname(false)
-            .build()
-            .unwrap();
+        let via_bool_false = TlsConfig::builder().verify_hostname(false).build().unwrap();
         assert!(!via_bool_false.verify_hostname());
     }
 
@@ -576,8 +568,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.cipher_suites().len(), 2);
-        assert!(config.cipher_suites().contains(&"TLS_AES_256_GCM_SHA384".to_string()));
-        assert!(config.cipher_suites().contains(&"TLS_AES_128_GCM_SHA256".to_string()));
+        assert!(config
+            .cipher_suites()
+            .contains(&"TLS_AES_256_GCM_SHA384".to_string()));
+        assert!(config
+            .cipher_suites()
+            .contains(&"TLS_AES_128_GCM_SHA256".to_string()));
     }
 
     #[test]
@@ -603,8 +599,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.protocol_versions().len(), 2);
-        assert!(config.protocol_versions().contains(&TlsProtocolVersion::Tls1_3));
-        assert!(config.protocol_versions().contains(&TlsProtocolVersion::Tls1_2));
+        assert!(config
+            .protocol_versions()
+            .contains(&TlsProtocolVersion::Tls1_3));
+        assert!(config
+            .protocol_versions()
+            .contains(&TlsProtocolVersion::Tls1_2));
     }
 
     #[test]
@@ -627,8 +627,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.protocol_versions().len(), 1);
-        assert!(!config.protocol_versions().contains(&TlsProtocolVersion::Tls1_2));
-        assert!(config.protocol_versions().contains(&TlsProtocolVersion::Tls1_3));
+        assert!(!config
+            .protocol_versions()
+            .contains(&TlsProtocolVersion::Tls1_2));
+        assert!(config
+            .protocol_versions()
+            .contains(&TlsProtocolVersion::Tls1_3));
     }
 
     #[test]
@@ -713,7 +717,10 @@ mod tests {
 
     #[test]
     fn test_hostname_verification_default() {
-        assert_eq!(HostnameVerification::default(), HostnameVerification::Strict);
+        assert_eq!(
+            HostnameVerification::default(),
+            HostnameVerification::Strict
+        );
     }
 
     #[test]

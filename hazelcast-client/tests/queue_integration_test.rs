@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use hazelcast_client::HazelcastClient;
 
-use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
+use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};
 
 #[tokio::test]
 async fn test_queue_offer_and_poll() {
@@ -172,7 +172,10 @@ async fn test_queue_poll_timeout() {
     let queue = client.get_queue::<String>(&queue_name);
 
     let start = std::time::Instant::now();
-    let result = queue.poll_timeout(Duration::from_millis(500)).await.unwrap();
+    let result = queue
+        .poll_timeout(Duration::from_millis(500))
+        .await
+        .unwrap();
     let elapsed = start.elapsed();
 
     assert!(result.is_none());
@@ -217,7 +220,7 @@ async fn test_queue_concurrent_producers() {
     let client = Arc::new(
         HazelcastClient::new(common::default_config())
             .await
-            .expect("failed to connect")
+            .expect("failed to connect"),
     );
     let queue_name = unique_name("test-queue-concurrent");
 
@@ -226,16 +229,18 @@ async fn test_queue_concurrent_producers() {
     for i in 0..5 {
         let client_clone = Arc::clone(&client);
         let queue_name_clone = queue_name.clone();
-        
+
         let handle = tokio::spawn(async move {
-            let queue = client_clone
-                .get_queue::<String>(&queue_name_clone);
-            
+            let queue = client_clone.get_queue::<String>(&queue_name_clone);
+
             for j in 0..20 {
-                queue.offer(format!("producer-{}-item-{}", i, j)).await.unwrap();
+                queue
+                    .offer(format!("producer-{}-item-{}", i, j))
+                    .await
+                    .unwrap();
             }
         });
-        
+
         handles.push(handle);
     }
 

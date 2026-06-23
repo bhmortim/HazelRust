@@ -274,8 +274,7 @@ where
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
 
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(VECTOR_COLLECTION_PUT_ALL);
+        let mut message = ClientMessage::create_for_encode_any_partition(VECTOR_COLLECTION_PUT_ALL);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::int_frame(entries.len() as i32));
 
@@ -330,11 +329,7 @@ where
     /// Puts a document if no document exists for the given key.
     ///
     /// Returns the existing document value if one was already present.
-    pub async fn put_if_absent(
-        &self,
-        key: K,
-        document: VectorDocument<V>,
-    ) -> Result<Option<V>> {
+    pub async fn put_if_absent(&self, key: K, document: VectorDocument<V>) -> Result<Option<V>> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
         let key_data = Self::serialize_value(&key)?;
@@ -443,17 +438,16 @@ where
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_int_response(response: &ClientMessage) -> Result<i32> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -591,9 +585,7 @@ where
         Ok(vectors)
     }
 
-    fn decode_search_results(
-        response: &ClientMessage,
-    ) -> Result<Vec<VectorSearchResult<K, V>>> {
+    fn decode_search_results(response: &ClientMessage) -> Result<Vec<VectorSearchResult<K, V>>> {
         let frames = response.frames();
         if frames.len() < 2 {
             return Ok(Vec::new());

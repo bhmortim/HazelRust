@@ -9,8 +9,8 @@ pub mod tls_config;
 pub mod kerberos;
 
 pub use authenticator::{
-    AuthError, AuthResponse, Authenticator, Credentials, CustomCredentials, DefaultAuthenticator,
-    JwtValidationResult, TokenAuthenticator, TokenCredentials, TokenFormat, validate_jwt_structure,
+    validate_jwt_structure, AuthError, AuthResponse, Authenticator, Credentials, CustomCredentials,
+    DefaultAuthenticator, JwtValidationResult, TokenAuthenticator, TokenCredentials, TokenFormat,
 };
 
 pub use authorization::{

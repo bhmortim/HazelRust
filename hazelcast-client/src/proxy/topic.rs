@@ -253,7 +253,9 @@ where
     T: Serializable + Deserializable + Send + Sync + 'static,
 {
     async fn check_quorum(&self, is_read: bool) -> Result<()> {
-        self.connection_manager.check_quorum(&self.name, is_read).await
+        self.connection_manager
+            .check_quorum(&self.name, is_read)
+            .await
     }
 
     /// Publishes a message to all subscribers of this topic.
@@ -353,7 +355,8 @@ where
     where
         F: Fn(TopicMessage<T>) + Send + Sync + 'static,
     {
-        self.add_message_listener_with_initial_sequence(handler, -1).await
+        self.add_message_listener_with_initial_sequence(handler, -1)
+            .await
     }
 
     /// Registers a message listener starting from a specific sequence number.
@@ -512,17 +515,16 @@ where
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_uuid_response(response: &ClientMessage) -> Result<ListenerId> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -561,7 +563,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_topic_permission_denied_publish() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 
@@ -582,7 +584,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_topic_permission_denied_listen() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 
@@ -617,11 +619,8 @@ mod tests {
 
     #[test]
     fn test_topic_message_with_metadata() {
-        let msg = TopicMessage::with_metadata(
-            "hello".to_string(),
-            12345,
-            Some("member-1".to_string()),
-        );
+        let msg =
+            TopicMessage::with_metadata("hello".to_string(), 12345, Some("member-1".to_string()));
         assert_eq!(msg.payload(), "hello");
         assert_eq!(msg.publish_time, 12345);
         assert_eq!(msg.publishing_member, Some("member-1".to_string()));

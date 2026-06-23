@@ -1,8 +1,6 @@
 //! IMap client-side serialization benchmarks.
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use hazelcast_core::serialization::{
     Deserializable, ObjectDataInput, ObjectDataOutput, Serializable,
 };
@@ -37,9 +35,7 @@ fn bench_map_put_string_key(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("serialize", value_size),
             &(key.clone(), value),
-            |b, (k, v)| {
-                b.iter(|| black_box(simulate_map_put_serialization(k, v)))
-            },
+            |b, (k, v)| b.iter(|| black_box(simulate_map_put_serialization(k, v))),
         );
     }
 
@@ -58,9 +54,7 @@ fn bench_map_put_int_key(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("serialize", value_size),
             &(key, value),
-            |b, (k, v)| {
-                b.iter(|| black_box(simulate_map_put_serialization(k, v)))
-            },
+            |b, (k, v)| b.iter(|| black_box(simulate_map_put_serialization(k, v))),
         );
     }
 
@@ -81,9 +75,7 @@ fn bench_map_get_deserialization(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("deserialize", value_size),
             &value_bytes,
-            |b, bytes| {
-                b.iter(|| black_box(simulate_map_get_deserialization::<String>(bytes)))
-            },
+            |b, bytes| b.iter(|| black_box(simulate_map_get_deserialization::<String>(bytes))),
         );
     }
 

@@ -86,9 +86,8 @@ jobs:
         run: cargo build --workspace --locked
 
   fmt:
-    name: Rustfmt — observe (ratchet to blocking)
+    name: Rustfmt — BLOCKING
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

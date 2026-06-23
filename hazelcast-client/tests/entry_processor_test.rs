@@ -91,7 +91,10 @@ async fn test_execute_on_key() {
         }
         Err(e) => {
             // Expected if server doesn't have the processor class
-            println!("Entry processor error (expected without server impl): {}", e);
+            println!(
+                "Entry processor error (expected without server impl): {}",
+                e
+            );
         }
     }
 
@@ -136,7 +139,10 @@ async fn test_execute_on_keys() {
             }
         }
         Err(e) => {
-            println!("Multi-key processor error (expected without server impl): {}", e);
+            println!(
+                "Multi-key processor error (expected without server impl): {}",
+                e
+            );
         }
     }
 
@@ -177,7 +183,10 @@ async fn test_execute_on_entries() {
             println!("Processed all {} entries", results.len());
         }
         Err(e) => {
-            println!("All-entries processor error (expected without server impl): {}", e);
+            println!(
+                "All-entries processor error (expected without server impl): {}",
+                e
+            );
         }
     }
 

@@ -1,10 +1,10 @@
 //! Serialization framework for Hazelcast's binary format.
 
+pub mod compact;
 mod data_input;
 mod data_output;
 mod identified;
 mod json;
-pub mod compact;
 pub mod portable;
 mod traits;
 
@@ -23,12 +23,12 @@ pub use identified::{
     DataSerializableFactory, FactoryRegistry, IdentifiedDataSerializable,
     IDENTIFIED_DATA_SERIALIZABLE_TYPE_ID,
 };
+pub use json::{HazelcastJsonValue, JSON_TYPE_ID};
 pub use portable::{
     ClassDefinition, DefaultPortableReader, DefaultPortableWriter, FieldDefinition, FieldType,
     Portable, PortableFactory, PortableReader, PortableSerializer, PortableWriter,
     PORTABLE_TYPE_ID,
 };
-pub use json::{HazelcastJsonValue, JSON_TYPE_ID};
 pub use traits::{Deserializable, PartitionAware, Serializable};
 
 #[cfg(feature = "serde")]
@@ -138,7 +138,8 @@ impl SerializationConfig {
     /// The serializer's type ID must be a positive integer.
     pub fn add_custom_serializer(mut self, serializer: impl CustomSerializer + 'static) -> Self {
         let type_id = serializer.type_id();
-        self.custom_serializers.insert(type_id, Arc::new(serializer));
+        self.custom_serializers
+            .insert(type_id, Arc::new(serializer));
         self
     }
 

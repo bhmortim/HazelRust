@@ -313,7 +313,10 @@ impl<K, V> Debug for PagingPredicate<K, V> {
         f.debug_struct("PagingPredicate")
             .field("inner", &self.inner)
             .field("page_size", &self.page_size)
-            .field("current_page", &self.current_page.load(AtomicOrdering::Acquire))
+            .field(
+                "current_page",
+                &self.current_page.load(AtomicOrdering::Acquire),
+            )
             .field("iteration_type", &self.iteration_type)
             .field("has_comparator", &self.comparator_data.is_some())
             .field("anchor_count", &self.anchors.len())
@@ -465,7 +468,8 @@ impl<K, V> PagingPredicate<K, V> {
     /// Adds an anchor entry for the current page.
     pub fn add_anchor(&mut self, key_data: Option<Vec<u8>>, value_data: Option<Vec<u8>>) {
         let page = self.get_page();
-        self.anchors.push(AnchorEntry::new(page, key_data, value_data));
+        self.anchors
+            .push(AnchorEntry::new(page, key_data, value_data));
     }
 
     /// Clears all anchor entries.
@@ -929,7 +933,10 @@ mod tests {
         let val = 42;
 
         assert_eq!(comp.compare((&key1, &val), (&key2, &val)), Ordering::Less);
-        assert_eq!(comp.compare((&key2, &val), (&key1, &val)), Ordering::Greater);
+        assert_eq!(
+            comp.compare((&key2, &val), (&key1, &val)),
+            Ordering::Greater
+        );
         assert_eq!(comp.compare((&key1, &val), (&key1, &val)), Ordering::Equal);
     }
 
@@ -941,7 +948,10 @@ mod tests {
         let key2 = "banana".to_string();
         let val = 42;
 
-        assert_eq!(comp.compare((&key1, &val), (&key2, &val)), Ordering::Greater);
+        assert_eq!(
+            comp.compare((&key1, &val), (&key2, &val)),
+            Ordering::Greater
+        );
         assert_eq!(comp.compare((&key2, &val), (&key1, &val)), Ordering::Less);
     }
 
@@ -962,7 +972,10 @@ mod tests {
         let val2 = 20;
 
         assert_eq!(comp.compare((&key, &val1), (&key, &val2)), Ordering::Less);
-        assert_eq!(comp.compare((&key, &val2), (&key, &val1)), Ordering::Greater);
+        assert_eq!(
+            comp.compare((&key, &val2), (&key, &val1)),
+            Ordering::Greater
+        );
         assert_eq!(comp.compare((&key, &val1), (&key, &val1)), Ordering::Equal);
     }
 
@@ -974,7 +987,10 @@ mod tests {
         let val1 = 10;
         let val2 = 20;
 
-        assert_eq!(comp.compare((&key, &val1), (&key, &val2)), Ordering::Greater);
+        assert_eq!(
+            comp.compare((&key, &val1), (&key, &val2)),
+            Ordering::Greater
+        );
         assert_eq!(comp.compare((&key, &val2), (&key, &val1)), Ordering::Less);
     }
 
@@ -1018,27 +1034,24 @@ mod tests {
 
     #[test]
     fn test_builder_order_by_key() {
-        let pred: PagingPredicate<String, i32> = PagingPredicateBuilder::new(10)
-            .order_by_key()
-            .build();
+        let pred: PagingPredicate<String, i32> =
+            PagingPredicateBuilder::new(10).order_by_key().build();
 
         assert_eq!(pred.iteration_type(), IterationType::Key);
     }
 
     #[test]
     fn test_builder_order_by_value() {
-        let pred: PagingPredicate<String, i32> = PagingPredicateBuilder::new(10)
-            .order_by_value()
-            .build();
+        let pred: PagingPredicate<String, i32> =
+            PagingPredicateBuilder::new(10).order_by_value().build();
 
         assert_eq!(pred.iteration_type(), IterationType::Value);
     }
 
     #[test]
     fn test_builder_order_by_entry() {
-        let pred: PagingPredicate<String, i32> = PagingPredicateBuilder::new(10)
-            .order_by_entry()
-            .build();
+        let pred: PagingPredicate<String, i32> =
+            PagingPredicateBuilder::new(10).order_by_entry().build();
 
         assert_eq!(pred.iteration_type(), IterationType::Entry);
     }

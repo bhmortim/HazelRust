@@ -164,8 +164,7 @@ impl ClientMessage {
         if let Some(frame) = self.frames.first_mut() {
             if frame.content.len() >= PARTITION_ID_OFFSET + 4 {
                 let bytes = partition_id.to_le_bytes();
-                frame.content[PARTITION_ID_OFFSET..PARTITION_ID_OFFSET + 4]
-                    .copy_from_slice(&bytes);
+                frame.content[PARTITION_ID_OFFSET..PARTITION_ID_OFFSET + 4].copy_from_slice(&bytes);
             }
         }
     }
@@ -461,7 +460,8 @@ mod tests {
         let mut msg = ClientMessage::create_for_encode(MAP_GET, 0);
         let initial_count = msg.frame_count();
 
-        msg.frames_mut().push(Frame::with_content(BytesMut::from(&b"extra"[..])));
+        msg.frames_mut()
+            .push(Frame::with_content(BytesMut::from(&b"extra"[..])));
 
         assert_eq!(msg.frame_count(), initial_count + 1);
     }

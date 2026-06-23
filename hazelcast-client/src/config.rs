@@ -87,7 +87,9 @@ impl WanTargetClusterConfigBuilder {
         Ok(WanTargetClusterConfig {
             cluster_name,
             endpoints: self.endpoints,
-            connection_timeout: self.connection_timeout.unwrap_or(DEFAULT_CONNECTION_TIMEOUT),
+            connection_timeout: self
+                .connection_timeout
+                .unwrap_or(DEFAULT_CONNECTION_TIMEOUT),
         })
     }
 }
@@ -147,9 +149,7 @@ impl WanReplicationConfigBuilder {
             .ok_or_else(|| ConfigError::new("name is required for WAN replication config"))?;
 
         if name.is_empty() {
-            return Err(ConfigError::new(
-                "WAN replication name must not be empty",
-            ));
+            return Err(ConfigError::new("WAN replication name must not be empty"));
         }
 
         if self.target_clusters.is_empty() {
@@ -606,7 +606,10 @@ impl std::fmt::Debug for NetworkConfig {
             .field("smart_routing", &self.smart_routing)
             .field("routing_mode", &self.routing_mode)
             .field("reconnect_mode", &self.reconnect_mode)
-            .field("backup_ack_to_client_enabled", &self.backup_ack_to_client_enabled)
+            .field(
+                "backup_ack_to_client_enabled",
+                &self.backup_ack_to_client_enabled,
+            )
             .field("outbound_ports", &self.outbound_ports)
             .field("outbound_port_definitions", &self.outbound_port_definitions)
             .field("socket", &self.socket);
@@ -827,7 +830,10 @@ impl std::fmt::Debug for NetworkConfigBuilder {
             .field("smart_routing", &self.smart_routing)
             .field("routing_mode", &self.routing_mode)
             .field("reconnect_mode", &self.reconnect_mode)
-            .field("backup_ack_to_client_enabled", &self.backup_ack_to_client_enabled)
+            .field(
+                "backup_ack_to_client_enabled",
+                &self.backup_ack_to_client_enabled,
+            )
             .field("outbound_ports", &self.outbound_ports)
             .field("outbound_port_definitions", &self.outbound_port_definitions)
             .field("socket", &self.socket);
@@ -1128,8 +1134,12 @@ impl NetworkConfigBuilder {
 
         Ok(NetworkConfig {
             addresses,
-            connection_timeout: self.connection_timeout.unwrap_or(DEFAULT_CONNECTION_TIMEOUT),
-            heartbeat_interval: self.heartbeat_interval.unwrap_or(DEFAULT_HEARTBEAT_INTERVAL),
+            connection_timeout: self
+                .connection_timeout
+                .unwrap_or(DEFAULT_CONNECTION_TIMEOUT),
+            heartbeat_interval: self
+                .heartbeat_interval
+                .unwrap_or(DEFAULT_HEARTBEAT_INTERVAL),
             tls,
             ws_url: self.ws_url,
             wan_replication: self.wan_replication,
@@ -2583,8 +2593,8 @@ impl ClientConfig {
     ///
     /// Returns `ConfigError` if the TOML is malformed or validation fails.
     pub fn from_toml_str(toml_str: &str) -> std::result::Result<Self, ConfigError> {
-        let raw: TomlClientConfig =
-            toml::from_str(toml_str).map_err(|e| ConfigError::new(format!("TOML parse error: {}", e)))?;
+        let raw: TomlClientConfig = toml::from_str(toml_str)
+            .map_err(|e| ConfigError::new(format!("TOML parse error: {}", e)))?;
         raw.into_client_config()
     }
 
@@ -2603,7 +2613,6 @@ impl ClientConfig {
         })?;
         Self::from_toml_str(&content)
     }
-
 }
 
 /// Intermediate TOML-friendly structure for deserializing client configuration.
@@ -2644,33 +2653,63 @@ struct TomlSecurityConfig {
 impl TomlClientConfig {
     fn into_client_config(self) -> std::result::Result<ClientConfig, ConfigError> {
         let mut builder = ClientConfigBuilder::new();
-        if let Some(name) = self.cluster_name { builder = builder.cluster_name(name); }
-        if let Some(name) = self.instance_name { builder = builder.instance_name(name); }
-        if let Some(labels) = self.labels { builder = builder.with_labels(labels); }
+        if let Some(name) = self.cluster_name {
+            builder = builder.cluster_name(name);
+        }
+        if let Some(name) = self.instance_name {
+            builder = builder.instance_name(name);
+        }
+        if let Some(labels) = self.labels {
+            builder = builder.with_labels(labels);
+        }
 
         if let Some(net) = self.network {
             if let Some(addrs) = net.addresses {
-                let parsed: std::result::Result<Vec<SocketAddr>, _> = addrs.iter().map(|s| s.parse::<SocketAddr>()).collect();
-                let addr_vec = parsed.map_err(|e| ConfigError::new(format!("invalid network address: {}", e)))?;
+                let parsed: std::result::Result<Vec<SocketAddr>, _> =
+                    addrs.iter().map(|s| s.parse::<SocketAddr>()).collect();
+                let addr_vec = parsed
+                    .map_err(|e| ConfigError::new(format!("invalid network address: {}", e)))?;
                 builder = builder.addresses(addr_vec);
             }
-            if let Some(ms) = net.connection_timeout_ms { builder = builder.connection_timeout(Duration::from_millis(ms)); }
-            if let Some(ms) = net.heartbeat_interval_ms { builder = builder.network(|n| n.heartbeat_interval(Duration::from_millis(ms))); }
-            if let Some(smart) = net.smart_routing { builder = builder.network(|n| n.smart_routing(smart)); }
+            if let Some(ms) = net.connection_timeout_ms {
+                builder = builder.connection_timeout(Duration::from_millis(ms));
+            }
+            if let Some(ms) = net.heartbeat_interval_ms {
+                builder = builder.network(|n| n.heartbeat_interval(Duration::from_millis(ms)));
+            }
+            if let Some(smart) = net.smart_routing {
+                builder = builder.network(|n| n.smart_routing(smart));
+            }
         }
 
         if let Some(retry) = self.retry {
-            if let Some(ms) = retry.initial_backoff_ms { builder = builder.retry(|r| r.initial_backoff(Duration::from_millis(ms))); }
-            if let Some(ms) = retry.max_backoff_ms { builder = builder.retry(|r| r.max_backoff(Duration::from_millis(ms))); }
-            if let Some(mult) = retry.multiplier { builder = builder.retry(|r| r.multiplier(mult)); }
-            if let Some(max) = retry.max_retries { builder = builder.retry(|r| r.max_retries(max)); }
-            if let Some(jitter) = retry.jitter { builder = builder.retry(|r| r.jitter(jitter)); }
+            if let Some(ms) = retry.initial_backoff_ms {
+                builder = builder.retry(|r| r.initial_backoff(Duration::from_millis(ms)));
+            }
+            if let Some(ms) = retry.max_backoff_ms {
+                builder = builder.retry(|r| r.max_backoff(Duration::from_millis(ms)));
+            }
+            if let Some(mult) = retry.multiplier {
+                builder = builder.retry(|r| r.multiplier(mult));
+            }
+            if let Some(max) = retry.max_retries {
+                builder = builder.retry(|r| r.max_retries(max));
+            }
+            if let Some(jitter) = retry.jitter {
+                builder = builder.retry(|r| r.jitter(jitter));
+            }
         }
 
         if let Some(sec) = self.security {
-            if let Some(username) = sec.username { builder = builder.security(|s| s.username(username)); }
-            if let Some(password) = sec.password { builder = builder.security(|s| s.password(password)); }
-            if let Some(token) = sec.token { builder = builder.security(|s| s.token(token)); }
+            if let Some(username) = sec.username {
+                builder = builder.security(|s| s.username(username));
+            }
+            if let Some(password) = sec.password {
+                builder = builder.security(|s| s.password(password));
+            }
+            if let Some(token) = sec.token {
+                builder = builder.security(|s| s.token(token));
+            }
         }
 
         builder.build()
@@ -3008,7 +3047,10 @@ impl ClientConfigBuilder {
     ///     .serialization(SerializationConfig::new().portable_version(2))
     ///     .build()?;
     /// ```
-    pub fn serialization(mut self, config: hazelcast_core::serialization::SerializationConfig) -> Self {
+    pub fn serialization(
+        mut self,
+        config: hazelcast_core::serialization::SerializationConfig,
+    ) -> Self {
         self.serialization = Some(config);
         self
     }
@@ -3050,12 +3092,22 @@ impl ClientConfigBuilder {
             logging,
             management_center,
             user_code_deployment: self.user_code_deployment,
-            invocation_timeout: self.invocation_timeout.unwrap_or(DEFAULT_INVOCATION_TIMEOUT),
-            max_concurrent_invocations: self.max_concurrent_invocations.unwrap_or(DEFAULT_MAX_CONCURRENT_INVOCATIONS),
-            connection_pool_size: self.connection_pool_size.unwrap_or(DEFAULT_CONNECTION_POOL_SIZE),
+            invocation_timeout: self
+                .invocation_timeout
+                .unwrap_or(DEFAULT_INVOCATION_TIMEOUT),
+            max_concurrent_invocations: self
+                .max_concurrent_invocations
+                .unwrap_or(DEFAULT_MAX_CONCURRENT_INVOCATIONS),
+            connection_pool_size: self
+                .connection_pool_size
+                .unwrap_or(DEFAULT_CONNECTION_POOL_SIZE),
             redo_operation: self.redo_operation.unwrap_or(false),
-            invocation_retry_count: self.invocation_retry_count.unwrap_or(DEFAULT_INVOCATION_RETRY_COUNT),
-            invocation_retry_pause: self.invocation_retry_pause.unwrap_or(DEFAULT_INVOCATION_RETRY_PAUSE),
+            invocation_retry_count: self
+                .invocation_retry_count
+                .unwrap_or(DEFAULT_INVOCATION_RETRY_COUNT),
+            invocation_retry_pause: self
+                .invocation_retry_pause
+                .unwrap_or(DEFAULT_INVOCATION_RETRY_PAUSE),
             serialization: self.serialization.unwrap_or_default(),
         })
     }
@@ -3136,7 +3188,10 @@ mod tests {
             .connection_timeout(Duration::from_secs(10))
             .build()
             .unwrap();
-        assert_eq!(config.network().connection_timeout(), Duration::from_secs(10));
+        assert_eq!(
+            config.network().connection_timeout(),
+            Duration::from_secs(10)
+        );
     }
 
     #[test]
@@ -3155,7 +3210,10 @@ mod tests {
     fn test_security_partial_credentials_fails() {
         let result = SecurityConfigBuilder::new().username("admin").build();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("both username and password"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("both username and password"));
     }
 
     #[test]
@@ -3241,10 +3299,7 @@ mod tests {
 
     #[test]
     fn test_retry_config_with_jitter() {
-        let config = RetryConfigBuilder::new()
-            .jitter(0.25)
-            .build()
-            .unwrap();
+        let config = RetryConfigBuilder::new().jitter(0.25).build().unwrap();
         assert_eq!(config.jitter(), 0.25);
     }
 
@@ -3329,7 +3384,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.cluster_name(), "test-cluster");
-        assert_eq!(config.network().connection_timeout(), Duration::from_secs(20));
+        assert_eq!(
+            config.network().connection_timeout(),
+            Duration::from_secs(20)
+        );
         assert_eq!(config.retry().max_retries(), 3);
         assert!(config.security().has_credentials());
     }
@@ -3362,10 +3420,7 @@ mod tests {
 
         let cloned = config.clone();
         assert_eq!(cloned.cluster_name(), config.cluster_name());
-        assert_eq!(
-            cloned.security().username(),
-            config.security().username()
-        );
+        assert_eq!(cloned.security().username(), config.security().username());
     }
 
     #[test]
@@ -3452,10 +3507,7 @@ mod tests {
 
     #[test]
     fn test_network_config_enable_tls_shortcut() {
-        let config = NetworkConfigBuilder::new()
-            .enable_tls()
-            .build()
-            .unwrap();
+        let config = NetworkConfigBuilder::new().enable_tls().build().unwrap();
 
         assert!(config.tls().enabled());
     }
@@ -3567,10 +3619,7 @@ mod tests {
             .unwrap();
         assert!(with_creds.is_authenticated());
 
-        let with_token = SecurityConfigBuilder::new()
-            .token("token")
-            .build()
-            .unwrap();
+        let with_token = SecurityConfigBuilder::new().token("token").build().unwrap();
         assert!(with_token.is_authenticated());
     }
 
@@ -3716,10 +3765,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(
-            config.ws_url(),
-            Some("ws://127.0.0.1:5701/hazelcast")
-        );
+        assert_eq!(config.ws_url(), Some("ws://127.0.0.1:5701/hazelcast"));
     }
 
     #[test]
@@ -3759,10 +3805,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(
-            config.ws_url(),
-            Some("wss://cluster.example.com:443")
-        );
+        assert_eq!(config.ws_url(), Some("wss://cluster.example.com:443"));
     }
 
     #[test]
@@ -3954,8 +3997,7 @@ mod tests {
     fn test_network_config_cloud_discovery() {
         use crate::connection::CloudDiscoveryConfig;
 
-        let cloud_config = CloudDiscoveryConfig::new("my-discovery-token")
-            .with_timeout(30);
+        let cloud_config = CloudDiscoveryConfig::new("my-discovery-token").with_timeout(30);
 
         let config = NetworkConfigBuilder::new()
             .cloud_discovery(cloud_config)
@@ -4062,13 +4104,20 @@ mod tests {
     fn test_wan_target_cluster_config_endpoints_replace() {
         let target = WanTargetClusterConfigBuilder::new("remote")
             .add_endpoint("10.0.0.1:5701".parse().unwrap())
-            .endpoints(["10.0.0.2:5701".parse().unwrap(), "10.0.0.3:5701".parse().unwrap()])
+            .endpoints([
+                "10.0.0.2:5701".parse().unwrap(),
+                "10.0.0.3:5701".parse().unwrap(),
+            ])
             .build()
             .unwrap();
 
         assert_eq!(target.endpoints().len(), 2);
-        assert!(target.endpoints().contains(&"10.0.0.2:5701".parse().unwrap()));
-        assert!(target.endpoints().contains(&"10.0.0.3:5701".parse().unwrap()));
+        assert!(target
+            .endpoints()
+            .contains(&"10.0.0.2:5701".parse().unwrap()));
+        assert!(target
+            .endpoints()
+            .contains(&"10.0.0.3:5701".parse().unwrap()));
     }
 
     #[test]
@@ -4159,9 +4208,7 @@ mod tests {
 
     #[test]
     fn test_wan_replication_ref_defaults() {
-        let wan_ref = WanReplicationRefBuilder::new("wan-config")
-            .build()
-            .unwrap();
+        let wan_ref = WanReplicationRefBuilder::new("wan-config").build().unwrap();
 
         assert_eq!(
             wan_ref.merge_policy_class_name(),
@@ -4319,9 +4366,7 @@ mod tests {
 
     #[test]
     fn test_quorum_config_builder_defaults() {
-        let config = QuorumConfig::builder("test-*")
-            .build()
-            .unwrap();
+        let config = QuorumConfig::builder("test-*").build().unwrap();
 
         assert_eq!(config.name(), "test-*");
         assert_eq!(config.min_cluster_size(), 2);
@@ -4354,9 +4399,7 @@ mod tests {
 
     #[test]
     fn test_quorum_config_zero_size_fails() {
-        let result = QuorumConfig::builder("test")
-            .min_cluster_size(0)
-            .build();
+        let result = QuorumConfig::builder("test").min_cluster_size(0).build();
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -4366,9 +4409,7 @@ mod tests {
 
     #[test]
     fn test_quorum_config_matches_exact() {
-        let config = QuorumConfig::builder("my-map")
-            .build()
-            .unwrap();
+        let config = QuorumConfig::builder("my-map").build().unwrap();
 
         assert!(config.matches("my-map"));
         assert!(!config.matches("other-map"));
@@ -4377,9 +4418,7 @@ mod tests {
 
     #[test]
     fn test_quorum_config_matches_wildcard_suffix() {
-        let config = QuorumConfig::builder("user-*")
-            .build()
-            .unwrap();
+        let config = QuorumConfig::builder("user-*").build().unwrap();
 
         assert!(config.matches("user-sessions"));
         assert!(config.matches("user-data"));
@@ -4390,9 +4429,7 @@ mod tests {
 
     #[test]
     fn test_quorum_config_matches_wildcard_prefix() {
-        let config = QuorumConfig::builder("*-cache")
-            .build()
-            .unwrap();
+        let config = QuorumConfig::builder("*-cache").build().unwrap();
 
         assert!(config.matches("user-cache"));
         assert!(config.matches("product-cache"));
@@ -4403,9 +4440,7 @@ mod tests {
 
     #[test]
     fn test_quorum_config_matches_all_wildcard() {
-        let config = QuorumConfig::builder("*")
-            .build()
-            .unwrap();
+        let config = QuorumConfig::builder("*").build().unwrap();
 
         assert!(config.matches("anything"));
         assert!(config.matches(""));
@@ -4481,13 +4516,17 @@ mod tests {
         }
         impl QuorumFunction for RequireSpecificMember {
             fn is_present(&self, members: &[Member]) -> bool {
-                members.iter().any(|m| m.address().port() == self.required_port)
+                members
+                    .iter()
+                    .any(|m| m.address().port() == self.required_port)
             }
         }
 
         let config = QuorumConfig::builder("test")
             .min_cluster_size(10)
-            .quorum_function(Arc::new(RequireSpecificMember { required_port: 5701 }))
+            .quorum_function(Arc::new(RequireSpecificMember {
+                required_port: 5701,
+            }))
             .build()
             .unwrap();
 
@@ -4848,9 +4887,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let members = vec![
-            Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
-        ];
+        let members = vec![Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        )];
         let selected = config.load_balancer().select(&members);
         assert!(selected.is_some());
     }
@@ -4864,9 +4904,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let members = vec![
-            Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
-        ];
+        let members = vec![Member::new(
+            uuid::Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        )];
         assert!(config.network().load_balancer().select(&members).is_some());
     }
 
@@ -4991,9 +5032,7 @@ mod tests {
 
     #[test]
     fn test_management_center_config_enabled_without_url_fails() {
-        let result = ManagementCenterConfigBuilder::new()
-            .enabled(true)
-            .build();
+        let result = ManagementCenterConfigBuilder::new().enabled(true).build();
 
         assert!(result.is_err());
         assert!(result
@@ -5133,7 +5172,10 @@ mod tests {
     #[test]
     fn test_client_config_with_labels() {
         let config = ClientConfig::builder()
-            .with_labels(vec!["env:production".to_string(), "region:us-west".to_string()])
+            .with_labels(vec![
+                "env:production".to_string(),
+                "region:us-west".to_string(),
+            ])
             .build()
             .unwrap();
 
@@ -5211,6 +5253,9 @@ mod tests {
         assert_eq!(config.labels().len(), 1);
         assert_eq!(config.instance_name(), Some("platform-client-1"));
         assert!(config.management_center().enabled());
-        assert_eq!(config.management_center().update_interval(), Duration::from_secs(15));
+        assert_eq!(
+            config.management_center().update_interval(),
+            Duration::from_secs(15)
+        );
     }
 }

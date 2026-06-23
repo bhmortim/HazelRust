@@ -274,8 +274,7 @@ impl Semaphore {
     async fn ensure_session(&mut self) -> Result<()> {
         if let Some(ref sm) = self.session_manager {
             if self.session_id == NO_SESSION_ID {
-                let group_id =
-                    crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                let group_id = crate::cluster::CPGroupId::new(&self.name, 0, 0);
                 self.session_id = sm.acquire_session(&group_id).await?;
             }
         }
@@ -286,8 +285,7 @@ impl Semaphore {
     async fn release_session(&mut self) {
         if let Some(ref sm) = self.session_manager {
             if self.session_id != NO_SESSION_ID {
-                let group_id =
-                    crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                let group_id = crate::cluster::CPGroupId::new(&self.name, 0, 0);
                 sm.release_session(&group_id, self.session_id).await;
             }
         }
@@ -300,8 +298,7 @@ impl Semaphore {
                 if let HazelcastError::Server { code, .. } = error {
                     if code.value() == 76 {
                         // CpSessionNotFound
-                        let group_id =
-                            crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                        let group_id = crate::cluster::CPGroupId::new(&self.name, 0, 0);
                         sm.invalidate_session(&group_id, self.session_id).await;
                         self.session_id = NO_SESSION_ID;
                     }
@@ -575,11 +572,7 @@ mod tests {
                 .unwrap(),
         ));
         let sm = Arc::new(CPSessionManager::new(Arc::clone(&cm)));
-        let sem = Semaphore::with_session_manager(
-            "test-sem".to_string(),
-            cm,
-            sm,
-        );
+        let sem = Semaphore::with_session_manager("test-sem".to_string(), cm, sm);
         assert_eq!(sem.session_id, NO_SESSION_ID);
         assert!(sem.session_manager.is_some());
     }

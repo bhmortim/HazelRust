@@ -79,7 +79,13 @@ impl GenericRecord {
                     )));
                 }
                 let field_bytes = input.read_bytes(data_len as usize)?;
-                fields.insert(name, FieldData { kind, data: field_bytes });
+                fields.insert(
+                    name,
+                    FieldData {
+                        kind,
+                        data: field_bytes,
+                    },
+                );
             }
         }
 
@@ -426,7 +432,11 @@ impl GenericRecord {
                 }
                 let nested_data = input.read_bytes(nested_len as usize)?;
 
-                Ok(Some(GenericRecord::from_field_data(&type_name, 0, &nested_data)?))
+                Ok(Some(GenericRecord::from_field_data(
+                    &type_name,
+                    0,
+                    &nested_data,
+                )?))
             }
             None => Ok(None),
         }
@@ -470,7 +480,12 @@ impl GenericRecord {
         }
     }
 
-    fn read_array<T, F>(&self, name: &str, kind: FieldKind, read_element: F) -> Result<Option<Vec<T>>>
+    fn read_array<T, F>(
+        &self,
+        name: &str,
+        kind: FieldKind,
+        read_element: F,
+    ) -> Result<Option<Vec<T>>>
     where
         F: Fn(&mut ObjectDataInput) -> Result<T>,
     {
@@ -521,7 +536,8 @@ impl GenericRecordBuilder {
         if !self.fields.contains_key(name) {
             self.field_order.push(name.to_string());
         }
-        self.fields.insert(name.to_string(), FieldData { kind, data });
+        self.fields
+            .insert(name.to_string(), FieldData { kind, data });
     }
 
     /// Sets a boolean field.
@@ -744,7 +760,10 @@ mod tests {
         let record = GenericRecord::from_compact_bytes(&bytes).unwrap();
 
         assert_eq!(record.type_name(), "Person");
-        assert_eq!(record.get_string("name").unwrap(), Some("Alice".to_string()));
+        assert_eq!(
+            record.get_string("name").unwrap(),
+            Some("Alice".to_string())
+        );
         assert_eq!(record.get_int32("age").unwrap(), 30);
     }
 

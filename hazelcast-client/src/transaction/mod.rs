@@ -392,7 +392,6 @@ impl TransactionContext {
     pub fn create_xa_transaction_auto(&self) -> xa::XATransaction {
         xa::XATransaction::with_generated_xid(Arc::clone(&self.connection_manager))
     }
-
 }
 
 // ============================================================================
@@ -451,9 +450,7 @@ async fn txn_invoke(
 }
 
 /// Returns the address of an available connection.
-async fn txn_get_connection_address(
-    connection_manager: &ConnectionManager,
-) -> Result<SocketAddr> {
+async fn txn_get_connection_address(connection_manager: &ConnectionManager) -> Result<SocketAddr> {
     let addresses = connection_manager.connected_addresses().await;
     addresses
         .into_iter()
@@ -462,9 +459,7 @@ async fn txn_get_connection_address(
 }
 
 /// Decodes a nullable value from the second frame of a response message.
-fn txn_decode_nullable_response<T: Deserializable>(
-    response: &ClientMessage,
-) -> Result<Option<T>> {
+fn txn_decode_nullable_response<T: Deserializable>(response: &ClientMessage) -> Result<Option<T>> {
     let frames = response.frames();
     if frames.len() < 2 {
         return Ok(None);
@@ -497,9 +492,7 @@ fn txn_decode_bool_response(response: &ClientMessage) -> Result<bool> {
 }
 
 /// Decodes a collection (Vec) of deserialized values from response frames.
-fn txn_decode_collection_response<T: Deserializable>(
-    response: &ClientMessage,
-) -> Result<Vec<T>> {
+fn txn_decode_collection_response<T: Deserializable>(response: &ClientMessage) -> Result<Vec<T>> {
     let frames = response.frames();
     let mut result = Vec::new();
     for frame in frames.iter().skip(1) {
@@ -995,8 +988,7 @@ where
         let key_data = txn_serialize_value(&key)?;
         let value_data = txn_serialize_value(&value)?;
 
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_PUT);
+        let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_PUT);
         message.add_frame(txn_string_frame(&self.name));
         message.add_frame(txn_uuid_frame(self.txn_id));
         message.add_frame(txn_long_frame(self.thread_id));
@@ -1011,8 +1003,7 @@ where
     pub async fn get(&self, key: &K) -> Result<Vec<V>> {
         let key_data = txn_serialize_value(key)?;
 
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_GET);
+        let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_GET);
         message.add_frame(txn_string_frame(&self.name));
         message.add_frame(txn_uuid_frame(self.txn_id));
         message.add_frame(txn_long_frame(self.thread_id));
@@ -1028,8 +1019,7 @@ where
     pub async fn remove(&self, key: &K) -> Result<Vec<V>> {
         let key_data = txn_serialize_value(key)?;
 
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_REMOVE);
+        let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_REMOVE);
         message.add_frame(txn_string_frame(&self.name));
         message.add_frame(txn_uuid_frame(self.txn_id));
         message.add_frame(txn_long_frame(self.thread_id));
@@ -1046,8 +1036,7 @@ where
         let key_data = txn_serialize_value(key)?;
         let value_data = txn_serialize_value(value)?;
 
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_REMOVE_ENTRY);
+        let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_REMOVE_ENTRY);
         message.add_frame(txn_string_frame(&self.name));
         message.add_frame(txn_uuid_frame(self.txn_id));
         message.add_frame(txn_long_frame(self.thread_id));
@@ -1062,8 +1051,7 @@ where
     pub async fn value_count(&self, key: &K) -> Result<i32> {
         let key_data = txn_serialize_value(key)?;
 
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_VALUE_COUNT);
+        let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_VALUE_COUNT);
         message.add_frame(txn_string_frame(&self.name));
         message.add_frame(txn_uuid_frame(self.txn_id));
         message.add_frame(txn_long_frame(self.thread_id));
@@ -1075,8 +1063,7 @@ where
 
     /// Returns the total number of key-value pairs in the multimap.
     pub async fn size(&self) -> Result<i32> {
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_SIZE);
+        let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_SIZE);
         message.add_frame(txn_string_frame(&self.name));
         message.add_frame(txn_uuid_frame(self.txn_id));
         message.add_frame(txn_long_frame(self.thread_id));

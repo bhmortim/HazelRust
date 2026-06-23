@@ -9,8 +9,8 @@
 use std::time::Duration;
 
 use hazelcast_client::{
-    ClientConfigBuilder, HazelcastClient, XAResource, XaTransactionState, Xid,
-    XA_OK, XA_RDONLY, XA_TMFAIL, XA_TMNOFLAGS, XA_TMSUCCESS, XA_TMSUSPEND,
+    ClientConfigBuilder, HazelcastClient, XAResource, XaTransactionState, Xid, XA_OK, XA_RDONLY,
+    XA_TMFAIL, XA_TMNOFLAGS, XA_TMSUCCESS, XA_TMSUSPEND,
 };
 
 async fn create_test_client() -> HazelcastClient {
@@ -175,8 +175,7 @@ async fn test_xa_transaction_timeout() {
 async fn test_xa_transaction_via_transaction_context() {
     let client = create_test_client().await;
 
-    let options = hazelcast_client::TransactionOptions::new()
-        .with_timeout(Duration::from_secs(30));
+    let options = hazelcast_client::TransactionOptions::new().with_timeout(Duration::from_secs(30));
 
     let txn_ctx = client.new_transaction_context(options);
 
@@ -299,7 +298,11 @@ mod unit_tests {
         for (i, &flag_a) in flags.iter().enumerate() {
             for (j, &flag_b) in flags.iter().enumerate() {
                 if i != j && flag_a != 0 && flag_b != 0 {
-                    assert_ne!(flag_a, flag_b, "Flags at {} and {} should be distinct", i, j);
+                    assert_ne!(
+                        flag_a, flag_b,
+                        "Flags at {} and {} should be distinct",
+                        i, j
+                    );
                 }
             }
         }

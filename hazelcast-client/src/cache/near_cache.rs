@@ -990,11 +990,7 @@ mod tests {
             .unwrap();
         let mut cache = NearCache::new(config);
 
-        let keys = vec![
-            "key1".to_string(),
-            "key2".to_string(),
-            "key3".to_string(),
-        ];
+        let keys = vec!["key1".to_string(), "key2".to_string(), "key3".to_string()];
 
         let result: Result<PreloadStats, String> = cache
             .preload_keys(keys, |batch_keys| async move {
@@ -1052,10 +1048,7 @@ mod tests {
                 let batch_sizes = batch_sizes_clone.clone();
                 async move {
                     batch_sizes.lock().unwrap().push(batch_keys.len());
-                    Ok(batch_keys
-                        .into_iter()
-                        .map(|k| (k.clone(), k))
-                        .collect())
+                    Ok(batch_keys.into_iter().map(|k| (k.clone(), k)).collect())
                 }
             })
             .await;
@@ -1109,10 +1102,7 @@ mod tests {
 
         let result: Result<PreloadStats, String> = cache
             .preload_keys(keys, |batch_keys| async move {
-                Ok(batch_keys
-                    .into_iter()
-                    .map(|k| (k.clone(), k))
-                    .collect())
+                Ok(batch_keys.into_iter().map(|k| (k.clone(), k)).collect())
             })
             .await;
 
@@ -1131,11 +1121,7 @@ mod tests {
             .unwrap();
         let mut cache: NearCache<String, String> = NearCache::new(config);
 
-        let keys = vec![
-            "k1".to_string(),
-            "k2".to_string(),
-            "k3".to_string(),
-        ];
+        let keys = vec!["k1".to_string(), "k2".to_string(), "k3".to_string()];
 
         let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         let call_count_clone = call_count.clone();
@@ -1146,10 +1132,7 @@ mod tests {
                 async move {
                     let count = call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     if count == 0 {
-                        Ok(batch_keys
-                            .into_iter()
-                            .map(|k| (k.clone(), k))
-                            .collect())
+                        Ok(batch_keys.into_iter().map(|k| (k.clone(), k)).collect())
                     } else {
                         Err("Simulated error on second batch")
                     }
@@ -1215,10 +1198,7 @@ mod tests {
 
         let result: Result<PreloadStats, String> = cache
             .preload_keys(keys, |batch_keys| async move {
-                Ok(batch_keys
-                    .into_iter()
-                    .map(|k| (k, k * 100))
-                    .collect())
+                Ok(batch_keys.into_iter().map(|k| (k, k * 100)).collect())
             })
             .await;
 

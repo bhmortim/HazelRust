@@ -96,7 +96,10 @@ async fn test_queue_poll_timeout_empty() {
     let queue: IQueue<String> = client.get_queue("test-poll-timeout-empty");
 
     let start = std::time::Instant::now();
-    let result = queue.poll_timeout(Duration::from_millis(500)).await.unwrap();
+    let result = queue
+        .poll_timeout(Duration::from_millis(500))
+        .await
+        .unwrap();
     let elapsed = start.elapsed();
 
     assert_eq!(result, None);

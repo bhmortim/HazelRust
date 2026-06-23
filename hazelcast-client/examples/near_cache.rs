@@ -8,7 +8,9 @@
 //!
 //! Requires a Hazelcast cluster running on localhost:5701.
 
-use hazelcast_client::{ClientConfig, EvictionPolicy, HazelcastClient, InMemoryFormat, NearCacheConfig};
+use hazelcast_client::{
+    ClientConfig, EvictionPolicy, HazelcastClient, InMemoryFormat, NearCacheConfig,
+};
 use std::time::{Duration, Instant};
 
 #[tokio::main]
@@ -33,8 +35,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Populate the map
     println!("Populating map with sample data...");
     for i in 0..100 {
-        map.put(format!("product:{}", i), format!("Product {} Description", i))
-            .await?;
+        map.put(
+            format!("product:{}", i),
+            format!("Product {} Description", i),
+        )
+        .await?;
     }
 
     // Warm up the near cache

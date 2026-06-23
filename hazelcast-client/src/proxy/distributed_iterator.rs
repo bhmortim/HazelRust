@@ -6,12 +6,12 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 use hazelcast_core::protocol::constants::{
-    MAP_FETCH_ENTRIES, MAP_FETCH_KEYS, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE, IS_NULL_FLAG, END_FLAG,
-    BEGIN_DATA_STRUCTURE_FLAG, END_DATA_STRUCTURE_FLAG,
+    BEGIN_DATA_STRUCTURE_FLAG, END_DATA_STRUCTURE_FLAG, END_FLAG, IS_NULL_FLAG, MAP_FETCH_ENTRIES,
+    MAP_FETCH_KEYS, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result};
 use hazelcast_core::serialization::ObjectDataInput;
+use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result};
 
 use crate::connection::ConnectionManager;
 
@@ -190,7 +190,9 @@ impl<T> DistributedIterator<T> {
 
     async fn invoke(&self, partition_id: i32, message: ClientMessage) -> Result<ClientMessage> {
         // Route to partition owner for partition-specific fetch operations
-        self.connection_manager.invoke_on_partition(partition_id, message).await
+        self.connection_manager
+            .invoke_on_partition(partition_id, message)
+            .await
     }
 }
 
@@ -199,7 +201,11 @@ where
     K: Deserializable + Send,
 {
     /// Fetches the next batch of keys from a partition.
-    async fn fetch_keys_batch(&mut self, partition_id: i32, table_index: i32) -> Result<(Vec<K>, i32)> {
+    async fn fetch_keys_batch(
+        &mut self,
+        partition_id: i32,
+        table_index: i32,
+    ) -> Result<(Vec<K>, i32)> {
         let mut message = ClientMessage::create_for_encode(MAP_FETCH_KEYS, partition_id);
         // Fixed-size param in initial frame: batch (int) ONLY
         if let Some(initial_frame) = message.frames_mut().first_mut() {
@@ -241,8 +247,10 @@ where
             if ip_frame.content.len() >= 8 {
                 // First entry: key=tableIndex(i32), value=tableSize(i32)
                 next_table_index = i32::from_le_bytes([
-                    ip_frame.content[0], ip_frame.content[1],
-                    ip_frame.content[2], ip_frame.content[3],
+                    ip_frame.content[0],
+                    ip_frame.content[1],
+                    ip_frame.content[2],
+                    ip_frame.content[3],
                 ]);
             }
         }
@@ -287,7 +295,7 @@ where
 
         while self.current_partition_index < self.partition_cursors.len() {
             let cursor = &self.partition_cursors[self.current_partition_index];
-            
+
             if !cursor.has_more {
                 self.current_partition_index += 1;
                 continue;
@@ -339,7 +347,11 @@ where
     V: Deserializable + Send,
 {
     /// Fetches the next batch of entries from a partition.
-    async fn fetch_entries_batch(&mut self, partition_id: i32, table_index: i32) -> Result<(Vec<(K, V)>, i32)> {
+    async fn fetch_entries_batch(
+        &mut self,
+        partition_id: i32,
+        table_index: i32,
+    ) -> Result<(Vec<(K, V)>, i32)> {
         let mut message = ClientMessage::create_for_encode(MAP_FETCH_ENTRIES, partition_id);
         // Fixed-size param: batch (int) ONLY
         if let Some(initial_frame) = message.frames_mut().first_mut() {
@@ -379,8 +391,10 @@ where
             let ip_frame = &frames[1];
             if ip_frame.content.len() >= 8 {
                 next_table_index = i32::from_le_bytes([
-                    ip_frame.content[0], ip_frame.content[1],
-                    ip_frame.content[2], ip_frame.content[3],
+                    ip_frame.content[0],
+                    ip_frame.content[1],
+                    ip_frame.content[2],
+                    ip_frame.content[3],
                 ]);
             }
         }
@@ -396,7 +410,9 @@ where
             if frame.flags & END_DATA_STRUCTURE_FLAG != 0 {
                 break;
             }
-            if !in_list { continue; }
+            if !in_list {
+                continue;
+            }
             if frame.flags & IS_NULL_FLAG == 0 && frame.content.len() > 8 {
                 data_frames.push(frame);
             }
@@ -417,7 +433,10 @@ where
             let mut key_input = ObjectDataInput::new(key_payload);
             let mut value_input = ObjectDataInput::new(value_payload);
 
-            if let (Ok(key), Ok(value)) = (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
+            if let (Ok(key), Ok(value)) = (
+                K::deserialize(&mut key_input),
+                V::deserialize(&mut value_input),
+            ) {
                 entries.push((key, value));
             }
 
@@ -439,7 +458,7 @@ where
 
         while self.current_partition_index < self.partition_cursors.len() {
             let cursor = &self.partition_cursors[self.current_partition_index];
-            
+
             if !cursor.has_more {
                 self.current_partition_index += 1;
                 continue;
@@ -495,10 +514,8 @@ mod tests {
 
     #[test]
     fn test_iterator_config_builder() {
-        let config = IteratorConfig::new()
-            .batch_size(50)
-            .prefetch(false);
-        
+        let config = IteratorConfig::new().batch_size(50).prefetch(false);
+
         assert_eq!(config.batch_size, 50);
         assert!(!config.prefetch);
     }

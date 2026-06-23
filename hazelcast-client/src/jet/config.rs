@@ -200,8 +200,14 @@ mod tests {
     #[test]
     fn test_processing_guarantee_display() {
         assert_eq!(format!("{}", ProcessingGuarantee::None), "NONE");
-        assert_eq!(format!("{}", ProcessingGuarantee::AtLeastOnce), "AT_LEAST_ONCE");
-        assert_eq!(format!("{}", ProcessingGuarantee::ExactlyOnce), "EXACTLY_ONCE");
+        assert_eq!(
+            format!("{}", ProcessingGuarantee::AtLeastOnce),
+            "AT_LEAST_ONCE"
+        );
+        assert_eq!(
+            format!("{}", ProcessingGuarantee::ExactlyOnce),
+            "EXACTLY_ONCE"
+        );
     }
 
     #[test]
@@ -247,7 +253,10 @@ mod tests {
         assert_eq!(config.name(), Some("test-job"));
         assert!(config.split_brain_protection());
         assert!(!config.auto_scaling());
-        assert_eq!(config.processing_guarantee(), ProcessingGuarantee::ExactlyOnce);
+        assert_eq!(
+            config.processing_guarantee(),
+            ProcessingGuarantee::ExactlyOnce
+        );
         assert_eq!(config.snapshot_interval_millis(), 5000);
         assert_eq!(config.initial_snapshot_name(), Some("snapshot-1"));
         assert_eq!(config.max_concurrent_operations(), 128);

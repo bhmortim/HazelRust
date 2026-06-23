@@ -327,7 +327,14 @@ mod tests {
         };
 
         let make_event = |event_type| {
-            EntryEvent::new("key".to_string(), None, Some(1), event_type, Uuid::new_v4(), 0)
+            EntryEvent::new(
+                "key".to_string(),
+                None,
+                Some(1),
+                event_type,
+                Uuid::new_v4(),
+                0,
+            )
         };
 
         dispatch_entry_event(&listener, make_event(EntryEventType::Added));
@@ -345,9 +352,8 @@ mod tests {
 
     #[test]
     fn test_fn_entry_listener_debug() {
-        let listener: FnEntryListener<String, i32> = FnEntryListener::builder()
-            .on_added(|_| {})
-            .build();
+        let listener: FnEntryListener<String, i32> =
+            FnEntryListener::builder().on_added(|_| {}).build();
 
         let debug_str = format!("{:?}", listener);
         assert!(debug_str.contains("FnEntryListener"));

@@ -298,8 +298,14 @@ mod tests {
 
     #[test]
     fn test_unique_key_transformation_equality() {
-        assert_eq!(UniqueKeyTransformation::Object, UniqueKeyTransformation::Object);
-        assert_ne!(UniqueKeyTransformation::Object, UniqueKeyTransformation::Long);
+        assert_eq!(
+            UniqueKeyTransformation::Object,
+            UniqueKeyTransformation::Object
+        );
+        assert_ne!(
+            UniqueKeyTransformation::Object,
+            UniqueKeyTransformation::Long
+        );
         assert_ne!(UniqueKeyTransformation::Long, UniqueKeyTransformation::Raw);
     }
 }

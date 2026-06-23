@@ -753,11 +753,7 @@ impl PipelineBuilder {
     ///
     /// The join is performed using the specified join condition to match
     /// keys from both streams.
-    pub fn hash_join<S: Source + 'static>(
-        mut self,
-        other: S,
-        condition: JoinCondition,
-    ) -> Self {
+    pub fn hash_join<S: Source + 'static>(mut self, other: S, condition: JoinCondition) -> Self {
         let vertex = ProcessorVertex::new(format!(
             "hash_join:{}:{}={}",
             other.name(),
@@ -1130,14 +1126,8 @@ mod tests {
         assert_eq!(pipeline.vertex_count(), 4);
         assert_eq!(pipeline.sources().len(), 1);
         assert_eq!(pipeline.sinks().len(), 1);
-        assert_eq!(
-            pipeline.vertices()[0].name(),
-            "source:files:/input:*.json"
-        );
-        assert_eq!(
-            pipeline.vertices()[3].name(),
-            "sink:files:/output:json"
-        );
+        assert_eq!(pipeline.vertices()[0].name(), "source:files:/input:*.json");
+        assert_eq!(pipeline.vertices()[3].name(), "sink:files:/output:json");
     }
 
     #[test]
@@ -1278,20 +1268,14 @@ mod tests {
             .build();
 
         assert_eq!(pipeline.vertex_count(), 4);
-        assert_eq!(
-            pipeline.vertices()[1].name(),
-            "window:session:1800000ms"
-        );
+        assert_eq!(pipeline.vertices()[1].name(), "window:session:1800000ms");
     }
 
     #[test]
     fn test_pipeline_windowed_aggregate() {
         let pipeline = Pipeline::builder()
             .read_from(map_source("transactions"))
-            .windowed_aggregate(
-                WindowDefinition::tumbling(3600000),
-                AggregateOperation::Sum,
-            )
+            .windowed_aggregate(WindowDefinition::tumbling(3600000), AggregateOperation::Sum)
             .write_to(map_sink("hourly-totals"))
             .build();
 

@@ -160,8 +160,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hazelcast_core::Result;
     use hazelcast_core::serialization::{DataInput, DataOutput, ObjectDataInput, ObjectDataOutput};
+    use hazelcast_core::Result;
 
     struct TestProcessor {
         value: i32,

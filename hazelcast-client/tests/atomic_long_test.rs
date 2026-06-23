@@ -48,7 +48,10 @@ async fn test_atomic_long_set_and_get() {
     let value = counter.get().await.expect("Failed to get value");
     assert_eq!(value, 42);
 
-    counter.set(-100).await.expect("Failed to set negative value");
+    counter
+        .set(-100)
+        .await
+        .expect("Failed to set negative value");
     let value = counter.get().await.expect("Failed to get value");
     assert_eq!(value, -100);
 
@@ -63,7 +66,10 @@ async fn test_atomic_long_get_and_set() {
 
     counter.set(10).await.expect("Failed to set initial value");
 
-    let old_value = counter.get_and_set(20).await.expect("Failed to get_and_set");
+    let old_value = counter
+        .get_and_set(20)
+        .await
+        .expect("Failed to get_and_set");
     assert_eq!(old_value, 10);
 
     let new_value = counter.get().await.expect("Failed to get value");
@@ -80,11 +86,17 @@ async fn test_atomic_long_compare_and_set() {
 
     counter.set(100).await.expect("Failed to set initial value");
 
-    let success = counter.compare_and_set(100, 200).await.expect("Failed to CAS");
+    let success = counter
+        .compare_and_set(100, 200)
+        .await
+        .expect("Failed to CAS");
     assert!(success);
     assert_eq!(counter.get().await.expect("Failed to get"), 200);
 
-    let success = counter.compare_and_set(100, 300).await.expect("Failed to CAS");
+    let success = counter
+        .compare_and_set(100, 300)
+        .await
+        .expect("Failed to CAS");
     assert!(!success);
     assert_eq!(counter.get().await.expect("Failed to get"), 200);
 
@@ -99,10 +111,16 @@ async fn test_atomic_long_increment_and_get() {
 
     counter.set(0).await.expect("Failed to set initial value");
 
-    let value = counter.increment_and_get().await.expect("Failed to increment");
+    let value = counter
+        .increment_and_get()
+        .await
+        .expect("Failed to increment");
     assert_eq!(value, 1);
 
-    let value = counter.increment_and_get().await.expect("Failed to increment");
+    let value = counter
+        .increment_and_get()
+        .await
+        .expect("Failed to increment");
     assert_eq!(value, 2);
 
     client.shutdown().await.expect("Failed to shutdown");
@@ -116,10 +134,16 @@ async fn test_atomic_long_decrement_and_get() {
 
     counter.set(10).await.expect("Failed to set initial value");
 
-    let value = counter.decrement_and_get().await.expect("Failed to decrement");
+    let value = counter
+        .decrement_and_get()
+        .await
+        .expect("Failed to decrement");
     assert_eq!(value, 9);
 
-    let value = counter.decrement_and_get().await.expect("Failed to decrement");
+    let value = counter
+        .decrement_and_get()
+        .await
+        .expect("Failed to decrement");
     assert_eq!(value, 8);
 
     client.shutdown().await.expect("Failed to shutdown");
@@ -133,7 +157,10 @@ async fn test_atomic_long_get_and_increment() {
 
     counter.set(5).await.expect("Failed to set initial value");
 
-    let old_value = counter.get_and_increment().await.expect("Failed to get_and_increment");
+    let old_value = counter
+        .get_and_increment()
+        .await
+        .expect("Failed to get_and_increment");
     assert_eq!(old_value, 5);
 
     let new_value = counter.get().await.expect("Failed to get");
@@ -150,7 +177,10 @@ async fn test_atomic_long_get_and_decrement() {
 
     counter.set(5).await.expect("Failed to set initial value");
 
-    let old_value = counter.get_and_decrement().await.expect("Failed to get_and_decrement");
+    let old_value = counter
+        .get_and_decrement()
+        .await
+        .expect("Failed to get_and_decrement");
     assert_eq!(old_value, 5);
 
     let new_value = counter.get().await.expect("Failed to get");
@@ -170,7 +200,10 @@ async fn test_atomic_long_add_and_get() {
     let value = counter.add_and_get(5).await.expect("Failed to add_and_get");
     assert_eq!(value, 15);
 
-    let value = counter.add_and_get(-20).await.expect("Failed to add_and_get negative");
+    let value = counter
+        .add_and_get(-20)
+        .await
+        .expect("Failed to add_and_get negative");
     assert_eq!(value, -5);
 
     client.shutdown().await.expect("Failed to shutdown");
@@ -204,7 +237,10 @@ async fn test_atomic_long_clone() {
     let value = counter2.get().await.expect("Failed to get via counter2");
     assert_eq!(value, 100);
 
-    counter2.increment_and_get().await.expect("Failed to increment via counter2");
+    counter2
+        .increment_and_get()
+        .await
+        .expect("Failed to increment via counter2");
     let value = counter1.get().await.expect("Failed to get via counter1");
     assert_eq!(value, 101);
 

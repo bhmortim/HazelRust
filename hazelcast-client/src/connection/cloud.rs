@@ -52,7 +52,9 @@ impl CloudDiscoveryConfig {
 
     /// Returns the coordinator URL.
     pub fn coordinator_url(&self) -> &str {
-        self.coordinator_url.as_deref().unwrap_or(DEFAULT_COORDINATOR_URL)
+        self.coordinator_url
+            .as_deref()
+            .unwrap_or(DEFAULT_COORDINATOR_URL)
     }
 
     /// Returns the timeout in seconds.
@@ -93,7 +95,10 @@ impl CloudDiscovery {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_mock_addresses(config: CloudDiscoveryConfig, addresses: Vec<SocketAddr>) -> Self {
+    pub(crate) fn with_mock_addresses(
+        config: CloudDiscoveryConfig,
+        addresses: Vec<SocketAddr>,
+    ) -> Self {
         Self {
             config,
             mock_addresses: Some(addresses),
@@ -116,14 +121,18 @@ impl CloudDiscovery {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
             .build()
-            .map_err(|e| HazelcastError::Connection(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                HazelcastError::Connection(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         let response = client
             .get(&url)
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| HazelcastError::Connection(format!("Cloud coordinator request failed: {}", e)))?;
+            .map_err(|e| {
+                HazelcastError::Connection(format!("Cloud coordinator request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(HazelcastError::Connection(format!(
@@ -169,7 +178,10 @@ impl CloudDiscovery {
         if addresses.is_empty() {
             tracing::warn!("Cloud discovery found no Hazelcast members");
         } else {
-            tracing::info!("Cloud discovery found {} Hazelcast member(s)", addresses.len());
+            tracing::info!(
+                "Cloud discovery found {} Hazelcast member(s)",
+                addresses.len()
+            );
         }
 
         Ok(addresses)
@@ -232,17 +244,23 @@ mod tests {
         let discovery = CloudDiscovery::new(config);
 
         let url = discovery.build_discovery_url();
-        assert_eq!(url, "https://coordinator.hazelcast.cloud/cluster/discovery?token=abc123");
+        assert_eq!(
+            url,
+            "https://coordinator.hazelcast.cloud/cluster/discovery?token=abc123"
+        );
     }
 
     #[test]
     fn test_build_discovery_url_custom_coordinator() {
-        let config = CloudDiscoveryConfig::new("token")
-            .with_coordinator_url("https://private.cloud.local");
+        let config =
+            CloudDiscoveryConfig::new("token").with_coordinator_url("https://private.cloud.local");
         let discovery = CloudDiscovery::new(config);
 
         let url = discovery.build_discovery_url();
-        assert_eq!(url, "https://private.cloud.local/cluster/discovery?token=token");
+        assert_eq!(
+            url,
+            "https://private.cloud.local/cluster/discovery?token=token"
+        );
     }
 
     #[test]
@@ -350,8 +368,7 @@ mod tests {
 
     #[test]
     fn test_config_debug() {
-        let config = CloudDiscoveryConfig::new("secret-token")
-            .with_timeout(15);
+        let config = CloudDiscoveryConfig::new("secret-token").with_timeout(15);
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("CloudDiscoveryConfig"));
         assert!(debug_str.contains("15"));

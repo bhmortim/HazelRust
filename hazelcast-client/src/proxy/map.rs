@@ -19,7 +19,11 @@ const DEFAULT_PARTITION_COUNT: i32 = 271;
 
 /// Compute partition index from serialized key data with a given partition count.
 fn partition_index_with_count(key_data: &[u8], partition_count: i32) -> i32 {
-    let count = if partition_count > 0 { partition_count } else { DEFAULT_PARTITION_COUNT };
+    let count = if partition_count > 0 {
+        partition_count
+    } else {
+        DEFAULT_PARTITION_COUNT
+    };
     // Java uses Math.abs(hash) % count, NOT (hash & 0x7FFFFFFF) % count
     let hash = compute_partition_hash(key_data);
     hash.abs() % count
@@ -31,23 +35,22 @@ fn partition_index(key_data: &[u8]) -> i32 {
 }
 
 use hazelcast_core::protocol::constants::{
-    BEGIN_DATA_STRUCTURE_FLAG, END_DATA_STRUCTURE_FLAG,
-    END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, MAP_ADD_ENTRY_LISTENER,
-    MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX, MAP_ADD_INTERCEPTOR, MAP_AGGREGATE,
-    MAP_AGGREGATE_WITH_PREDICATE, MAP_ADD_PARTITION_LOST_LISTENER, MAP_CLEAR, MAP_CONTAINS_KEY,
-    MAP_CONTAINS_VALUE,
-    MAP_ENTRIES_WITH_PAGING_PREDICATE, MAP_ENTRIES_WITH_PREDICATE, MAP_EVICT, MAP_EVICT_ALL,
-    MAP_EVENT_JOURNAL_READ, MAP_EVENT_JOURNAL_SUBSCRIBE, MAP_EXECUTE_ON_ALL_KEYS,
-    MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS, MAP_EXECUTE_WITH_PREDICATE,
-    MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL, MAP_GET_ENTRY_VIEW,
-    MAP_IS_LOCKED, MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE, MAP_LOAD_ALL,
-    MAP_LOAD_GIVEN_KEYS, MAP_LOCK, MAP_PROJECT, MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL,
-    MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT, MAP_PUT_WITH_MAX_IDLE, MAP_REMOVE, MAP_REMOVE_ENTRY_LISTENER, MAP_REMOVE_IF_SAME,
-    MAP_REMOVE_ALL, MAP_REMOVE_INTERCEPTOR, MAP_REMOVE_PARTITION_LOST_LISTENER, MAP_REPLACE,
+    BEGIN_DATA_STRUCTURE_FLAG, END_DATA_STRUCTURE_FLAG, END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG,
+    MAP_ADD_ENTRY_LISTENER, MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX,
+    MAP_ADD_INTERCEPTOR, MAP_ADD_PARTITION_LOST_LISTENER, MAP_AGGREGATE,
+    MAP_AGGREGATE_WITH_PREDICATE, MAP_CLEAR, MAP_CONTAINS_KEY, MAP_CONTAINS_VALUE,
+    MAP_ENTRIES_WITH_PAGING_PREDICATE, MAP_ENTRIES_WITH_PREDICATE,
+    MAP_ENTRY_SET as MAP_ENTRY_SET_OP, MAP_EVENT_JOURNAL_READ, MAP_EVENT_JOURNAL_SUBSCRIBE,
+    MAP_EVICT, MAP_EVICT_ALL, MAP_EXECUTE_ON_ALL_KEYS, MAP_EXECUTE_ON_KEY, MAP_EXECUTE_ON_KEYS,
+    MAP_EXECUTE_WITH_PREDICATE, MAP_FLUSH, MAP_FORCE_UNLOCK, MAP_GET, MAP_GET_ALL,
+    MAP_GET_ENTRY_VIEW, MAP_IS_LOCKED, MAP_KEYS_WITH_PAGING_PREDICATE, MAP_KEYS_WITH_PREDICATE,
+    MAP_KEY_SET as MAP_KEY_SET_OP, MAP_LOAD_ALL, MAP_LOAD_GIVEN_KEYS, MAP_LOCK, MAP_PROJECT,
+    MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT,
+    MAP_PUT_WITH_MAX_IDLE, MAP_REMOVE, MAP_REMOVE_ALL, MAP_REMOVE_ENTRY_LISTENER,
+    MAP_REMOVE_IF_SAME, MAP_REMOVE_INTERCEPTOR, MAP_REMOVE_PARTITION_LOST_LISTENER, MAP_REPLACE,
     MAP_REPLACE_IF_SAME, MAP_SET_ALL, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK,
-    MAP_KEY_SET as MAP_KEY_SET_OP, MAP_ENTRY_SET as MAP_ENTRY_SET_OP, MAP_VALUES as MAP_VALUES_OP,
-    MAP_VALUES_WITH_PAGING_PREDICATE,
-    MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    MAP_VALUES as MAP_VALUES_OP, MAP_VALUES_WITH_PAGING_PREDICATE, MAP_VALUES_WITH_PREDICATE,
+    PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -436,7 +439,8 @@ impl IndexConfigBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.attributes.extend(attributes.into_iter().map(Into::into));
+        self.attributes
+            .extend(attributes.into_iter().map(Into::into));
         self
     }
 
@@ -527,13 +531,17 @@ use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 use crate::listener::{
     dispatch_entry_event, BoxedEntryListener, BoxedMapPartitionLostListener, EntryEvent,
-    EntryEventType, EntryListenerConfig, ListenerId, ListenerRegistration,
-    ListenerStats, MapPartitionLostEvent,
+    EntryEventType, EntryListenerConfig, ListenerId, ListenerRegistration, ListenerStats,
+    MapPartitionLostEvent,
 };
-use crate::proxy::distributed_iterator::{DistributedIterator, IterationType as DistIterationType, IteratorConfig};
+use crate::proxy::distributed_iterator::{
+    DistributedIterator, IterationType as DistIterationType, IteratorConfig,
+};
 use crate::proxy::entry_processor::{EntryProcessor, EntryProcessorResult};
 use crate::proxy::interceptor::MapInterceptor;
-use crate::query::{Aggregator, AnchorEntry, IterationType, PagingPredicate, PagingResult, Predicate, Projection};
+use crate::query::{
+    Aggregator, AnchorEntry, IterationType, PagingPredicate, PagingResult, Predicate, Projection,
+};
 
 /// A distributed map proxy for performing key-value operations on a Hazelcast cluster.
 ///
@@ -558,7 +566,11 @@ impl<K, V> IMap<K, V> {
     fn partition_index_dynamic(&self, key_data: &[u8]) -> i32 {
         let count = self.connection_manager.partition_count();
         // Skip 8 bytes: [4-byte data header] [4-byte type_id]
-        let hash_input = if key_data.len() > 8 { &key_data[8..] } else { key_data };
+        let hash_input = if key_data.len() > 8 {
+            &key_data[8..]
+        } else {
+            key_data
+        };
         partition_index_with_count(hash_input, count)
     }
 
@@ -623,7 +635,9 @@ where
     V: Serializable + Deserializable + Send + Sync,
 {
     async fn check_quorum(&self, is_read: bool) -> Result<()> {
-        self.connection_manager.check_quorum(&self.name, is_read).await
+        self.connection_manager
+            .check_quorum(&self.name, is_read)
+            .await
     }
 
     /// Retrieves the value associated with the given key.
@@ -704,7 +718,7 @@ where
         // Fixed-size params in initial frame: threadId (long) + ttl (long)
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
-            initial_frame.content.put_i64_le(0);  // threadId = 0
+            initial_frame.content.put_i64_le(0); // threadId = 0
             initial_frame.content.put_i64_le(-1i64); // ttl = -1 (no expiry)
         }
 
@@ -713,7 +727,9 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -752,14 +768,16 @@ where
         // Fixed-size params: threadId (long) + ttl (long)
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
-            initial_frame.content.put_i64_le(0);  // threadId = 0
+            initial_frame.content.put_i64_le(0); // threadId = 0
             initial_frame.content.put_i64_le(-1i64); // ttl = -1 (no expiry)
         }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -799,7 +817,9 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -842,7 +862,9 @@ where
         message.add_frame(Self::data_frame(&old_value_data));
         message.add_frame(Self::data_frame(&new_value_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1009,7 +1031,9 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -1050,7 +1074,9 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_bool_response(&response)
     }
 
@@ -1144,7 +1170,7 @@ where
         // Fixed-size params in initial frame: threadId (long) + ttl (long)
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
-            initial_frame.content.put_i64_le(0);  // threadId = 0
+            initial_frame.content.put_i64_le(0); // threadId = 0
             initial_frame.content.put_i64_le(-1i64); // ttl = -1 (no expiry)
         }
 
@@ -1153,7 +1179,9 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -1183,7 +1211,9 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -1276,7 +1306,8 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        self.invoke_on_partition_mutating(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Ok(())
     }
 
@@ -1315,8 +1346,8 @@ where
         // threadId (long, 8 bytes) + ttl (long, 8 bytes)
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
-            initial_frame.content.put_i64_le(0);  // threadId = 0
-            initial_frame.content.put_i64_le(-1);  // ttl = -1 (no expiry)
+            initial_frame.content.put_i64_le(0); // threadId = 0
+            initial_frame.content.put_i64_le(-1); // ttl = -1 (no expiry)
         }
 
         // Variable-size params as separate frames in protocol-defined order:
@@ -1327,7 +1358,8 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        self.invoke_on_partition_mutating(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Ok(())
     }
 
@@ -1725,7 +1757,8 @@ where
             }
 
             let partition_id = self.partition_index_dynamic(&key_data);
-            partition_groups.entry(partition_id)
+            partition_groups
+                .entry(partition_id)
                 .or_insert_with(Vec::new)
                 .push((idx, key_data));
         }
@@ -1748,7 +1781,9 @@ where
                     message.add_frame(Frame::with_content(BytesMut::from(kd.as_slice())));
                 }
                 message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
-                let response = conn_mgr.invoke_on_partition_with_retry(partition_id, message, true).await?;
+                let response = conn_mgr
+                    .invoke_on_partition_with_retry(partition_id, message, true)
+                    .await?;
                 Ok::<_, HazelcastError>((key_entries, response))
             }));
         }
@@ -1756,7 +1791,9 @@ where
         // Step 3: Collect results, preserving original key order
         for handle in handles {
             let (key_entries, response) = handle.await.map_err(|e| {
-                HazelcastError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()).into())
+                HazelcastError::Io(
+                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string()).into(),
+                )
             })??;
 
             let fetched: Vec<(K, V)> = Self::decode_entries_response(&response)?;
@@ -1818,7 +1855,8 @@ where
             }
 
             let partition_id = self.partition_index_dynamic(&key_data);
-            partition_groups.entry(partition_id)
+            partition_groups
+                .entry(partition_id)
                 .or_insert_with(Vec::new)
                 .push((key_data, value_data));
         }
@@ -1843,7 +1881,9 @@ where
                     message.add_frame(Frame::with_content(BytesMut::from(vd.as_slice())));
                 }
                 message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
-                conn_mgr.invoke_on_partition_with_retry(partition_id, message, false).await?;
+                conn_mgr
+                    .invoke_on_partition_with_retry(partition_id, message, false)
+                    .await?;
                 Ok::<_, HazelcastError>(())
             }));
         }
@@ -1851,7 +1891,9 @@ where
         // Step 3: Wait for all partitions to complete
         for handle in handles {
             handle.await.map_err(|e| {
-                HazelcastError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()).into())
+                HazelcastError::Io(
+                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string()).into(),
+                )
             })??;
         }
 
@@ -1896,7 +1938,8 @@ where
             message.add_frame(Self::string_frame(&self.name));
             message.add_frame(Self::data_frame(&key_data));
 
-            self.invoke_on_partition_mutating(partition_id, message).await?;
+            self.invoke_on_partition_mutating(partition_id, message)
+                .await?;
         }
 
         Ok(())
@@ -1996,7 +2039,8 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        self.invoke_on_partition_mutating(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Ok(())
     }
 
@@ -2035,7 +2079,9 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_bool_response(&response)
     }
 
@@ -2064,7 +2110,8 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        self.invoke_on_partition_mutating(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Ok(())
     }
 
@@ -2116,7 +2163,8 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        self.invoke_on_partition_mutating(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Ok(())
     }
 
@@ -2158,7 +2206,9 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_bool_response(&response)
     }
 
@@ -2287,7 +2337,9 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_bool_response(&response)
     }
 
@@ -2348,7 +2400,9 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_bool_response(&response)
     }
 
@@ -2376,7 +2430,12 @@ where
     ///     Duration::from_secs(1800),
     /// ).await?;
     /// ```
-    pub async fn put_with_max_idle(&self, key: K, value: V, max_idle: Duration) -> Result<Option<V>> {
+    pub async fn put_with_max_idle(
+        &self,
+        key: K,
+        value: V,
+        max_idle: Duration,
+    ) -> Result<Option<V>> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
         let key_data = Self::serialize_value(&key)?;
@@ -2388,9 +2447,17 @@ where
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
-        let _max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+        let _max_idle_ms = if max_idle.is_zero() {
+            -1
+        } else {
+            max_idle.as_millis() as i64
+        };
 
-        let max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+        let max_idle_ms = if max_idle.is_zero() {
+            -1
+        } else {
+            max_idle.as_millis() as i64
+        };
         let mut message = ClientMessage::create_for_encode(MAP_PUT_WITH_MAX_IDLE, partition_id);
         // Fixed-size params: threadId + ttl + maxIdle
         if let Some(initial_frame) = message.frames_mut().first_mut() {
@@ -2403,7 +2470,9 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -2454,8 +2523,16 @@ where
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
-        let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
-        let _max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+        let ttl_ms = if ttl.is_zero() {
+            -1
+        } else {
+            ttl.as_millis() as i64
+        };
+        let _max_idle_ms = if max_idle.is_zero() {
+            -1
+        } else {
+            max_idle.as_millis() as i64
+        };
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
         Self::write_initial_thread_id_and_ttl(&mut message, ttl_ms);
@@ -2463,7 +2540,9 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -2515,8 +2594,16 @@ where
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
-        let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
-        let _max_idle_ms = if max_idle.is_zero() { -1 } else { max_idle.as_millis() as i64 };
+        let ttl_ms = if ttl.is_zero() {
+            -1
+        } else {
+            ttl.as_millis() as i64
+        };
+        let _max_idle_ms = if max_idle.is_zero() {
+            -1
+        } else {
+            max_idle.as_millis() as i64
+        };
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
         Self::write_initial_thread_id_and_ttl(&mut message, ttl_ms);
@@ -2524,7 +2611,8 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        self.invoke_on_partition_mutating(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Ok(())
     }
 
@@ -2567,7 +2655,11 @@ where
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
-        let ttl_ms = if ttl.is_zero() { -1 } else { ttl.as_millis() as i64 };
+        let ttl_ms = if ttl.is_zero() {
+            -1
+        } else {
+            ttl.as_millis() as i64
+        };
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT_TRANSIENT, partition_id);
         Self::write_initial_thread_id_and_ttl(&mut message, ttl_ms);
@@ -2575,7 +2667,8 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        self.invoke_on_partition_mutating(partition_id, message).await?;
+        self.invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Ok(())
     }
 
@@ -2624,25 +2717,41 @@ where
     }
 
     /// Invokes a read (idempotent) operation on a specific partition with automatic retry.
-    async fn invoke_on_partition(&self, partition_id: i32, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_partition_with_retry(partition_id, message, true).await
+    async fn invoke_on_partition(
+        &self,
+        partition_id: i32,
+        message: ClientMessage,
+    ) -> Result<ClientMessage> {
+        self.connection_manager
+            .invoke_on_partition_with_retry(partition_id, message, true)
+            .await
     }
 
     /// Invokes a write (non-idempotent) operation on a specific partition with automatic retry.
     ///
     /// Non-idempotent operations are only retried when `redo_operation` is enabled in the config.
-    async fn invoke_on_partition_mutating(&self, partition_id: i32, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_partition_with_retry(partition_id, message, false).await
+    async fn invoke_on_partition_mutating(
+        &self,
+        partition_id: i32,
+        message: ClientMessage,
+    ) -> Result<ClientMessage> {
+        self.connection_manager
+            .invoke_on_partition_with_retry(partition_id, message, false)
+            .await
     }
 
     /// Invokes a read (idempotent) operation on a random connection with automatic retry.
     async fn invoke_on_random(&self, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_random_with_retry(message, true).await
+        self.connection_manager
+            .invoke_on_random_with_retry(message, true)
+            .await
     }
 
     /// Invokes a write (non-idempotent) operation on a random connection with automatic retry.
     async fn invoke_on_random_mutating(&self, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_random_with_retry(message, false).await
+        self.connection_manager
+            .invoke_on_random_with_retry(message, false)
+            .await
     }
 
     fn decode_nullable_response<T: Deserializable>(response: &ClientMessage) -> Result<Option<T>> {
@@ -2663,7 +2772,9 @@ where
 
         // Skip 8-byte Data header (partition_hash + type_id)
         let content = &data_frame.content;
-        if content.len() < 8 { return Ok(None); }
+        if content.len() < 8 {
+            return Ok(None);
+        }
         let payload = &content[8..];
         let mut input = ObjectDataInput::new(payload);
         T::deserialize(&mut input).map(Some)
@@ -2672,9 +2783,7 @@ where
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -2688,9 +2797,7 @@ where
     fn decode_int_response(response: &ClientMessage) -> Result<i32> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -2751,15 +2858,24 @@ where
         }
 
         let mut off = 0;
-        let cost = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
-        let creation_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
-        let expiration_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
-        let hits = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
-        let last_access_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
-        let last_stored_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
-        let last_update_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
-        let version = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
-        let ttl = i64::from_le_bytes(content[off..off + 8].try_into().unwrap()); off += 8;
+        let cost = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
+        off += 8;
+        let creation_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
+        off += 8;
+        let expiration_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
+        off += 8;
+        let hits = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
+        off += 8;
+        let last_access_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
+        off += 8;
+        let last_stored_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
+        off += 8;
+        let last_update_time = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
+        off += 8;
+        let version = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
+        off += 8;
+        let ttl = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
+        off += 8;
         let max_idle = i64::from_le_bytes(content[off..off + 8].try_into().unwrap());
 
         // Key is at ev_frame_idx + 1, value at ev_frame_idx + 2
@@ -2870,7 +2986,10 @@ where
         true
     }
 
-    fn decode_entry_event(message: &ClientMessage, include_value: bool) -> Result<EntryEvent<K, V>> {
+    fn decode_entry_event(
+        message: &ClientMessage,
+        include_value: bool,
+    ) -> Result<EntryEvent<K, V>> {
         let frames = message.frames();
         if frames.len() < 3 {
             return Err(HazelcastError::Serialization(
@@ -3099,7 +3218,8 @@ where
     /// println!("Hit ratio: {:.2}%", stats.hit_ratio() * 100.0);
     /// ```
     pub fn local_stats(&self) -> LocalMapStats {
-        let (owned_entry_count, heap_cost) = self.near_cache
+        let (owned_entry_count, heap_cost) = self
+            .near_cache
             .as_ref()
             .map(|cache| {
                 let guard = cache.lock().unwrap();
@@ -3296,7 +3416,10 @@ where
             let mut key_input = ObjectDataInput::new(&key_frame.content[8..]);
             let mut value_input = ObjectDataInput::new(&value_frame.content[8..]);
 
-            match (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
+            match (
+                K::deserialize(&mut key_input),
+                V::deserialize(&mut value_input),
+            ) {
                 (Ok(key), Ok(value)) => {
                     entries.push((key, value));
                 }
@@ -3355,7 +3478,10 @@ where
     ///     println!("Key: {}", key);
     /// }
     /// ```
-    pub async fn key_set_with_config(&self, config: IteratorConfig) -> Result<DistributedIterator<K>> {
+    pub async fn key_set_with_config(
+        &self,
+        config: IteratorConfig,
+    ) -> Result<DistributedIterator<K>> {
         self.check_permission(PermissionAction::Read)?;
         self.check_quorum(true).await?;
 
@@ -3384,11 +3510,15 @@ where
     /// }
     /// ```
     pub async fn values_iter(&self) -> Result<DistributedIterator<(K, V)>> {
-        self.values_iter_with_config(IteratorConfig::default()).await
+        self.values_iter_with_config(IteratorConfig::default())
+            .await
     }
 
     /// Returns an iterator over all values in this map with custom configuration.
-    pub async fn values_iter_with_config(&self, config: IteratorConfig) -> Result<DistributedIterator<(K, V)>> {
+    pub async fn values_iter_with_config(
+        &self,
+        config: IteratorConfig,
+    ) -> Result<DistributedIterator<(K, V)>> {
         self.check_permission(PermissionAction::Read)?;
         self.check_quorum(true).await?;
 
@@ -3435,7 +3565,10 @@ where
     ///     println!("{}: {:?}", key, value);
     /// }
     /// ```
-    pub async fn entry_set_with_config(&self, config: IteratorConfig) -> Result<DistributedIterator<(K, V)>> {
+    pub async fn entry_set_with_config(
+        &self,
+        config: IteratorConfig,
+    ) -> Result<DistributedIterator<(K, V)>> {
         self.check_permission(PermissionAction::Read)?;
         self.check_quorum(true).await?;
 
@@ -3564,7 +3697,9 @@ where
         message.add_frame(Self::data_frame(&processor_data));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_partition_mutating(partition_id, message).await?;
+        let response = self
+            .invoke_on_partition_mutating(partition_id, message)
+            .await?;
         Self::decode_nullable_response::<E::Output>(&response)
     }
 
@@ -3875,7 +4010,9 @@ where
         if let Some(ref bitmap_opts) = config.bitmap_options {
             message.add_frame(Self::bool_frame(true)); // has bitmap options
             message.add_frame(Self::string_frame(bitmap_opts.unique_key()));
-            message.add_frame(Self::int_frame(bitmap_opts.unique_key_transformation().as_i32()));
+            message.add_frame(Self::int_frame(
+                bitmap_opts.unique_key_transformation().as_i32(),
+            ));
         } else {
             message.add_frame(Self::bool_frame(false)); // no bitmap options
         }
@@ -4205,17 +4342,18 @@ where
         let mut frame_idx = 1;
 
         // Read anchor count from initial frame if present
-        let anchor_count = if !frames.is_empty() && frames[0].content.len() >= RESPONSE_HEADER_SIZE + 4 {
-            let offset = RESPONSE_HEADER_SIZE;
-            i32::from_le_bytes([
-                frames[0].content[offset],
-                frames[0].content[offset + 1],
-                frames[0].content[offset + 2],
-                frames[0].content[offset + 3],
-            ]) as usize
-        } else {
-            0
-        };
+        let anchor_count =
+            if !frames.is_empty() && frames[0].content.len() >= RESPONSE_HEADER_SIZE + 4 {
+                let offset = RESPONSE_HEADER_SIZE;
+                i32::from_le_bytes([
+                    frames[0].content[offset],
+                    frames[0].content[offset + 1],
+                    frames[0].content[offset + 2],
+                    frames[0].content[offset + 3],
+                ]) as usize
+            } else {
+                0
+            };
 
         // Read anchors
         for _ in 0..anchor_count {
@@ -4245,11 +4383,12 @@ where
             frame_idx += 1;
 
             let value_frame = &frames[frame_idx];
-            let value_data = if value_frame.flags & IS_NULL_FLAG == 0 && !value_frame.content.is_empty() {
-                Some(value_frame.content.to_vec())
-            } else {
-                None
-            };
+            let value_data =
+                if value_frame.flags & IS_NULL_FLAG == 0 && !value_frame.content.is_empty() {
+                    Some(value_frame.content.to_vec())
+                } else {
+                    None
+                };
             frame_idx += 1;
 
             anchors.push(AnchorEntry::new(page, key_data, value_data));
@@ -4288,17 +4427,18 @@ where
         let mut frame_idx = 1;
 
         // Read anchor count from initial frame if present
-        let anchor_count = if !frames.is_empty() && frames[0].content.len() >= RESPONSE_HEADER_SIZE + 4 {
-            let offset = RESPONSE_HEADER_SIZE;
-            i32::from_le_bytes([
-                frames[0].content[offset],
-                frames[0].content[offset + 1],
-                frames[0].content[offset + 2],
-                frames[0].content[offset + 3],
-            ]) as usize
-        } else {
-            0
-        };
+        let anchor_count =
+            if !frames.is_empty() && frames[0].content.len() >= RESPONSE_HEADER_SIZE + 4 {
+                let offset = RESPONSE_HEADER_SIZE;
+                i32::from_le_bytes([
+                    frames[0].content[offset],
+                    frames[0].content[offset + 1],
+                    frames[0].content[offset + 2],
+                    frames[0].content[offset + 3],
+                ]) as usize
+            } else {
+                0
+            };
 
         // Read anchors
         for _ in 0..anchor_count {
@@ -4328,11 +4468,12 @@ where
             frame_idx += 1;
 
             let value_frame = &frames[frame_idx];
-            let value_data = if value_frame.flags & IS_NULL_FLAG == 0 && !value_frame.content.is_empty() {
-                Some(value_frame.content.to_vec())
-            } else {
-                None
-            };
+            let value_data =
+                if value_frame.flags & IS_NULL_FLAG == 0 && !value_frame.content.is_empty() {
+                    Some(value_frame.content.to_vec())
+                } else {
+                    None
+                };
             frame_idx += 1;
 
             anchors.push(AnchorEntry::new(page, key_data, value_data));
@@ -4359,7 +4500,10 @@ where
             let mut key_input = ObjectDataInput::new(&key_frame.content);
             let mut value_input = ObjectDataInput::new(&value_frame.content);
 
-            if let (Ok(key), Ok(value)) = (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
+            if let (Ok(key), Ok(value)) = (
+                K::deserialize(&mut key_input),
+                V::deserialize(&mut value_input),
+            ) {
                 entries.push((key, value));
             }
         }
@@ -4453,14 +4597,16 @@ where
             .on_evicted()
             .on_expired();
 
-        let registration = self.add_entry_listener(config, move |event: EntryEvent<K, V>| {
-            let mut output = ObjectDataOutput::new();
-            if event.key.serialize(&mut output).is_ok() {
-                let key_data = output.into_bytes();
-                let mut cache_guard = near_cache.lock().unwrap();
-                cache_guard.invalidate(&key_data);
-            }
-        }).await?;
+        let registration = self
+            .add_entry_listener(config, move |event: EntryEvent<K, V>| {
+                let mut output = ObjectDataOutput::new();
+                if event.key.serialize(&mut output).is_ok() {
+                    let key_data = output.into_bytes();
+                    let mut cache_guard = near_cache.lock().unwrap();
+                    cache_guard.invalidate(&key_data);
+                }
+            })
+            .await?;
 
         let mut reg_guard = self.invalidation_registration.lock().unwrap();
         *reg_guard = Some(registration);
@@ -4580,9 +4726,7 @@ where
                             }
                         }
                     }
-                    EntryEventType::Removed
-                    | EntryEventType::Evicted
-                    | EntryEventType::Expired => {
+                    EntryEventType::Removed | EntryEventType::Evicted | EntryEventType::Expired => {
                         cache.remove(&key_data);
                     }
                 }
@@ -4729,8 +4873,10 @@ where
         self.check_permission(PermissionAction::Listen)?;
         let predicate_data = predicate.to_predicate_data()?;
 
-        let mut message =
-            ClientMessage::create_for_encode(MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, PARTITION_ID_ANY);
+        let mut message = ClientMessage::create_for_encode(
+            MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE,
+            PARTITION_ID_ANY,
+        );
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::bool_frame(config.include_value));
         message.add_frame(Self::int_frame(config.event_flags()));
@@ -4833,8 +4979,10 @@ where
         self.check_permission(PermissionAction::Listen)?;
         let predicate_data = predicate.to_predicate_data()?;
 
-        let mut message =
-            ClientMessage::create_for_encode(MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, PARTITION_ID_ANY);
+        let mut message = ClientMessage::create_for_encode(
+            MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE,
+            PARTITION_ID_ANY,
+        );
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::bool_frame(config.include_value));
         message.add_frame(Self::int_frame(config.event_flags()));
@@ -4918,10 +5066,7 @@ where
     ///     println!("Partition {} lost!", event.partition_id());
     /// }).await?;
     /// ```
-    pub async fn add_partition_lost_listener<F>(
-        &self,
-        handler: F,
-    ) -> Result<ListenerRegistration>
+    pub async fn add_partition_lost_listener<F>(&self, handler: F) -> Result<ListenerRegistration>
     where
         F: Fn(MapPartitionLostEvent) + Send + Sync + 'static,
         K: 'static,
@@ -5158,9 +5303,7 @@ where
         let member_uuid = if initial_frame.content.len() >= offset + 16 {
             let uuid_bytes: [u8; 16] = initial_frame.content[offset..offset + 16]
                 .try_into()
-                .map_err(|_| {
-                    HazelcastError::Serialization("invalid UUID bytes".to_string())
-                })?;
+                .map_err(|_| HazelcastError::Serialization("invalid UUID bytes".to_string()))?;
             Uuid::from_bytes(uuid_bytes)
         } else {
             Uuid::nil()
@@ -5294,7 +5437,8 @@ where
         self.check_permission(PermissionAction::Read)?;
 
         // Subscribe to get initial sequence info
-        let (oldest_sequence, _newest_sequence) = self.subscribe_to_event_journal(partition_id).await?;
+        let (oldest_sequence, _newest_sequence) =
+            self.subscribe_to_event_journal(partition_id).await?;
 
         let start_sequence = if config.start_sequence < 0 {
             oldest_sequence
@@ -5371,9 +5515,10 @@ where
         message.add_frame(Self::int_frame(max_size));
 
         let addresses = connection_manager.connected_addresses().await;
-        let address = addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })?;
+        let address = addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))?;
 
         connection_manager.send_to(address, message).await?;
         let response = connection_manager
@@ -5479,17 +5624,13 @@ where
             };
             frame_idx += 1;
 
-            let event_type =
-                EventJournalEventType::from_value(event_type_value).unwrap_or(EventJournalEventType::Added);
+            let event_type = EventJournalEventType::from_value(event_type_value)
+                .unwrap_or(EventJournalEventType::Added);
 
             // Read sequence
             let sequence_frame = &frames[frame_idx];
             let sequence = if sequence_frame.content.len() >= 8 {
-                i64::from_le_bytes(
-                    sequence_frame.content[..8]
-                        .try_into()
-                        .unwrap_or([0u8; 8]),
-                )
+                i64::from_le_bytes(sequence_frame.content[..8].try_into().unwrap_or([0u8; 8]))
             } else {
                 0
             };
@@ -5625,7 +5766,8 @@ where
     pub async fn remove_interceptor(&self, id: &str) -> Result<bool> {
         self.check_permission(PermissionAction::Put)?;
 
-        let mut message = ClientMessage::create_for_encode(MAP_REMOVE_INTERCEPTOR, PARTITION_ID_ANY);
+        let mut message =
+            ClientMessage::create_for_encode(MAP_REMOVE_INTERCEPTOR, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::string_frame(id));
 
@@ -5646,9 +5788,8 @@ where
             return Ok(String::new());
         }
 
-        String::from_utf8(data_frame.content.to_vec()).map_err(|e| {
-            HazelcastError::Serialization(format!("invalid UTF-8 in response: {}", e))
-        })
+        String::from_utf8(data_frame.content.to_vec())
+            .map_err(|e| HazelcastError::Serialization(format!("invalid UTF-8 in response: {}", e)))
     }
 
     fn decode_entry_processor_results<R>(
@@ -5739,7 +5880,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_map_permission_denied_read() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -5759,7 +5900,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_map_permission_denied_put() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -5779,7 +5920,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_map_permission_denied_remove() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -5800,7 +5941,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_map_permission_denied_delete() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -5821,7 +5962,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_map_permission_denied_set() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -5842,7 +5983,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_map_permission_denied_contains_value() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -5863,7 +6004,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_map_permission_denied_add_index() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -5950,9 +6091,12 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
-        map.check_permission(crate::config::PermissionAction::Read).unwrap();
-        map.check_permission(crate::config::PermissionAction::Put).unwrap();
-        map.check_permission(crate::config::PermissionAction::Remove).unwrap();
+        map.check_permission(crate::config::PermissionAction::Read)
+            .unwrap();
+        map.check_permission(crate::config::PermissionAction::Put)
+            .unwrap();
+        map.check_permission(crate::config::PermissionAction::Remove)
+            .unwrap();
     }
 
     #[test]
@@ -5982,8 +6126,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         let stats = map.near_cache_stats().unwrap();
         assert_eq!(stats.hits(), 0);
@@ -6020,8 +6163,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         let stats = map.local_stats();
         assert_eq!(stats.owned_entry_count(), 0);
@@ -6048,8 +6190,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map1: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map1: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
         let map2 = map1.clone();
 
         // Both should share the same near-cache
@@ -6071,8 +6212,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         // Should not error even if key doesn't exist
         assert!(map.invalidate_near_cache_entry(&"key1".to_string()).is_ok());
@@ -6086,8 +6226,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         // Should not panic
         map.clear_near_cache();
@@ -6292,9 +6431,7 @@ mod tests {
 
     #[test]
     fn test_index_config_try_build_success() {
-        let result = IndexConfig::builder()
-            .add_attribute("field")
-            .try_build();
+        let result = IndexConfig::builder().add_attribute("field").try_build();
         assert!(result.is_ok());
     }
 
@@ -6369,8 +6506,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(!map.is_near_cache_invalidation_active());
     }
@@ -6395,8 +6531,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map1: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map1: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
         let map2 = map1.clone();
 
         assert!(!map1.is_near_cache_invalidation_active());
@@ -6431,8 +6566,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         let result = map.stop_near_cache_invalidation().await;
         assert!(matches!(result, Ok(false)));
@@ -6488,7 +6622,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_put_all_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -6511,7 +6645,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_all_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -6560,7 +6694,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_all_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -6581,7 +6715,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_all_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -6660,7 +6794,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_all_with_predicate_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -6732,15 +6866,14 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(map.has_near_cache());
     }
 
     #[tokio::test]
     async fn test_execute_on_entries_with_predicate_permission_denied_read() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -6768,13 +6901,15 @@ mod tests {
         use crate::query::Predicates;
         let predicate = Predicates::sql("age > 18");
 
-        let result = map.execute_on_entries_with_predicate(&TestProcessor, &predicate).await;
+        let result = map
+            .execute_on_entries_with_predicate(&TestProcessor, &predicate)
+            .await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
     #[tokio::test]
     async fn test_execute_on_entries_with_predicate_permission_denied_put() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -6802,7 +6937,9 @@ mod tests {
         use crate::query::Predicates;
         let predicate = Predicates::sql("age > 18");
 
-        let result = map.execute_on_entries_with_predicate(&TestProcessor, &predicate).await;
+        let result = map
+            .execute_on_entries_with_predicate(&TestProcessor, &predicate)
+            .await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
@@ -6830,7 +6967,10 @@ mod tests {
         processor.serialize(&mut output).unwrap();
         let processor_bytes = output.into_bytes();
         assert_eq!(processor_bytes.len(), 4);
-        assert_eq!(i32::from_be_bytes(processor_bytes[..4].try_into().unwrap()), 5);
+        assert_eq!(
+            i32::from_be_bytes(processor_bytes[..4].try_into().unwrap()),
+            5
+        );
 
         use crate::query::Predicates;
         let predicate = Predicates::sql("status = 'active'");
@@ -6896,7 +7036,7 @@ mod tests {
                 BitmapIndexOptions::builder()
                     .unique_key("__key")
                     .unique_key_transformation(UniqueKeyTransformation::Long)
-                    .build()
+                    .build(),
             )
             .build();
 
@@ -6907,7 +7047,10 @@ mod tests {
 
         let opts = config.bitmap_options().unwrap();
         assert_eq!(opts.unique_key(), "__key");
-        assert_eq!(opts.unique_key_transformation(), UniqueKeyTransformation::Long);
+        assert_eq!(
+            opts.unique_key_transformation(),
+            UniqueKeyTransformation::Long
+        );
     }
 
     #[test]
@@ -6969,7 +7112,7 @@ mod tests {
                 BitmapIndexOptions::builder()
                     .unique_key("orderId")
                     .unique_key_transformation(UniqueKeyTransformation::Long)
-                    .build()
+                    .build(),
             )
             .build();
 
@@ -6978,7 +7121,10 @@ mod tests {
 
         let opts = status_index.bitmap_options().unwrap();
         assert_eq!(opts.unique_key(), "orderId");
-        assert_eq!(opts.unique_key_transformation(), UniqueKeyTransformation::Long);
+        assert_eq!(
+            opts.unique_key_transformation(),
+            UniqueKeyTransformation::Long
+        );
     }
 
     #[test]
@@ -6991,12 +7137,15 @@ mod tests {
                 BitmapIndexOptions::builder()
                     .unique_key("__key")
                     .unique_key_transformation(UniqueKeyTransformation::Raw)
-                    .build()
+                    .build(),
             )
             .build();
 
         let opts = config.bitmap_options().unwrap();
-        assert_eq!(opts.unique_key_transformation(), UniqueKeyTransformation::Raw);
+        assert_eq!(
+            opts.unique_key_transformation(),
+            UniqueKeyTransformation::Raw
+        );
     }
 
     #[test]
@@ -7112,7 +7261,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_evict_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7133,7 +7282,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_evict_all_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7153,7 +7302,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7173,7 +7322,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_entry_view_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7193,7 +7342,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_ttl_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7207,13 +7356,15 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
-        let result = map.set_ttl(&"key".to_string(), Duration::from_secs(60)).await;
+        let result = map
+            .set_ttl(&"key".to_string(), Duration::from_secs(60))
+            .await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
     #[tokio::test]
     async fn test_try_put_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7227,17 +7378,19 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
-        let result = map.try_put(
-            "key".to_string(),
-            "value".to_string(),
-            Duration::from_millis(100),
-        ).await;
+        let result = map
+            .try_put(
+                "key".to_string(),
+                "value".to_string(),
+                Duration::from_millis(100),
+            )
+            .await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
     #[tokio::test]
     async fn test_put_transient_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7251,11 +7404,13 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
-        let result = map.put_transient(
-            "key".to_string(),
-            "value".to_string(),
-            Duration::from_secs(60),
-        ).await;
+        let result = map
+            .put_transient(
+                "key".to_string(),
+                "value".to_string(),
+                Duration::from_secs(60),
+            )
+            .await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
@@ -7347,7 +7502,9 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
 
-        let result = map.set_ttl(&"key".to_string(), Duration::from_secs(60)).await;
+        let result = map
+            .set_ttl(&"key".to_string(), Duration::from_secs(60))
+            .await;
         assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
     }
 
@@ -7370,11 +7527,13 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
 
-        let result = map.try_put(
-            "key".to_string(),
-            "value".to_string(),
-            Duration::from_millis(100),
-        ).await;
+        let result = map
+            .try_put(
+                "key".to_string(),
+                "value".to_string(),
+                Duration::from_millis(100),
+            )
+            .await;
         assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
     }
 
@@ -7397,11 +7556,13 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
 
-        let result = map.put_transient(
-            "key".to_string(),
-            "value".to_string(),
-            Duration::from_secs(60),
-        ).await;
+        let result = map
+            .put_transient(
+                "key".to_string(),
+                "value".to_string(),
+                Duration::from_secs(60),
+            )
+            .await;
         assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
     }
 
@@ -7413,8 +7574,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(map.has_near_cache());
     }
@@ -7427,8 +7587,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(map.has_near_cache());
     }
@@ -7441,8 +7600,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(map.has_near_cache());
     }
@@ -7455,7 +7613,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_interceptor_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use crate::proxy::MapInterceptor;
 
@@ -7498,7 +7656,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_interceptor_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7555,7 +7713,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_partition_lost_listener_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7591,20 +7749,28 @@ mod tests {
     #[test]
     fn test_put_transient_zero_ttl_uses_no_expiry() {
         let ttl = Duration::ZERO;
-        let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
+        let ttl_ms = if ttl.is_zero() {
+            -1i64
+        } else {
+            ttl.as_millis() as i64
+        };
         assert_eq!(ttl_ms, -1);
     }
 
     #[test]
     fn test_put_transient_nonzero_ttl_converts_correctly() {
         let ttl = Duration::from_secs(60);
-        let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
+        let ttl_ms = if ttl.is_zero() {
+            -1i64
+        } else {
+            ttl.as_millis() as i64
+        };
         assert_eq!(ttl_ms, 60000);
     }
 
     #[tokio::test]
     async fn test_put_with_max_idle_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7618,17 +7784,19 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
-        let result = map.put_with_max_idle(
-            "key".to_string(),
-            "value".to_string(),
-            Duration::from_secs(60),
-        ).await;
+        let result = map
+            .put_with_max_idle(
+                "key".to_string(),
+                "value".to_string(),
+                Duration::from_secs(60),
+            )
+            .await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
     #[tokio::test]
     async fn test_put_with_ttl_and_max_idle_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7642,18 +7810,20 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
-        let result = map.put_with_ttl_and_max_idle(
-            "key".to_string(),
-            "value".to_string(),
-            Duration::from_secs(60),
-            Duration::from_secs(30),
-        ).await;
+        let result = map
+            .put_with_ttl_and_max_idle(
+                "key".to_string(),
+                "value".to_string(),
+                Duration::from_secs(60),
+                Duration::from_secs(30),
+            )
+            .await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
     #[tokio::test]
     async fn test_set_with_ttl_and_max_idle_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7667,12 +7837,14 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("test".to_string(), cm);
 
-        let result = map.set_with_ttl_and_max_idle(
-            "key".to_string(),
-            "value".to_string(),
-            Duration::from_secs(60),
-            Duration::from_secs(30),
-        ).await;
+        let result = map
+            .set_with_ttl_and_max_idle(
+                "key".to_string(),
+                "value".to_string(),
+                Duration::from_secs(60),
+                Duration::from_secs(30),
+            )
+            .await;
         assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 
@@ -7695,11 +7867,13 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
 
-        let result = map.put_with_max_idle(
-            "key".to_string(),
-            "value".to_string(),
-            Duration::from_secs(60),
-        ).await;
+        let result = map
+            .put_with_max_idle(
+                "key".to_string(),
+                "value".to_string(),
+                Duration::from_secs(60),
+            )
+            .await;
         assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
     }
 
@@ -7722,12 +7896,14 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
 
-        let result = map.put_with_ttl_and_max_idle(
-            "key".to_string(),
-            "value".to_string(),
-            Duration::from_secs(60),
-            Duration::from_secs(30),
-        ).await;
+        let result = map
+            .put_with_ttl_and_max_idle(
+                "key".to_string(),
+                "value".to_string(),
+                Duration::from_secs(60),
+                Duration::from_secs(30),
+            )
+            .await;
         assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
     }
 
@@ -7750,19 +7926,25 @@ mod tests {
         let cm = Arc::new(ConnectionManager::from_config(config));
         let map: IMap<String, String> = IMap::new("protected-map".to_string(), cm);
 
-        let result = map.set_with_ttl_and_max_idle(
-            "key".to_string(),
-            "value".to_string(),
-            Duration::from_secs(60),
-            Duration::from_secs(30),
-        ).await;
+        let result = map
+            .set_with_ttl_and_max_idle(
+                "key".to_string(),
+                "value".to_string(),
+                Duration::from_secs(60),
+                Duration::from_secs(30),
+            )
+            .await;
         assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
     }
 
     #[test]
     fn test_put_with_max_idle_duration_conversion() {
         let max_idle = Duration::from_secs(300);
-        let max_idle_ms = if max_idle.is_zero() { -1i64 } else { max_idle.as_millis() as i64 };
+        let max_idle_ms = if max_idle.is_zero() {
+            -1i64
+        } else {
+            max_idle.as_millis() as i64
+        };
         assert_eq!(max_idle_ms, 300_000);
     }
 
@@ -7770,8 +7952,16 @@ mod tests {
     fn test_put_with_ttl_and_max_idle_duration_conversion() {
         let ttl = Duration::from_secs(3600);
         let max_idle = Duration::from_secs(600);
-        let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
-        let max_idle_ms = if max_idle.is_zero() { -1i64 } else { max_idle.as_millis() as i64 };
+        let ttl_ms = if ttl.is_zero() {
+            -1i64
+        } else {
+            ttl.as_millis() as i64
+        };
+        let max_idle_ms = if max_idle.is_zero() {
+            -1i64
+        } else {
+            max_idle.as_millis() as i64
+        };
         assert_eq!(ttl_ms, 3_600_000);
         assert_eq!(max_idle_ms, 600_000);
     }
@@ -7780,8 +7970,16 @@ mod tests {
     fn test_put_with_ttl_and_max_idle_zero_durations() {
         let ttl = Duration::ZERO;
         let max_idle = Duration::ZERO;
-        let ttl_ms = if ttl.is_zero() { -1i64 } else { ttl.as_millis() as i64 };
-        let max_idle_ms = if max_idle.is_zero() { -1i64 } else { max_idle.as_millis() as i64 };
+        let ttl_ms = if ttl.is_zero() {
+            -1i64
+        } else {
+            ttl.as_millis() as i64
+        };
+        let max_idle_ms = if max_idle.is_zero() {
+            -1i64
+        } else {
+            max_idle.as_millis() as i64
+        };
         assert_eq!(ttl_ms, -1);
         assert_eq!(max_idle_ms, -1);
     }
@@ -7794,8 +7992,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(map.has_near_cache());
     }
@@ -7808,8 +8005,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(map.has_near_cache());
     }
@@ -7822,8 +8018,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(map.has_near_cache());
     }
@@ -7836,8 +8031,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(map.has_near_cache());
     }
@@ -7851,16 +8045,14 @@ mod tests {
 
     #[test]
     fn test_iterator_config_builder_pattern() {
-        let config = IteratorConfig::new()
-            .batch_size(50)
-            .prefetch(false);
+        let config = IteratorConfig::new().batch_size(50).prefetch(false);
         assert_eq!(config.batch_size, 50);
         assert!(!config.prefetch);
     }
 
     #[tokio::test]
     async fn test_key_set_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7880,7 +8072,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_entry_set_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -7900,7 +8092,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_values_iter_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -8080,7 +8272,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_from_event_journal_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -8107,7 +8299,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_all_keys_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -8127,7 +8319,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_all_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
 
         let mut perms = Permissions::new();
@@ -8215,8 +8407,7 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(map.has_near_cache());
     }
@@ -8229,15 +8420,14 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
         let cm = Arc::new(make_cm_from_addr(addr));
         let config = NearCacheConfig::builder("test").build().unwrap();
-        let map: IMap<String, String> =
-            IMap::new_with_near_cache("test".to_string(), cm, config);
+        let map: IMap<String, String> = IMap::new_with_near_cache("test".to_string(), cm, config);
 
         assert!(map.has_near_cache());
     }
 
     #[tokio::test]
     async fn test_values_with_paging_predicate_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use crate::query::PagingPredicate;
 
@@ -8259,7 +8449,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_keys_with_paging_predicate_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use crate::query::PagingPredicate;
 
@@ -8281,7 +8471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_entries_with_paging_predicate_permission_denied() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use crate::query::PagingPredicate;
 
@@ -8303,7 +8493,7 @@ mod tests {
 
     #[test]
     fn test_paging_predicate_sets_iteration_type() {
-        use crate::query::{PagingPredicate, IterationType};
+        use crate::query::{IterationType, PagingPredicate};
 
         let mut paging: PagingPredicate<String, String> = PagingPredicate::new(10);
         assert_eq!(paging.iteration_type(), IterationType::Entry);
@@ -8403,9 +8593,8 @@ mod tests {
             V: Serializable + Deserializable + Send + Sync + 'static,
         {
             let key = unsafe { std::mem::zeroed::<K>() };
-            let _ = |m: &IMap<K, V>| -> tokio::task::JoinHandle<Result<Option<V>>> {
-                m.get_async(key)
-            };
+            let _ =
+                |m: &IMap<K, V>| -> tokio::task::JoinHandle<Result<Option<V>>> { m.get_async(key) };
         }
     }
 
@@ -8506,8 +8695,7 @@ mod tests {
 
         let _put_all_handle: tokio::task::JoinHandle<Result<()>> =
             map.put_all_async(entries.clone());
-        let _set_all_handle: tokio::task::JoinHandle<Result<()>> =
-            map.set_all_async(entries);
+        let _set_all_handle: tokio::task::JoinHandle<Result<()>> = map.set_all_async(entries);
     }
 
     #[test]

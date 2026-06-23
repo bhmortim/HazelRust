@@ -41,11 +41,11 @@
 
 use std::path::Path;
 
-use hazelcast_client::{
-    ClientConfigBuilder, ClassDefinition, ClassProviderMode, UserCodeDeploymentConfig,
-};
 use hazelcast_client::config::ConfigError;
 use hazelcast_client::proxy::EntryProcessor;
+use hazelcast_client::{
+    ClassDefinition, ClassProviderMode, ClientConfigBuilder, UserCodeDeploymentConfig,
+};
 use hazelcast_core::serialization::{DataOutput, Serializable};
 
 /// A Rust wrapper for the Java IncrementProcessor.
@@ -157,7 +157,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for class_name in &test_cases {
         let allowed = filter_config.is_class_allowed(class_name);
-        println!("  {} -> {}", class_name, if allowed { "ALLOWED" } else { "BLOCKED" });
+        println!(
+            "  {} -> {}",
+            class_name,
+            if allowed { "ALLOWED" } else { "BLOCKED" }
+        );
     }
 
     // Example 5: Loading classes from files (pseudo-code)

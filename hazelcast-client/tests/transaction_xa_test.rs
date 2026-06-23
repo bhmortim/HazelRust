@@ -44,8 +44,7 @@ async fn test_transaction_context_creation() {
 #[tokio::test]
 #[ignore]
 async fn test_transaction_options_builder() {
-    let options = TransactionOptions::new()
-        .with_timeout(Duration::from_secs(30));
+    let options = TransactionOptions::new().with_timeout(Duration::from_secs(30));
 
     println!("Transaction options configured with 30s timeout");
 
@@ -73,8 +72,7 @@ async fn test_transaction_begin_commit() {
         }
     };
 
-    let options = TransactionOptions::new()
-        .with_timeout(Duration::from_secs(60));
+    let options = TransactionOptions::new().with_timeout(Duration::from_secs(60));
 
     let mut txn = client.new_transaction_context(options);
 
@@ -216,7 +214,9 @@ async fn test_transaction_isolation() {
 
     // Setup initial value
     let key = "counter".to_string();
-    map.put(key.clone(), 100).await.expect("initial put should succeed");
+    map.put(key.clone(), 100)
+        .await
+        .expect("initial put should succeed");
 
     // Start transaction
     let mut txn = client.new_transaction_context(TransactionOptions::new());
@@ -271,8 +271,7 @@ async fn test_transaction_timeout() {
     };
 
     // Very short timeout
-    let options = TransactionOptions::new()
-        .with_timeout(Duration::from_millis(100));
+    let options = TransactionOptions::new().with_timeout(Duration::from_millis(100));
 
     let mut txn = client.new_transaction_context(options);
 
@@ -319,11 +318,11 @@ async fn test_multiple_concurrent_transactions() {
         if let Ok(txn_map) = txn.get_map::<String, i32>(&map_name) {
             let _ = txn_map.put(format!("key-{}", i), i).await;
 
-        if txn.commit().await.is_err() {
-            eprintln!("Transaction {} failed to commit", i);
-        } else {
-            println!("Transaction {} completed", i);
-        }
+            if txn.commit().await.is_err() {
+                eprintln!("Transaction {} failed to commit", i);
+            } else {
+                println!("Transaction {} completed", i);
+            }
         } // if let Ok(txn_map)
     }
 

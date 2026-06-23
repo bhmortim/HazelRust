@@ -55,7 +55,9 @@ where
     T: Serializable + Deserializable + Send + Sync,
 {
     async fn check_quorum(&self, is_read: bool) -> Result<()> {
-        self.connection_manager.check_quorum(&self.name, is_read).await
+        self.connection_manager
+            .check_quorum(&self.name, is_read)
+            .await
     }
 
     /// Adds the specified element to this set if it is not already present.
@@ -318,9 +320,7 @@ where
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -334,9 +334,7 @@ where
     fn decode_int_response(response: &ClientMessage) -> Result<i32> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -397,7 +395,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_permission_denied_add() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 

@@ -1,8 +1,6 @@
 //! Serialization/deserialization throughput benchmarks.
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use hazelcast_core::serialization::{
     Deserializable, ObjectDataInput, ObjectDataOutput, Serializable,
 };

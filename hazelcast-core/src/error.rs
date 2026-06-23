@@ -312,8 +312,7 @@ impl HazelcastError {
 
     /// Creates a `HazelcastError::Server` from a server error code and message.
     pub fn from_server(code_value: i32, message: String, class_name: Option<String>) -> Self {
-        let code = ServerErrorCode::from_value(code_value)
-            .unwrap_or(ServerErrorCode::Undefined);
+        let code = ServerErrorCode::from_value(code_value).unwrap_or(ServerErrorCode::Undefined);
         Self::Server {
             code,
             message,
@@ -345,8 +344,11 @@ impl HazelcastError {
     /// Returns the error category for structured error handling.
     pub fn category(&self) -> ErrorCategory {
         match self {
-            Self::Connection(_) | Self::TargetDisconnected(_) | Self::MemberLeft(_)
-            | Self::InstanceNotActive(_) | Self::Io(_) => ErrorCategory::Network,
+            Self::Connection(_)
+            | Self::TargetDisconnected(_)
+            | Self::MemberLeft(_)
+            | Self::InstanceNotActive(_)
+            | Self::Io(_) => ErrorCategory::Network,
             Self::Authentication(_) => ErrorCategory::Authentication,
             Self::Authorization(_) => ErrorCategory::Authorization,
             Self::Serialization(_) => ErrorCategory::Serialization,
@@ -446,10 +448,7 @@ mod tests {
     #[test]
     fn test_authentication_error_display() {
         let err = HazelcastError::Authentication("invalid credentials".to_string());
-        assert_eq!(
-            err.to_string(),
-            "authentication error: invalid credentials"
-        );
+        assert_eq!(err.to_string(), "authentication error: invalid credentials");
     }
 
     #[test]
@@ -545,10 +544,7 @@ mod tests {
     #[test]
     fn test_server_error_unknown_code() {
         let err = HazelcastError::from_server(9999, "unknown".to_string(), None);
-        assert_eq!(
-            err.server_error_code(),
-            Some(ServerErrorCode::Undefined)
-        );
+        assert_eq!(err.server_error_code(), Some(ServerErrorCode::Undefined));
     }
 
     #[test]
@@ -584,8 +580,14 @@ mod tests {
 
     #[test]
     fn test_server_error_code_from_value() {
-        assert_eq!(ServerErrorCode::from_value(46), Some(ServerErrorCode::OperationTimeout));
-        assert_eq!(ServerErrorCode::from_value(64), Some(ServerErrorCode::MemberLeft));
+        assert_eq!(
+            ServerErrorCode::from_value(46),
+            Some(ServerErrorCode::OperationTimeout)
+        );
+        assert_eq!(
+            ServerErrorCode::from_value(64),
+            Some(ServerErrorCode::MemberLeft)
+        );
         assert_eq!(ServerErrorCode::from_value(9999), None);
     }
 

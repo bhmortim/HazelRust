@@ -380,15 +380,15 @@ impl Schema {
     fn compute_schema_id(type_name: &str, fields: &[FieldDescriptor]) -> i64 {
         let mut data = Vec::new();
         data.extend_from_slice(type_name.as_bytes());
-        
+
         let mut sorted_fields: Vec<_> = fields.iter().collect();
         sorted_fields.sort_by(|a, b| a.name.cmp(&b.name));
-        
+
         for field in sorted_fields {
             data.extend_from_slice(field.name.as_bytes());
             data.extend_from_slice(&field.kind.id().to_be_bytes());
         }
-        
+
         rabin_fingerprint_64(&data)
     }
 
@@ -424,13 +424,14 @@ impl Schema {
 
     /// Adds a field to this schema and recomputes the schema ID.
     pub fn add_field(&mut self, field: FieldDescriptor) {
-        self.field_indices.insert(field.name.clone(), self.fields.len());
+        self.field_indices
+            .insert(field.name.clone(), self.fields.len());
         self.fields.push(field);
         self.schema_id = Self::compute_schema_id(&self.type_name, &self.fields);
     }
 
     /// Checks if this schema is compatible with another schema for evolution.
-    /// 
+    ///
     /// Schemas are compatible if they have the same type name and all common
     /// fields have compatible types.
     pub fn is_compatible_with(&self, other: &Schema) -> bool {
@@ -590,14 +591,18 @@ impl SchemaRegistry {
     pub fn get_schemas_by_type(&self, type_name: &str) -> Vec<&Schema> {
         self.schemas_by_type
             .get(type_name)
-            .map(|ids| ids.iter().filter_map(|id| self.schemas_by_id.get(id)).collect())
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| self.schemas_by_id.get(id))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
     /// Gets an existing schema or creates a new one for the given Compact type.
     pub fn get_or_create_schema<T: Compact>(&mut self) -> Schema {
         let type_name = T::get_type_name();
-        
+
         if let Some(schemas) = self.schemas_by_type.get(type_name) {
             if let Some(&schema_id) = schemas.first() {
                 if let Some(schema) = self.schemas_by_id.get(&schema_id) {
@@ -612,7 +617,7 @@ impl SchemaRegistry {
     }
 
     /// Fetches a schema from the cluster by ID.
-    /// 
+    ///
     /// This is a stub that currently returns from the local cache.
     /// Will be wired to cluster communication later.
     pub fn fetch_schema(&self, schema_id: i64) -> Result<Option<Schema>> {
@@ -620,7 +625,7 @@ impl SchemaRegistry {
     }
 
     /// Sends a schema to the cluster.
-    /// 
+    ///
     /// This is a stub that currently does nothing.
     /// Will be wired to cluster communication later.
     pub fn send_schema(&self, _schema: &Schema) -> Result<()> {
@@ -716,7 +721,8 @@ pub trait CompactReader {
     fn read_compact<T: Compact + Default>(&mut self, name: &str) -> Result<Option<T>>;
 
     /// Reads an array of Compact objects.
-    fn read_array_of_compact<T: Compact + Default>(&mut self, name: &str) -> Result<Option<Vec<T>>>;
+    fn read_array_of_compact<T: Compact + Default>(&mut self, name: &str)
+        -> Result<Option<Vec<T>>>;
 }
 
 /// Trait for writing Compact fields during serialization.
@@ -788,13 +794,15 @@ pub trait CompactWriter {
     fn write_array_of_float64(&mut self, name: &str, value: Option<&[f64]>) -> Result<()>;
 
     /// Writes an array of strings.
-    fn write_array_of_string(&mut self, name: &str, value: Option<&[Option<String>]>) -> Result<()>;
+    fn write_array_of_string(&mut self, name: &str, value: Option<&[Option<String>]>)
+        -> Result<()>;
 
     /// Writes a nested Compact object.
     fn write_compact<T: Compact>(&mut self, name: &str, value: Option<&T>) -> Result<()>;
 
     /// Writes an array of Compact objects.
-    fn write_array_of_compact<T: Compact>(&mut self, name: &str, value: Option<&[T]>) -> Result<()>;
+    fn write_array_of_compact<T: Compact>(&mut self, name: &str, value: Option<&[T]>)
+        -> Result<()>;
 }
 
 /// Trait for types that can be serialized using Compact serialization.
@@ -849,7 +857,8 @@ impl DefaultCompactWriter {
         if !self.fields.contains_key(name) {
             self.field_order.push(name.to_string());
         }
-        self.fields.insert(name.to_string(), FieldData { kind, data });
+        self.fields
+            .insert(name.to_string(), FieldData { kind, data });
         Ok(())
     }
 
@@ -1147,7 +1156,11 @@ impl CompactWriter for DefaultCompactWriter {
         self.write_field(name, FieldKind::ArrayOfFloat64, out.into_bytes())
     }
 
-    fn write_array_of_string(&mut self, name: &str, value: Option<&[Option<String>]>) -> Result<()> {
+    fn write_array_of_string(
+        &mut self,
+        name: &str,
+        value: Option<&[Option<String>]>,
+    ) -> Result<()> {
         let mut out = ObjectDataOutput::new();
         match value {
             Some(arr) => {
@@ -1194,7 +1207,11 @@ impl CompactWriter for DefaultCompactWriter {
         self.write_field(name, FieldKind::Compact, out.into_bytes())
     }
 
-    fn write_array_of_compact<T: Compact>(&mut self, name: &str, value: Option<&[T]>) -> Result<()> {
+    fn write_array_of_compact<T: Compact>(
+        &mut self,
+        name: &str,
+        value: Option<&[T]>,
+    ) -> Result<()> {
         let mut out = ObjectDataOutput::new();
         match value {
             Some(arr) => {
@@ -1235,7 +1252,7 @@ impl DefaultCompactReader {
     }
 
     /// Creates a new reader from serialized bytes with both reader and writer schemas.
-    /// 
+    ///
     /// This constructor enables schema evolution by tracking which schema was used
     /// to write the data vs. which schema the reader expects.
     pub fn from_bytes_with_writer_schema(
@@ -1672,7 +1689,8 @@ impl CompactReader for DefaultCompactReader {
                 }
 
                 let nested_schema = Schema::new(&type_name);
-                let mut nested_reader = DefaultCompactReader::from_bytes(&nested_data, nested_schema)?;
+                let mut nested_reader =
+                    DefaultCompactReader::from_bytes(&nested_data, nested_schema)?;
                 instance.read(&mut nested_reader)?;
                 Ok(Some(instance))
             }
@@ -1680,7 +1698,10 @@ impl CompactReader for DefaultCompactReader {
         }
     }
 
-    fn read_array_of_compact<T: Compact + Default>(&mut self, name: &str) -> Result<Option<Vec<T>>> {
+    fn read_array_of_compact<T: Compact + Default>(
+        &mut self,
+        name: &str,
+    ) -> Result<Option<Vec<T>>> {
         match self.get_field(name, FieldKind::ArrayOfCompact)? {
             Some(data) => {
                 let mut input = ObjectDataInput::new(data);
@@ -1756,7 +1777,10 @@ impl CompactSerializer {
 
     /// Looks up a schema by type name.
     pub fn get_schema(&self, type_name: &str) -> Option<&Schema> {
-        self.registry.get_schemas_by_type(type_name).into_iter().next()
+        self.registry
+            .get_schemas_by_type(type_name)
+            .into_iter()
+            .next()
     }
 
     /// Serializes a Compact object to bytes.
@@ -1812,11 +1836,7 @@ impl CompactSerializer {
 
         let mut reader = match writer_schema {
             Some(ws) if ws.schema_id() != reader_schema.schema_id() => {
-                DefaultCompactReader::from_bytes_with_writer_schema(
-                    &field_data,
-                    reader_schema,
-                    ws,
-                )?
+                DefaultCompactReader::from_bytes_with_writer_schema(&field_data, reader_schema, ws)?
             }
             _ => DefaultCompactReader::from_bytes(&field_data, reader_schema)?,
         };
@@ -1828,7 +1848,7 @@ impl CompactSerializer {
     }
 
     /// Deserializes bytes with explicit schema evolution support.
-    /// 
+    ///
     /// Uses the provided reader schema and looks up the writer schema from the registry.
     pub fn deserialize_with_schema<T: Compact + Default>(
         &self,
@@ -1853,11 +1873,9 @@ impl CompactSerializer {
         let writer_schema = self.registry.get_schema_by_id(writer_schema_id).cloned();
 
         let mut reader = match writer_schema {
-            Some(ws) => DefaultCompactReader::from_bytes_with_writer_schema(
-                &field_data,
-                reader_schema,
-                ws,
-            )?,
+            Some(ws) => {
+                DefaultCompactReader::from_bytes_with_writer_schema(&field_data, reader_schema, ws)?
+            }
             None => DefaultCompactReader::from_bytes(&field_data, reader_schema)?,
         };
 
@@ -1942,7 +1960,7 @@ mod tests {
         assert!(FieldKind::from_id(-1).is_err());
         assert!(FieldKind::from_id(47).is_err());
     }
-    
+
     #[test]
     fn test_field_kind_fixed_size() {
         assert_eq!(FieldKind::Boolean.fixed_size(), Some(1));
@@ -1963,7 +1981,7 @@ mod tests {
         let fp1 = rabin_fingerprint_64(data);
         let fp2 = rabin_fingerprint_64(data);
         assert_eq!(fp1, fp2);
-        
+
         let different_data = b"different data";
         let fp3 = rabin_fingerprint_64(different_data);
         assert_ne!(fp1, fp3);
@@ -1979,10 +1997,10 @@ mod tests {
             FieldDescriptor::new("beta", FieldKind::String, 1),
             FieldDescriptor::new("alpha", FieldKind::Int32, 0),
         ];
-        
+
         let schema1 = Schema::with_fields("Test", fields1);
         let schema2 = Schema::with_fields("Test", fields2);
-        
+
         assert_eq!(schema1.schema_id(), schema2.schema_id());
     }
 
@@ -2421,17 +2439,44 @@ mod tests {
 
     #[test]
     fn test_default_field_value_for_all_kinds() {
-        assert_eq!(FieldKind::Boolean.default_value(), DefaultFieldValue::Boolean(false));
+        assert_eq!(
+            FieldKind::Boolean.default_value(),
+            DefaultFieldValue::Boolean(false)
+        );
         assert_eq!(FieldKind::Int8.default_value(), DefaultFieldValue::Int8(0));
-        assert_eq!(FieldKind::Int16.default_value(), DefaultFieldValue::Int16(0));
-        assert_eq!(FieldKind::Int32.default_value(), DefaultFieldValue::Int32(0));
-        assert_eq!(FieldKind::Int64.default_value(), DefaultFieldValue::Int64(0));
-        assert_eq!(FieldKind::Float32.default_value(), DefaultFieldValue::Float32(0.0));
-        assert_eq!(FieldKind::Float64.default_value(), DefaultFieldValue::Float64(0.0));
-        assert_eq!(FieldKind::String.default_value(), DefaultFieldValue::String(None));
+        assert_eq!(
+            FieldKind::Int16.default_value(),
+            DefaultFieldValue::Int16(0)
+        );
+        assert_eq!(
+            FieldKind::Int32.default_value(),
+            DefaultFieldValue::Int32(0)
+        );
+        assert_eq!(
+            FieldKind::Int64.default_value(),
+            DefaultFieldValue::Int64(0)
+        );
+        assert_eq!(
+            FieldKind::Float32.default_value(),
+            DefaultFieldValue::Float32(0.0)
+        );
+        assert_eq!(
+            FieldKind::Float64.default_value(),
+            DefaultFieldValue::Float64(0.0)
+        );
+        assert_eq!(
+            FieldKind::String.default_value(),
+            DefaultFieldValue::String(None)
+        );
         assert_eq!(FieldKind::Compact.default_value(), DefaultFieldValue::Null);
-        assert_eq!(FieldKind::ArrayOfInt32.default_value(), DefaultFieldValue::Null);
-        assert_eq!(FieldKind::NullableInt32.default_value(), DefaultFieldValue::Null);
+        assert_eq!(
+            FieldKind::ArrayOfInt32.default_value(),
+            DefaultFieldValue::Null
+        );
+        assert_eq!(
+            FieldKind::NullableInt32.default_value(),
+            DefaultFieldValue::Null
+        );
     }
 
     #[test]
@@ -2548,7 +2593,8 @@ mod tests {
             ],
         );
 
-        let result = SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
+        let result =
+            SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
 
         match result {
             SchemaEvolutionResult::Compatible {
@@ -2577,7 +2623,8 @@ mod tests {
             vec![FieldDescriptor::new("name", FieldKind::String, 0)],
         );
 
-        let result = SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
+        let result =
+            SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
 
         match result {
             SchemaEvolutionResult::Compatible {
@@ -2603,7 +2650,8 @@ mod tests {
             vec![FieldDescriptor::new("age", FieldKind::String, 0)],
         );
 
-        let result = SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
+        let result =
+            SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
 
         match result {
             SchemaEvolutionResult::Incompatible { reason } => {
@@ -2619,7 +2667,8 @@ mod tests {
         let old_schema = Schema::new("Person");
         let new_schema = Schema::new("Employee");
 
-        let result = SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
+        let result =
+            SchemaEvolutionValidator::validate_evolution(&old_schema, &new_schema).unwrap();
 
         match result {
             SchemaEvolutionResult::Incompatible { reason } => {
@@ -2874,17 +2923,17 @@ mod tests {
         assert!(FieldKind::Timestamp.is_nullable());
         assert!(FieldKind::TimestampWithTimezone.is_nullable());
         assert!(FieldKind::Decimal.is_nullable());
-        
+
         assert!(FieldKind::ArrayOfDate.is_array());
         assert!(FieldKind::ArrayOfTime.is_array());
         assert!(FieldKind::ArrayOfTimestamp.is_array());
         assert!(FieldKind::ArrayOfTimestampWithTimezone.is_array());
         assert!(FieldKind::ArrayOfDecimal.is_array());
-        
+
         assert!(FieldKind::ArrayOfNullableInt32.is_array());
         assert!(FieldKind::ArrayOfNullableFloat64.is_array());
     }
-    
+
     #[test]
     fn test_schema_evolution_nullable_time_types() {
         let v1 = Schema::with_fields(
@@ -2894,7 +2943,11 @@ mod tests {
 
         let v2 = Schema::with_fields(
             "Event",
-            vec![FieldDescriptor::new("timestamp", FieldKind::NullableTimestamp, 0)],
+            vec![FieldDescriptor::new(
+                "timestamp",
+                FieldKind::NullableTimestamp,
+                0,
+            )],
         );
 
         assert!(v1.is_compatible_with(&v2));
@@ -2903,15 +2956,15 @@ mod tests {
 }
 
 /// Module for Java interoperability testing.
-/// 
+///
 /// These tests verify that the Compact serialization format is compatible
 /// with Hazelcast Java client's Compact serialization.
-/// 
+///
 /// To run interoperability tests:
 /// 1. Start a Hazelcast cluster with a Java client
 /// 2. Serialize objects using the Java client
 /// 3. Deserialize using the Rust client (and vice versa)
-/// 
+///
 /// The wire format must match Java's implementation:
 /// - Schema ID uses Rabin fingerprint (64-bit)
 /// - Fields are sorted by name for schema ID computation
@@ -2929,10 +2982,10 @@ mod java_interop_tests {
                 FieldDescriptor::new("name", FieldKind::String, 1),
             ],
         );
-        
+
         let schema_id = schema.schema_id();
         assert_ne!(schema_id, 0, "Schema ID should be non-zero");
-        
+
         let schema_rebuilt = Schema::with_fields(
             "com.example.Person",
             vec![
@@ -2986,7 +3039,9 @@ mod java_interop_tests {
         writer.write_int64("long_min", i64::MIN).unwrap();
         writer.write_int64("long_max", i64::MAX).unwrap();
         writer.write_float32("float_val", 3.14159f32).unwrap();
-        writer.write_float64("double_val", 2.718281828459045f64).unwrap();
+        writer
+            .write_float64("double_val", 2.718281828459045f64)
+            .unwrap();
 
         let bytes = writer.to_bytes();
         let mut reader = DefaultCompactReader::from_bytes(&bytes, schema).unwrap();
@@ -3002,9 +3057,12 @@ mod java_interop_tests {
         assert_eq!(reader.read_int64("long_min").unwrap(), i64::MIN);
         assert_eq!(reader.read_int64("long_max").unwrap(), i64::MAX);
         assert!((reader.read_float32("float_val").unwrap() - 3.14159f32).abs() < f32::EPSILON);
-        assert!((reader.read_float64("double_val").unwrap() - 2.718281828459045f64).abs() < f64::EPSILON);
+        assert!(
+            (reader.read_float64("double_val").unwrap() - 2.718281828459045f64).abs()
+                < f64::EPSILON
+        );
     }
-    
+
     #[test]
     fn test_unicode_string_handling() {
         let schema = Schema::new("UnicodeTest");

@@ -352,12 +352,8 @@ impl LocalIndex {
     fn get_keys(&self, predicate: &QueryCacheIndexPredicate) -> HashSet<Vec<u8>> {
         match predicate {
             QueryCacheIndexPredicate::Equal(value) => match self {
-                LocalIndex::Hash(map) => {
-                    map.get(value).cloned().unwrap_or_default()
-                }
-                LocalIndex::Sorted(map) => {
-                    map.get(value).cloned().unwrap_or_default()
-                }
+                LocalIndex::Hash(map) => map.get(value).cloned().unwrap_or_default(),
+                LocalIndex::Sorted(map) => map.get(value).cloned().unwrap_or_default(),
             },
         }
     }
@@ -829,7 +825,11 @@ where
     }
 
     /// Queries a local index and returns matching keys.
-    pub fn keys_by_index(&self, attribute_name: &str, predicate: &QueryCacheIndexPredicate) -> Vec<K> {
+    pub fn keys_by_index(
+        &self,
+        attribute_name: &str,
+        predicate: &QueryCacheIndexPredicate,
+    ) -> Vec<K> {
         let indexes = self.local_indexes.read().unwrap();
         let index = match indexes.get(attribute_name) {
             Some(idx) => idx,
@@ -848,7 +848,11 @@ where
     }
 
     /// Queries a local index and returns matching values.
-    pub fn values_by_index(&self, attribute_name: &str, predicate: &QueryCacheIndexPredicate) -> Vec<V> {
+    pub fn values_by_index(
+        &self,
+        attribute_name: &str,
+        predicate: &QueryCacheIndexPredicate,
+    ) -> Vec<V> {
         let indexes = self.local_indexes.read().unwrap();
         let index = match indexes.get(attribute_name) {
             Some(idx) => idx,
@@ -870,7 +874,11 @@ where
     }
 
     /// Queries a local index and returns matching key-value pairs.
-    pub fn entries_by_index(&self, attribute_name: &str, predicate: &QueryCacheIndexPredicate) -> Vec<(K, V)> {
+    pub fn entries_by_index(
+        &self,
+        attribute_name: &str,
+        predicate: &QueryCacheIndexPredicate,
+    ) -> Vec<(K, V)> {
         let indexes = self.local_indexes.read().unwrap();
         let index = match indexes.get(attribute_name) {
             Some(idx) => idx,
@@ -1065,11 +1073,7 @@ mod tests {
 
         cache.populate(vec![("key1".to_string(), 100), ("key2".to_string(), 200)]);
 
-        let keys = vec![
-            "key1".to_string(),
-            "key2".to_string(),
-            "key3".to_string(),
-        ];
+        let keys = vec!["key1".to_string(), "key2".to_string(), "key3".to_string()];
         let result = cache.get_all(&keys);
 
         assert_eq!(result.len(), 2);

@@ -57,7 +57,9 @@ where
     T: Serializable + Deserializable + Send + Sync,
 {
     async fn check_quorum(&self, is_read: bool) -> Result<()> {
-        self.connection_manager.check_quorum(&self.name, is_read).await
+        self.connection_manager
+            .check_quorum(&self.name, is_read)
+            .await
     }
 
     /// Inserts the specified element into this queue.
@@ -266,18 +268,18 @@ where
     ///
     /// Unlike `peek()`, this method returns an error if the queue is empty.
     pub async fn element(&self) -> Result<T> {
-        self.peek().await?.ok_or_else(|| {
-            HazelcastError::Serialization("queue is empty".to_string())
-        })
+        self.peek()
+            .await?
+            .ok_or_else(|| HazelcastError::Serialization("queue is empty".to_string()))
     }
 
     /// Retrieves and removes the head of this queue.
     ///
     /// Unlike `poll()`, this method returns an error if the queue is empty.
     pub async fn remove_head(&self) -> Result<T> {
-        self.poll().await?.ok_or_else(|| {
-            HazelcastError::Serialization("queue is empty".to_string())
-        })
+        self.poll()
+            .await?
+            .ok_or_else(|| HazelcastError::Serialization("queue is empty".to_string()))
     }
 
     /// Removes a single instance of the specified element from this queue, if present.
@@ -332,7 +334,8 @@ where
         self.check_permission(PermissionAction::Remove)?;
         self.check_quorum(false).await?;
 
-        let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_COMPARE_AND_REMOVE_ALL);
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(QUEUE_COMPARE_AND_REMOVE_ALL);
         message.add_frame(Self::string_frame(&self.name));
         self.add_data_list_frames(&mut message, items)?;
 
@@ -491,9 +494,10 @@ where
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_nullable_response<V: Deserializable>(response: &ClientMessage) -> Result<Option<V>> {
@@ -519,9 +523,7 @@ where
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -535,9 +537,7 @@ where
     fn decode_int_response(response: &ClientMessage) -> Result<i32> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -644,7 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_permission_denied_offer() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 
@@ -665,7 +665,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_permission_denied_poll() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 
@@ -757,7 +757,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_permission_denied_take() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 
@@ -779,7 +779,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_permission_denied_remove() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 
@@ -801,7 +801,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_permission_denied_contains() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 
@@ -823,7 +823,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_queue_permission_denied_clear() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 

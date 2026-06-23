@@ -5,9 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use hazelcast_client::{
-    ClientConfig, ClientConfigBuilder, HazelcastClient, NearCacheConfig,
-};
+use hazelcast_client::{ClientConfig, ClientConfigBuilder, HazelcastClient, NearCacheConfig};
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 static CLUSTER_STARTED: AtomicBool = AtomicBool::new(false);

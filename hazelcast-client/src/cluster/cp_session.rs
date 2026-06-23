@@ -149,8 +149,7 @@ impl CPSessionManager {
         }
 
         // Slow path: create a new session
-        let (session_id, ttl_ms, heartbeat_interval_ms) =
-            self.create_session(group_id).await?;
+        let (session_id, ttl_ms, heartbeat_interval_ms) = self.create_session(group_id).await?;
 
         let mut sessions = self.sessions.write().await;
         // Double-check: another task might have raced us
@@ -291,10 +290,7 @@ impl CPSessionManager {
         self.sessions.write().await.clear();
 
         if !sessions.is_empty() {
-            tracing::info!(
-                count = sessions.len(),
-                "closed CP sessions during shutdown"
-            );
+            tracing::info!(count = sessions.len(), "closed CP sessions during shutdown");
         }
     }
 
@@ -351,13 +347,10 @@ impl CPSessionManager {
                 .try_into()
                 .map_err(|_| HazelcastError::Serialization("invalid ttl".to_string()))?,
         );
-        let heartbeat_interval_ms = i64::from_le_bytes(
-            content[offset + 16..offset + 24]
-                .try_into()
-                .map_err(|_| {
-                    HazelcastError::Serialization("invalid heartbeat interval".to_string())
-                })?,
-        );
+        let heartbeat_interval_ms =
+            i64::from_le_bytes(content[offset + 16..offset + 24].try_into().map_err(|_| {
+                HazelcastError::Serialization("invalid heartbeat interval".to_string())
+            })?);
 
         Ok((session_id, ttl_ms, heartbeat_interval_ms))
     }
@@ -436,9 +429,7 @@ impl CPSessionManager {
         let thread_id = i64::from_le_bytes(
             content[header_size..header_size + 8]
                 .try_into()
-                .map_err(|_| {
-                    HazelcastError::Serialization("invalid thread_id".to_string())
-                })?,
+                .map_err(|_| HazelcastError::Serialization("invalid thread_id".to_string()))?,
         );
 
         Ok(thread_id)
@@ -717,8 +708,7 @@ impl CPSessionManagementService {
             };
 
             let endpoint_name_frame = &frames[idx + 4];
-            let endpoint_name =
-                String::from_utf8_lossy(endpoint_name_frame.content()).to_string();
+            let endpoint_name = String::from_utf8_lossy(endpoint_name_frame.content()).to_string();
 
             let group_id = CPGroupId::new(group_name, 0, 0);
             let session = CPSession::new(

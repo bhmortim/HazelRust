@@ -1,16 +1,13 @@
 //! Integration tests for Jet streaming APIs.
 
 use hazelcast_client::{
-    jet::{ProcessingGuarantee, Sources, Sinks},
+    jet::{ProcessingGuarantee, Sinks, Sources},
     ClientConfig, HazelcastClient, JobConfig, JobStatus, Pipeline,
 };
 
 /// Helper to create a test client.
 async fn create_test_client() -> HazelcastClient {
-    let config = ClientConfig::builder()
-        .cluster_name("dev")
-        .build()
-        .unwrap();
+    let config = ClientConfig::builder().cluster_name("dev").build().unwrap();
     HazelcastClient::new(config).await.unwrap()
 }
 
@@ -55,7 +52,10 @@ fn test_job_config_builder_custom() {
     assert_eq!(config.name(), Some("test-job"));
     assert!(config.split_brain_protection());
     assert!(!config.auto_scaling());
-    assert_eq!(config.processing_guarantee(), ProcessingGuarantee::ExactlyOnce);
+    assert_eq!(
+        config.processing_guarantee(),
+        ProcessingGuarantee::ExactlyOnce
+    );
     assert_eq!(config.snapshot_interval_millis(), 5000);
     assert!(config.suspend_on_failure());
 }

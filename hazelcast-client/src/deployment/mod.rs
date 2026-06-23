@@ -49,6 +49,4 @@ mod class_definition;
 mod config;
 
 pub use class_definition::{ClassDefinition, ClassDefinitionBuilder, ResourceEntry};
-pub use config::{
-    ClassProviderMode, UserCodeDeploymentConfig, UserCodeDeploymentConfigBuilder,
-};
+pub use config::{ClassProviderMode, UserCodeDeploymentConfig, UserCodeDeploymentConfigBuilder};

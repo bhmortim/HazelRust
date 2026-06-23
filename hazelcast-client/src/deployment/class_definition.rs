@@ -113,7 +113,11 @@ impl ClassDefinition {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let path = path.as_ref();
         let bytecode = std::fs::read(path).map_err(|e| {
-            ConfigError::new(format!("failed to read class file '{}': {}", path.display(), e))
+            ConfigError::new(format!(
+                "failed to read class file '{}': {}",
+                path.display(),
+                e
+            ))
         })?;
 
         let class_name = Self::infer_class_name(path)?;
@@ -129,7 +133,11 @@ impl ClassDefinition {
     ) -> Result<Self, ConfigError> {
         let path = path.as_ref();
         let bytecode = std::fs::read(path).map_err(|e| {
-            ConfigError::new(format!("failed to read class file '{}': {}", path.display(), e))
+            ConfigError::new(format!(
+                "failed to read class file '{}': {}",
+                path.display(),
+                e
+            ))
         })?;
 
         Ok(Self::new(class_name, bytecode))
@@ -177,16 +185,14 @@ impl ClassDefinition {
     ///
     /// Uses bincode serialization for efficient binary encoding.
     pub fn to_bytes(&self) -> Result<Vec<u8>, ConfigError> {
-        bincode::serialize(self).map_err(|e| {
-            ConfigError::new(format!("failed to serialize class definition: {}", e))
-        })
+        bincode::serialize(self)
+            .map_err(|e| ConfigError::new(format!("failed to serialize class definition: {}", e)))
     }
 
     /// Deserializes a class definition from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ConfigError> {
-        bincode::deserialize(bytes).map_err(|e| {
-            ConfigError::new(format!("failed to deserialize class definition: {}", e))
-        })
+        bincode::deserialize(bytes)
+            .map_err(|e| ConfigError::new(format!("failed to deserialize class definition: {}", e)))
     }
 
     fn infer_class_name(path: &Path) -> Result<String, ConfigError> {
@@ -195,13 +201,10 @@ impl ClassDefinition {
             .ok_or_else(|| ConfigError::new("invalid path encoding"))?;
 
         // Remove .class extension
-        let without_ext = path_str
-            .strip_suffix(".class")
-            .unwrap_or(path_str);
+        let without_ext = path_str.strip_suffix(".class").unwrap_or(path_str);
 
         // Convert path separators to dots
-        let class_name = without_ext
-            .replace(['/', '\\'], ".");
+        let class_name = without_ext.replace(['/', '\\'], ".");
 
         // Remove leading dots if path started with separator
         let class_name = class_name.trim_start_matches('.');
@@ -244,7 +247,11 @@ impl ClassDefinitionBuilder {
     pub fn bytecode_from_file(mut self, path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let path = path.as_ref();
         let bytecode = std::fs::read(path).map_err(|e| {
-            ConfigError::new(format!("failed to read bytecode from '{}': {}", path.display(), e))
+            ConfigError::new(format!(
+                "failed to read bytecode from '{}': {}",
+                path.display(),
+                e
+            ))
         })?;
         self.bytecode = Some(bytecode);
         Ok(self)
@@ -264,7 +271,11 @@ impl ClassDefinitionBuilder {
     ) -> Result<Self, ConfigError> {
         let path = path.as_ref();
         let content = std::fs::read(path).map_err(|e| {
-            ConfigError::new(format!("failed to read resource from '{}': {}", path.display(), e))
+            ConfigError::new(format!(
+                "failed to read resource from '{}': {}",
+                path.display(),
+                e
+            ))
         })?;
         self.resources.insert(name.into(), content);
         Ok(self)
@@ -288,9 +299,9 @@ impl ClassDefinitionBuilder {
             return Err(ConfigError::new("class name must not be empty"));
         }
 
-        let bytecode = self.bytecode.ok_or_else(|| {
-            ConfigError::new("bytecode is required for class definition")
-        })?;
+        let bytecode = self
+            .bytecode
+            .ok_or_else(|| ConfigError::new("bytecode is required for class definition"))?;
 
         if bytecode.is_empty() {
             return Err(ConfigError::new("bytecode must not be empty"));
@@ -385,7 +396,10 @@ mod tests {
             .build();
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("class name must not be empty"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("class name must not be empty"));
     }
 
     #[test]
@@ -393,7 +407,10 @@ mod tests {
         let result = ClassDefinition::builder("com.example.Test").build();
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("bytecode is required"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("bytecode is required"));
     }
 
     #[test]
@@ -403,7 +420,10 @@ mod tests {
             .build();
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("bytecode must not be empty"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("bytecode must not be empty"));
     }
 
     #[test]
@@ -413,7 +433,10 @@ mod tests {
             .build();
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing magic number"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing magic number"));
     }
 
     #[test]
@@ -426,7 +449,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(outer.inner_classes().len(), 1);
-        assert_eq!(outer.inner_classes()[0].class_name(), "com.example.Outer$Inner");
+        assert_eq!(
+            outer.inner_classes()[0].class_name(),
+            "com.example.Outer$Inner"
+        );
     }
 
     #[test]

@@ -58,8 +58,7 @@ impl PortableSerializer {
         class_id: i32,
         version: i32,
     ) -> Option<&ClassDefinition> {
-        self.class_definitions
-            .get(&(factory_id, class_id, version))
+        self.class_definitions.get(&(factory_id, class_id, version))
     }
 
     /// Serializes a Portable object to bytes.

@@ -280,7 +280,8 @@ impl ClassDefinition {
 
     /// Adds a field to this class definition.
     pub fn add_field(&mut self, field: FieldDefinition) {
-        self.field_indices.insert(field.name.clone(), self.fields.len());
+        self.field_indices
+            .insert(field.name.clone(), self.fields.len());
         self.fields.push(field);
     }
 }

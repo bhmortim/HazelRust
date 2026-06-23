@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use hazelcast_client::HazelcastClient;
 
-use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
+use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};
 
 #[tokio::test]
 async fn test_list_add_and_get() {
@@ -308,7 +308,7 @@ async fn test_list_concurrent_operations() {
     let client = Arc::new(
         HazelcastClient::new(common::default_config())
             .await
-            .expect("failed to connect")
+            .expect("failed to connect"),
     );
     let list_name = unique_name("test-list-concurrent");
 
@@ -317,16 +317,15 @@ async fn test_list_concurrent_operations() {
     for i in 0..10 {
         let client_clone = Arc::clone(&client);
         let list_name_clone = list_name.clone();
-        
+
         let handle = tokio::spawn(async move {
-            let list = client_clone
-                .get_list::<i32>(&list_name_clone);
-            
+            let list = client_clone.get_list::<i32>(&list_name_clone);
+
             for j in 0..10 {
                 list.add(i * 10 + j).await.unwrap();
             }
         });
-        
+
         handles.push(handle);
     }
 

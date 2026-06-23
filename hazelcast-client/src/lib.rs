@@ -128,8 +128,8 @@
 #![warn(missing_docs)]
 
 pub mod cache;
-pub mod cluster;
 mod client;
+pub mod cluster;
 pub mod config;
 pub mod config_file;
 pub mod connection;
@@ -143,8 +143,8 @@ pub mod metrics;
 pub mod pipeline;
 pub mod proxy;
 pub mod query;
-pub mod security;
 pub mod runtime;
+pub mod security;
 pub mod sql;
 #[cfg(feature = "tower")]
 pub mod tower_service;
@@ -156,41 +156,58 @@ pub use cache::{
     QueryCacheIndexPredicate, QueryCacheIndexType, QueryCacheStats,
 };
 pub use client::{ConnectionListener, HazelcastClient};
-pub use executor::{
-    Callable, CallableTask, ExecutionCallback, ExecutionTarget, ExecutorService,
-    FnExecutionCallback, Runnable, RunnableTask,
+pub use cluster::{
+    BoxedMigrationListener, BoxedPartitionLostListener, ClientInfo, ClusterService, ClusterView,
+    FnMigrationListener, FnPartitionLostListener, MigrationEvent, MigrationListener,
+    MigrationState, Partition, PartitionLostEvent, PartitionLostListener, PartitionService,
+    SplitBrainProtectionService,
 };
 pub use config::{
     ClientConfig, ClientConfigBuilder, ConfigError, DiagnosticsConfig, DiagnosticsConfigBuilder,
     NetworkConfig, NetworkConfigBuilder, PermissionAction, Permissions, QuorumConfig,
-    QuorumConfigBuilder, QuorumFunction, QuorumType, ReconnectMode, RetryConfig, RetryConfigBuilder,
-    RoutingMode, SecurityConfig, SecurityConfigBuilder, SocketConfig, SocketConfigBuilder,
-    WanReplicationConfig, WanReplicationConfigBuilder, WanReplicationRef, WanReplicationRefBuilder,
-    WanTargetClusterConfig, WanTargetClusterConfigBuilder,
+    QuorumConfigBuilder, QuorumFunction, QuorumType, ReconnectMode, RetryConfig,
+    RetryConfigBuilder, RoutingMode, SecurityConfig, SecurityConfigBuilder, SocketConfig,
+    SocketConfigBuilder, WanReplicationConfig, WanReplicationConfigBuilder, WanReplicationRef,
+    WanReplicationRefBuilder, WanTargetClusterConfig, WanTargetClusterConfigBuilder,
 };
-pub use config_file::{FileConfig, FileNetworkConfig, FileRetryConfig, FileSocketConfig};
 #[cfg(feature = "config-file")]
 pub use config_file::load_config;
-pub use diagnostics::{OperationTracker, SlowOperationDetector};
-#[cfg(feature = "metrics")]
-pub use metrics::{
-    MetricsRecorderHandle, OperationLatencyGuard, PrometheusError, PrometheusExporter,
-    PrometheusExporterBuilder,
-};
+pub use config_file::{FileConfig, FileNetworkConfig, FileRetryConfig, FileSocketConfig};
 pub use connection::{
     AutoDetectionDiscovery, ClusterDiscovery, Connection, ConnectionEvent, ConnectionId,
     ConnectionManager, DataConnectionConfig, DataConnectionService, DetectedEnvironment,
     MulticastDiscovery, MulticastDiscoveryConfig, SocketInterceptor, SocketOptions,
     StaticAddressDiscovery,
 };
+pub use deployment::{
+    ClassDefinition, ClassDefinitionBuilder, ClassProviderMode, ResourceEntry,
+    UserCodeDeploymentConfig, UserCodeDeploymentConfigBuilder,
+};
+pub use diagnostics::{OperationTracker, SlowOperationDetector};
+pub use executor::{
+    Callable, CallableTask, ExecutionCallback, ExecutionTarget, ExecutorService,
+    FnExecutionCallback, Runnable, RunnableTask,
+};
 pub use hazelcast_core as core;
 pub use hazelcast_core::PartitionAware;
-pub use pipeline::InvocationPipeline;
+#[cfg(feature = "kafka")]
+pub use jet::{
+    kafka_sink, kafka_source, Acks, AutoOffsetReset, CompressionType, IsolationLevel, KafkaSink,
+    KafkaSinkConfig, KafkaSinkConfigBuilder, KafkaSource, KafkaSourceConfig,
+    KafkaSourceConfigBuilder,
+};
+pub use jet::{JetService, Job, JobConfig, JobConfigBuilder, JobStatus, Pipeline, PipelineBuilder};
 pub use listener::{
     BoxedEntryListener, BoxedItemListener, EntryListener, FnEntryListener, FnEntryListenerBuilder,
     FnItemListener, ItemEvent, ItemEventType, ItemListener, ItemListenerConfig, LifecycleEvent,
     ListenerId, ListenerRegistration, ListenerStats,
 };
+#[cfg(feature = "metrics")]
+pub use metrics::{
+    MetricsRecorderHandle, OperationLatencyGuard, PrometheusError, PrometheusExporter,
+    PrometheusExporterBuilder,
+};
+pub use pipeline::InvocationPipeline;
 pub use proxy::{
     AtomicReference, EntryView, ExpiryPolicy, IList, IMap, IQueue, ISet, ITopic, MultiMap,
     Offloadable, Pipelining, ReadOnly, TopicMessage, VectorCollection, VectorCollectionConfig,
@@ -202,41 +219,23 @@ pub use query::{
     NotPredicate, OrPredicate, Predicate, Predicates, Projection, Projections, RegexPredicate,
     SingleAttributeProjection, SqlPredicate, TruePredicate,
 };
+pub use security::{
+    cipher_suites, AuthError, AuthResponse, Authenticator, CredentialError, CredentialProvider,
+    Credentials, CustomCredentials, DefaultAuthenticator, EnvironmentCredentialProvider,
+    HostnameVerification, TlsConfig, TlsConfigBuilder, TlsConfigError, TlsProtocolVersion,
+};
 pub use sql::{
     SqlColumnMetadata, SqlColumnType, SqlResult, SqlRow, SqlRowMetadata, SqlService, SqlStatement,
     SqlValue,
 };
 pub use transaction::{
-    TransactionContext, TransactionOptions, TransactionState, TransactionType,
-    TransactionalList, TransactionalMap, TransactionalMultiMap, TransactionalQueue, TransactionalSet,
-    XAResource, XATransaction, XaTransactionState, Xid,
-    XA_TMNOFLAGS, XA_TMJOIN, XA_TMRESUME, XA_TMSUCCESS, XA_TMFAIL, XA_TMSUSPEND,
-    XA_TMSTARTRSCAN, XA_TMENDRSCAN, XA_TMONEPHASE,
-    XA_OK, XA_RDONLY, XA_HEURRB, XA_HEURCOM, XA_HEURHAZ, XA_HEURMIX, XA_RETRY,
-    XA_RBBASE, XA_RBROLLBACK, XA_RBCOMMFAIL, XA_RBDEADLOCK, XA_RBINTEGRITY,
-    XA_RBOTHER, XA_RBPROTO, XA_RBTIMEOUT, XA_RBTRANSIENT, XA_RBEND,
-};
-pub use jet::{JetService, Job, JobConfig, JobConfigBuilder, JobStatus, Pipeline, PipelineBuilder};
-#[cfg(feature = "kafka")]
-pub use jet::{
-    kafka_sink, kafka_source, Acks, AutoOffsetReset, CompressionType, IsolationLevel, KafkaSink,
-    KafkaSinkConfig, KafkaSinkConfigBuilder, KafkaSource, KafkaSourceConfig,
-    KafkaSourceConfigBuilder,
-};
-pub use cluster::{
-    BoxedMigrationListener, BoxedPartitionLostListener, ClientInfo, ClusterService, ClusterView,
-    FnMigrationListener, FnPartitionLostListener, MigrationEvent, MigrationListener,
-    MigrationState, Partition, PartitionLostEvent, PartitionLostListener, PartitionService,
-    SplitBrainProtectionService,
-};
-pub use deployment::{
-    ClassDefinition, ClassDefinitionBuilder, ClassProviderMode, ResourceEntry,
-    UserCodeDeploymentConfig, UserCodeDeploymentConfigBuilder,
-};
-pub use security::{
-    AuthError, AuthResponse, Authenticator, CredentialError, CredentialProvider, Credentials,
-    CustomCredentials, DefaultAuthenticator, EnvironmentCredentialProvider, HostnameVerification,
-    TlsConfig, TlsConfigBuilder, TlsConfigError, TlsProtocolVersion, cipher_suites,
+    TransactionContext, TransactionOptions, TransactionState, TransactionType, TransactionalList,
+    TransactionalMap, TransactionalMultiMap, TransactionalQueue, TransactionalSet, XAResource,
+    XATransaction, XaTransactionState, Xid, XA_HEURCOM, XA_HEURHAZ, XA_HEURMIX, XA_HEURRB, XA_OK,
+    XA_RBBASE, XA_RBCOMMFAIL, XA_RBDEADLOCK, XA_RBEND, XA_RBINTEGRITY, XA_RBOTHER, XA_RBPROTO,
+    XA_RBROLLBACK, XA_RBTIMEOUT, XA_RBTRANSIENT, XA_RDONLY, XA_RETRY, XA_TMENDRSCAN, XA_TMFAIL,
+    XA_TMJOIN, XA_TMNOFLAGS, XA_TMONEPHASE, XA_TMRESUME, XA_TMSTARTRSCAN, XA_TMSUCCESS,
+    XA_TMSUSPEND,
 };
 
 #[cfg(feature = "aws")]

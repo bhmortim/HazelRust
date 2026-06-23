@@ -134,9 +134,10 @@ impl K8sClientProvider for KubeRsClient {
             ListParams::default()
         };
 
-        let pod_list = pods.list(&list_params).await.map_err(|e| {
-            HazelcastError::Connection(format!("Failed to list pods: {}", e))
-        })?;
+        let pod_list = pods
+            .list(&list_params)
+            .await
+            .map_err(|e| HazelcastError::Connection(format!("Failed to list pods: {}", e)))?;
 
         let mut discovered = Vec::new();
 
@@ -241,9 +242,10 @@ impl KubernetesDiscovery {
             parts.push(format!("{}={}", name, value));
         }
 
-        if let (Some(ref name), Some(ref value)) =
-            (&self.config.service_label_name, &self.config.service_label_value)
-        {
+        if let (Some(ref name), Some(ref value)) = (
+            &self.config.service_label_name,
+            &self.config.service_label_value,
+        ) {
             parts.push(format!("{}={}", name, value));
         }
 
@@ -255,9 +257,10 @@ impl KubernetesDiscovery {
     }
 
     async fn discover_from_service(&self) -> Result<Vec<SocketAddr>> {
-        let service_name = self.config.service_name.as_ref().ok_or_else(|| {
-            HazelcastError::Connection("Service name not configured".to_string())
-        })?;
+        let service_name =
+            self.config.service_name.as_ref().ok_or_else(|| {
+                HazelcastError::Connection("Service name not configured".to_string())
+            })?;
 
         let endpoints = self
             .k8s_client
@@ -271,7 +274,10 @@ impl KubernetesDiscovery {
             if let Ok(ip) = endpoint.ip.parse() {
                 let addr = SocketAddr::new(ip, port);
                 addresses.push(addr);
-                debug!("Discovered Hazelcast member from service endpoint: {}", addr);
+                debug!(
+                    "Discovered Hazelcast member from service endpoint: {}",
+                    addr
+                );
             }
         }
 
@@ -391,7 +397,10 @@ mod tests {
         config: KubernetesDiscoveryConfig,
         endpoints: Vec<DiscoveredEndpoint>,
     ) -> KubernetesDiscovery {
-        KubernetesDiscovery::with_mock_client(config, Box::new(MockK8sClient::new(vec![], endpoints)))
+        KubernetesDiscovery::with_mock_client(
+            config,
+            Box::new(MockK8sClient::new(vec![], endpoints)),
+        )
     }
 
     #[test]
@@ -423,17 +432,19 @@ mod tests {
 
     #[test]
     fn test_service_label_config() {
-        let config = KubernetesDiscoveryConfig::new()
-            .service_label("app.kubernetes.io/name", "hazelcast");
+        let config =
+            KubernetesDiscoveryConfig::new().service_label("app.kubernetes.io/name", "hazelcast");
 
-        assert_eq!(config.service_label_name.as_deref(), Some("app.kubernetes.io/name"));
+        assert_eq!(
+            config.service_label_name.as_deref(),
+            Some("app.kubernetes.io/name")
+        );
         assert_eq!(config.service_label_value.as_deref(), Some("hazelcast"));
     }
 
     #[test]
     fn test_label_selector_pod_only() {
-        let config = KubernetesDiscoveryConfig::new()
-            .pod_label("app", "hazelcast");
+        let config = KubernetesDiscoveryConfig::new().pod_label("app", "hazelcast");
         let discovery = KubernetesDiscovery::new(config);
 
         let selector = discovery.build_label_selector();
@@ -442,8 +453,7 @@ mod tests {
 
     #[test]
     fn test_label_selector_service_only() {
-        let config = KubernetesDiscoveryConfig::new()
-            .service_label("tier", "backend");
+        let config = KubernetesDiscoveryConfig::new().service_label("tier", "backend");
         let discovery = KubernetesDiscovery::new(config);
 
         let selector = discovery.build_label_selector();
@@ -535,9 +545,18 @@ mod tests {
         let addresses = discovery.discover().await.unwrap();
 
         assert_eq!(addresses.len(), 3);
-        assert!(addresses.contains(&SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 5701)));
-        assert!(addresses.contains(&SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 5701)));
-        assert!(addresses.contains(&SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)), 5701)));
+        assert!(addresses.contains(&SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            5701
+        )));
+        assert!(addresses.contains(&SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            5701
+        )));
+        assert!(addresses.contains(&SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)),
+            5701
+        )));
     }
 
     #[tokio::test]
@@ -576,8 +595,12 @@ mod tests {
             .port(5702);
 
         let endpoints = vec![
-            DiscoveredEndpoint { ip: "10.1.0.1".to_string() },
-            DiscoveredEndpoint { ip: "10.1.0.2".to_string() },
+            DiscoveredEndpoint {
+                ip: "10.1.0.1".to_string(),
+            },
+            DiscoveredEndpoint {
+                ip: "10.1.0.2".to_string(),
+            },
         ];
 
         let discovery = create_mock_discovery_endpoints(config, endpoints);
@@ -590,8 +613,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discovery_handles_empty_response() {
-        let config = KubernetesDiscoveryConfig::new()
-            .namespace("empty");
+        let config = KubernetesDiscoveryConfig::new().namespace("empty");
 
         let discovery = create_mock_discovery_pods(config, vec![]);
         let addresses = discovery.discover().await.unwrap();
@@ -601,21 +623,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_discovery_handles_api_error() {
-        let config = KubernetesDiscoveryConfig::new()
-            .namespace("test");
+        let config = KubernetesDiscoveryConfig::new().namespace("test");
 
         let discovery =
             KubernetesDiscovery::with_mock_client(config, Box::new(MockK8sClient::with_error()));
 
         let result = discovery.discover().await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Mock K8s API error"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Mock K8s API error"));
     }
 
     #[tokio::test]
     async fn test_pod_discovery_skips_invalid_ips() {
-        let config = KubernetesDiscoveryConfig::new()
-            .namespace("test");
+        let config = KubernetesDiscoveryConfig::new().namespace("test");
 
         let pods = vec![
             DiscoveredPod {
@@ -642,8 +665,12 @@ mod tests {
             .service_name("hz-service");
 
         let endpoints = vec![
-            DiscoveredEndpoint { ip: "invalid".to_string() },
-            DiscoveredEndpoint { ip: "10.0.0.10".to_string() },
+            DiscoveredEndpoint {
+                ip: "invalid".to_string(),
+            },
+            DiscoveredEndpoint {
+                ip: "10.0.0.10".to_string(),
+            },
         ];
 
         let discovery = create_mock_discovery_endpoints(config, endpoints);
@@ -693,8 +720,7 @@ mod tests {
 
     #[test]
     fn test_kubernetes_discovery_debug() {
-        let config = KubernetesDiscoveryConfig::new()
-            .namespace("test-ns");
+        let config = KubernetesDiscoveryConfig::new().namespace("test-ns");
         let discovery = KubernetesDiscovery::new(config);
         let debug_str = format!("{:?}", discovery);
         assert!(debug_str.contains("KubernetesDiscovery"));

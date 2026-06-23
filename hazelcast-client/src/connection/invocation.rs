@@ -115,11 +115,7 @@ impl InvocationService {
     ///
     /// If a pool already exists for this address, the connection is added to
     /// the existing pool. Otherwise a new pool is created.
-    pub async fn register_connection(
-        &self,
-        address: SocketAddr,
-        stream: tokio::net::TcpStream,
-    ) {
+    pub async fn register_connection(&self, address: SocketAddr, stream: tokio::net::TcpStream) {
         let (read_half, write_half) = stream.into_split();
         let write = Arc::new(Mutex::new(write_half));
 
@@ -236,14 +232,11 @@ impl InvocationService {
     ///
     /// Uses round-robin selection across pooled connections to reduce
     /// contention on any single write Mutex.
-    async fn send_raw(
-        &self,
-        address: SocketAddr,
-        message: &mut ClientMessage,
-    ) -> Result<()> {
-        let pool_ref = self.pools.get(&address).ok_or_else(|| {
-            HazelcastError::Connection(format!("no connection to {}", address))
-        })?;
+    async fn send_raw(&self, address: SocketAddr, message: &mut ClientMessage) -> Result<()> {
+        let pool_ref = self
+            .pools
+            .get(&address)
+            .ok_or_else(|| HazelcastError::Connection(format!("no connection to {}", address)))?;
 
         let writer = pool_ref.select().clone();
         drop(pool_ref); // Release DashMap shard lock before awaiting
@@ -272,13 +265,9 @@ impl InvocationService {
             }
         }
 
-        let mut proxy_msg =
-            ClientMessage::create_for_encode(CLIENT_CREATE_PROXY, PARTITION_ID_ANY);
-        proxy_msg.add_frame(Frame::with_content(BytesMut::from(
-            map_name.as_bytes(),
-        )));
-        let mut svc_frame =
-            Frame::with_content(BytesMut::from(service_name.as_bytes()));
+        let mut proxy_msg = ClientMessage::create_for_encode(CLIENT_CREATE_PROXY, PARTITION_ID_ANY);
+        proxy_msg.add_frame(Frame::with_content(BytesMut::from(map_name.as_bytes())));
+        let mut svc_frame = Frame::with_content(BytesMut::from(service_name.as_bytes()));
         svc_frame.flags |= IS_FINAL_FLAG;
         proxy_msg.add_frame(svc_frame);
 

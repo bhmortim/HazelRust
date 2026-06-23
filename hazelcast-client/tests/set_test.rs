@@ -64,7 +64,10 @@ async fn test_set_remove() {
 
     // Remove again should return false
     let removed_again = set.remove(&"to-remove".to_string()).await.unwrap();
-    assert!(!removed_again, "remove should return false for non-existing element");
+    assert!(
+        !removed_again,
+        "remove should return false for non-existing element"
+    );
 
     // Contains should return false after removal
     let contains = set.contains(&"to-remove".to_string()).await.unwrap();
@@ -82,7 +85,10 @@ async fn test_set_size_and_is_empty() {
     set.clear().await.unwrap();
 
     // Empty set
-    assert!(set.is_empty().await.unwrap(), "set should be empty initially");
+    assert!(
+        set.is_empty().await.unwrap(),
+        "set should be empty initially"
+    );
     assert_eq!(set.size().await.unwrap(), 0, "size should be 0");
 
     // Add items
@@ -95,7 +101,11 @@ async fn test_set_size_and_is_empty() {
 
     // Adding duplicate shouldn't increase size
     set.add("one".to_string()).await.unwrap();
-    assert_eq!(set.size().await.unwrap(), 2, "size should still be 2 after duplicate add");
+    assert_eq!(
+        set.size().await.unwrap(),
+        2,
+        "size should still be 2 after duplicate add"
+    );
 
     set.clear().await.unwrap();
     client.shutdown().await.unwrap();
@@ -119,7 +129,10 @@ async fn test_set_clear() {
     // Clear the set
     set.clear().await.unwrap();
 
-    assert!(set.is_empty().await.unwrap(), "set should be empty after clear");
+    assert!(
+        set.is_empty().await.unwrap(),
+        "set should be empty after clear"
+    );
     assert_eq!(set.size().await.unwrap(), 0, "size should be 0 after clear");
 
     client.shutdown().await.unwrap();

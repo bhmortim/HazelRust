@@ -5,8 +5,8 @@
 
 use std::net::SocketAddr;
 
-use hazelcast_client::{ClientConfig, HazelcastClient};
 use hazelcast_client::proxy::AtomicReference;
+use hazelcast_client::{ClientConfig, HazelcastClient};
 
 async fn create_test_client() -> HazelcastClient {
     let config = ClientConfig::builder()
@@ -82,7 +82,10 @@ async fn test_atomic_reference_get_and_set() {
     let reference = client.get_atomic_reference::<String>("test-get-and-set");
 
     // Set initial value
-    reference.set(Some("initial".to_string())).await.expect("set should work");
+    reference
+        .set(Some("initial".to_string()))
+        .await
+        .expect("set should work");
 
     // Get and set
     let old = reference.get_and_set(Some("updated".to_string())).await;
@@ -101,22 +104,23 @@ async fn test_atomic_reference_compare_and_set() {
     let reference = client.get_atomic_reference::<String>("test-cas");
 
     // Set initial value
-    reference.set(Some("original".to_string())).await.expect("set should work");
+    reference
+        .set(Some("original".to_string()))
+        .await
+        .expect("set should work");
 
     // Compare and set with correct expected value
     let expected = "original".to_string();
-    let result = reference.compare_and_set(
-        Some(&expected),
-        Some("updated".to_string()),
-    ).await;
+    let result = reference
+        .compare_and_set(Some(&expected), Some("updated".to_string()))
+        .await;
     println!("CAS result (should succeed): {:?}", result);
 
     // Compare and set with wrong expected value
     let wrong = "wrong".to_string();
-    let result = reference.compare_and_set(
-        Some(&wrong),
-        Some("should-not-set".to_string()),
-    ).await;
+    let result = reference
+        .compare_and_set(Some(&wrong), Some("should-not-set".to_string()))
+        .await;
     println!("CAS result (should fail): {:?}", result);
 
     client.shutdown().await.expect("shutdown failed");
@@ -128,7 +132,10 @@ async fn test_atomic_reference_contains() {
     let client = create_test_client().await;
     let reference = client.get_atomic_reference::<String>("test-contains");
 
-    reference.set(Some("hello".to_string())).await.expect("set should work");
+    reference
+        .set(Some("hello".to_string()))
+        .await
+        .expect("set should work");
 
     let result = reference.contains(&"hello".to_string()).await;
     println!("Contains 'hello': {:?}", result);
@@ -148,7 +155,10 @@ async fn test_atomic_reference_is_null() {
     let result = reference.is_null().await;
     println!("Is null (initial): {:?}", result);
 
-    reference.set(Some("value".to_string())).await.expect("set should work");
+    reference
+        .set(Some("value".to_string()))
+        .await
+        .expect("set should work");
     let result = reference.is_null().await;
     println!("Is null (after set): {:?}", result);
 
@@ -161,7 +171,10 @@ async fn test_atomic_reference_clear() {
     let client = create_test_client().await;
     let reference = client.get_atomic_reference::<String>("test-clear");
 
-    reference.set(Some("value".to_string())).await.expect("set should work");
+    reference
+        .set(Some("value".to_string()))
+        .await
+        .expect("set should work");
 
     let result = reference.clear().await;
     println!("Clear result: {:?}", result);

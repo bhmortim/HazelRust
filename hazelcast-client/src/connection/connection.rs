@@ -196,17 +196,18 @@ impl Connection {
             Domain::IPV6
         };
 
-        let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).map_err(|e| {
-            HazelcastError::Connection(format!("failed to create socket: {}", e))
-        })?;
+        let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
+            .map_err(|e| HazelcastError::Connection(format!("failed to create socket: {}", e)))?;
 
-        socket.set_nodelay(socket_config.tcp_nodelay()).map_err(|e| {
-            HazelcastError::Connection(format!("failed to set TCP_NODELAY: {}", e))
-        })?;
+        socket
+            .set_nodelay(socket_config.tcp_nodelay())
+            .map_err(|e| HazelcastError::Connection(format!("failed to set TCP_NODELAY: {}", e)))?;
 
-        socket.set_keepalive(socket_config.keep_alive()).map_err(|e| {
-            HazelcastError::Connection(format!("failed to set SO_KEEPALIVE: {}", e))
-        })?;
+        socket
+            .set_keepalive(socket_config.keep_alive())
+            .map_err(|e| {
+                HazelcastError::Connection(format!("failed to set SO_KEEPALIVE: {}", e))
+            })?;
 
         if let Some(size) = socket_config.send_buffer_size() {
             socket.set_send_buffer_size(size as usize).map_err(|e| {
@@ -231,19 +232,23 @@ impl Connection {
             HazelcastError::Connection(format!("failed to set non-blocking: {}", e))
         })?;
 
-        socket.connect(&address.into()).or_else(|e| {
-            // Non-blocking connect returns WouldBlock/InProgress, which is expected
-            if e.kind() == std::io::ErrorKind::WouldBlock
+        socket
+            .connect(&address.into())
+            .or_else(|e| {
+                // Non-blocking connect returns WouldBlock/InProgress, which is expected
+                if e.kind() == std::io::ErrorKind::WouldBlock
                 || e.raw_os_error() == Some(10035) // WSAEWOULDBLOCK on Windows
-                || e.raw_os_error() == Some(115)   // EINPROGRESS on Linux
-            {
-                Ok(())
-            } else {
-                Err(e)
-            }
-        }).map_err(|e| {
-            HazelcastError::Connection(format!("failed to connect to {}: {}", address, e))
-        })?;
+                || e.raw_os_error() == Some(115)
+                // EINPROGRESS on Linux
+                {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            })
+            .map_err(|e| {
+                HazelcastError::Connection(format!("failed to connect to {}: {}", address, e))
+            })?;
 
         let std_stream: std::net::TcpStream = socket.into();
         let stream = TcpStream::from_std(std_stream).map_err(|e| {
@@ -294,7 +299,8 @@ impl Connection {
     ) -> Result<Self> {
         let stream = Self::create_tcp_stream(address, socket_config).await?;
 
-        let tls_stream = Self::perform_tls_handshake(stream, address, tls_config, server_name).await?;
+        let tls_stream =
+            Self::perform_tls_handshake(stream, address, tls_config, server_name).await?;
 
         tracing::debug!(address = %address, "established TLS connection");
         Ok(Self::new_tls(tls_stream, address))
@@ -362,9 +368,11 @@ impl Connection {
                     HazelcastError::Connection("no private key found in file".to_string())
                 })?;
 
-            config_builder.with_client_auth_cert(certs, key).map_err(|e| {
-                HazelcastError::Connection(format!("failed to configure client auth: {}", e))
-            })?
+            config_builder
+                .with_client_auth_cert(certs, key)
+                .map_err(|e| {
+                    HazelcastError::Connection(format!("failed to configure client auth: {}", e))
+                })?
         } else {
             config_builder.with_no_client_auth()
         };
@@ -442,9 +450,16 @@ impl Connection {
                 }
             }
 
-            let bytes_read = self.stream.read_buf(&mut self.read_buffer).await.map_err(|e| {
-                HazelcastError::Connection(format!("failed to read from {}: {}", self.address, e))
-            })?;
+            let bytes_read = self
+                .stream
+                .read_buf(&mut self.read_buffer)
+                .await
+                .map_err(|e| {
+                    HazelcastError::Connection(format!(
+                        "failed to read from {}: {}",
+                        self.address, e
+                    ))
+                })?;
 
             if bytes_read == 0 {
                 if self.read_buffer.is_empty() {
@@ -486,8 +501,10 @@ impl Connection {
             let mut drain_buf = bytes::BytesMut::with_capacity(8192);
             match tokio::time::timeout(
                 std::time::Duration::from_millis(200),
-                self.stream.read_buf(&mut drain_buf)
-            ).await {
+                self.stream.read_buf(&mut drain_buf),
+            )
+            .await
+            {
                 Ok(Ok(n)) if n > 0 => {
                     tracing::debug!(address = %self.address, bytes = n, "drained socket data");
                     continue; // More data may be available
@@ -599,14 +616,11 @@ mod tests {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
 
-            let connect_handle = tokio::spawn(async move {
-                TcpStream::connect(addr).await.unwrap()
-            });
+            let connect_handle =
+                tokio::spawn(async move { TcpStream::connect(addr).await.unwrap() });
 
-            let (_, stream) = tokio::join!(
-                async { listener.accept().await.unwrap() },
-                connect_handle
-            );
+            let (_, stream) =
+                tokio::join!(async { listener.accept().await.unwrap() }, connect_handle);
 
             let conn_stream = ConnectionStream::Plain(stream.unwrap());
             let debug_str = format!("{:?}", conn_stream);

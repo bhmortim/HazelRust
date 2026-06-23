@@ -215,7 +215,8 @@ async fn test_executor_task_serialization_roundtrip() {
     let task = FactorialTask::new(5);
 
     let mut output = hazelcast_core::serialization::ObjectDataOutput::new();
-    task.serialize(&mut output).expect("serialization should succeed");
+    task.serialize(&mut output)
+        .expect("serialization should succeed");
 
     let bytes = output.into_bytes();
     assert!(!bytes.is_empty(), "serialized bytes should not be empty");

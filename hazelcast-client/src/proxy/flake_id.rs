@@ -61,7 +61,9 @@ impl Iterator for IdBatch {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.batch_size {
-            let id = self.base.saturating_add((self.index as i64).saturating_mul(self.increment));
+            let id = self
+                .base
+                .saturating_add((self.index as i64).saturating_mul(self.increment));
             self.index += 1;
             Some(id)
         } else {
@@ -119,9 +121,10 @@ impl FlakeIdGenerator {
     /// cache without making network calls.
     pub async fn new_id(&self) -> Result<i64> {
         {
-            let mut batch_guard = self.batch.lock().map_err(|_| {
-                HazelcastError::Serialization("batch lock poisoned".to_string())
-            })?;
+            let mut batch_guard = self
+                .batch
+                .lock()
+                .map_err(|_| HazelcastError::Serialization("batch lock poisoned".to_string()))?;
             if let Some(ref mut batch) = *batch_guard {
                 if let Some(id) = batch.next() {
                     return Ok(id);
@@ -135,9 +138,10 @@ impl FlakeIdGenerator {
         })?;
 
         {
-            let mut batch_guard = self.batch.lock().map_err(|_| {
-                HazelcastError::Serialization("batch lock poisoned".to_string())
-            })?;
+            let mut batch_guard = self
+                .batch
+                .lock()
+                .map_err(|_| HazelcastError::Serialization("batch lock poisoned".to_string()))?;
             *batch_guard = Some(new_batch);
         }
 
@@ -189,9 +193,10 @@ impl FlakeIdGenerator {
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_id_batch_response(response: &ClientMessage) -> Result<IdBatch> {
@@ -370,11 +375,11 @@ mod tests {
     #[test]
     fn test_batch_mutex_initialized() {
         fn assert_has_mutex<T>(_: &std::sync::Mutex<T>) {}
-        
+
         let batch = IdBatch::new(0, 1, 5);
         let mutex = std::sync::Mutex::new(Some(batch));
         assert_has_mutex(&mutex);
-        
+
         let guard = mutex.lock().unwrap();
         assert!(guard.is_some());
     }

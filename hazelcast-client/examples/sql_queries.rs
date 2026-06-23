@@ -70,10 +70,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     while let Some(row) = result.next_row().await? {
-        let key = row.get_by_name("__key").map(|v| format!("{:?}", v)).unwrap_or_default();
-        let name = row.get_by_name("name").map(|v| format!("{:?}", v)).unwrap_or_default();
-        let dept = row.get_by_name("department").map(|v| format!("{:?}", v)).unwrap_or_default();
-        let salary = row.get_by_name("salary").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let key = row
+            .get_by_name("__key")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
+        let name = row
+            .get_by_name("name")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
+        let dept = row
+            .get_by_name("department")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
+        let salary = row
+            .get_by_name("salary")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
         println!("  {} {} ({}) - {}", key, name, dept, salary);
     }
 
@@ -86,8 +98,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     while let Some(row) = result.next_row().await? {
-        let name = row.get_by_name("name").map(|v| format!("{:?}", v)).unwrap_or_default();
-        let salary = row.get_by_name("salary").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let name = row
+            .get_by_name("name")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
+        let salary = row
+            .get_by_name("salary")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
         println!("  {} - {}", name, salary);
     }
 
@@ -109,10 +127,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     while let Some(row) = result.next_row().await? {
-        let dept = row.get_by_name("department").map(|v| format!("{:?}", v)).unwrap_or_default();
-        let count = row.get_by_name("employee_count").map(|v| format!("{:?}", v)).unwrap_or_default();
-        let avg = row.get_by_name("avg_salary").map(|v| format!("{:?}", v)).unwrap_or_default();
-        let max = row.get_by_name("max_salary").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let dept = row
+            .get_by_name("department")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
+        let count = row
+            .get_by_name("employee_count")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
+        let avg = row
+            .get_by_name("avg_salary")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
+        let max = row
+            .get_by_name("max_salary")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
         println!("  {}: {} employees, avg {}, max {}", dept, count, avg, max);
     }
 
@@ -125,8 +155,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     while let Some(row) = result.next_row().await? {
-        let name = row.get_by_name("name").map(|v| format!("{:?}", v)).unwrap_or_default();
-        let salary = row.get_by_name("salary").map(|v| format!("{:?}", v)).unwrap_or_default();
+        let name = row
+            .get_by_name("name")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
+        let salary = row
+            .get_by_name("salary")
+            .map(|v| format!("{:?}", v))
+            .unwrap_or_default();
         println!("  {} - {}", name, salary);
     }
 

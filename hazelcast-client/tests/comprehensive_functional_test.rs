@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use hazelcast_client::HazelcastClient;
 
-use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
+use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};
 
 // ============================================================================
 // IMap — CRUD (17 tests)
@@ -24,11 +24,14 @@ use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
 
 #[tokio::test]
 async fn test_map_put_get() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-pg");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -41,11 +44,14 @@ async fn test_map_put_get() {
 
 #[tokio::test]
 async fn test_map_put_returns_old() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-pro");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -60,15 +66,21 @@ async fn test_map_put_returns_old() {
 
 #[tokio::test]
 async fn test_map_put_if_absent_new() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-pian");
     let map = client.get_map::<String, String>(&map_name);
 
-    let result = map.put_if_absent("k".to_string(), "v".to_string()).await.unwrap();
+    let result = map
+        .put_if_absent("k".to_string(), "v".to_string())
+        .await
+        .unwrap();
     assert!(result.is_none());
 
     let val = map.get(&"k".to_string()).await.unwrap();
@@ -79,16 +91,24 @@ async fn test_map_put_if_absent_new() {
 
 #[tokio::test]
 async fn test_map_put_if_absent_existing() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-piae");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put("k".to_string(), "original".to_string()).await.unwrap();
-    let result = map.put_if_absent("k".to_string(), "new".to_string()).await.unwrap();
+    map.put("k".to_string(), "original".to_string())
+        .await
+        .unwrap();
+    let result = map
+        .put_if_absent("k".to_string(), "new".to_string())
+        .await
+        .unwrap();
     assert_eq!(result, Some("original".to_string()));
 
     let val = map.get(&"k".to_string()).await.unwrap();
@@ -99,19 +119,28 @@ async fn test_map_put_if_absent_existing() {
 
 #[tokio::test]
 async fn test_map_replace() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-repl");
     let map = client.get_map::<String, String>(&map_name);
 
-    let none_result = map.replace(&"k".to_string(), "v".to_string()).await.unwrap();
+    let none_result = map
+        .replace(&"k".to_string(), "v".to_string())
+        .await
+        .unwrap();
     assert!(none_result.is_none());
 
     map.put("k".to_string(), "old".to_string()).await.unwrap();
-    let old = map.replace(&"k".to_string(), "new".to_string()).await.unwrap();
+    let old = map
+        .replace(&"k".to_string(), "new".to_string())
+        .await
+        .unwrap();
     assert_eq!(old, Some("old".to_string()));
 
     let val = map.get(&"k".to_string()).await.unwrap();
@@ -122,18 +151,22 @@ async fn test_map_replace() {
 
 #[tokio::test]
 async fn test_map_replace_if_equal_match() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-riem");
     let map = client.get_map::<String, String>(&map_name);
 
     map.put("k".to_string(), "old".to_string()).await.unwrap();
-    let ok = map.replace_if_equal(
-        &"k".to_string(), &"old".to_string(), "new".to_string()
-    ).await.unwrap();
+    let ok = map
+        .replace_if_equal(&"k".to_string(), &"old".to_string(), "new".to_string())
+        .await
+        .unwrap();
     assert!(ok);
 
     let val = map.get(&"k".to_string()).await.unwrap();
@@ -144,18 +177,24 @@ async fn test_map_replace_if_equal_match() {
 
 #[tokio::test]
 async fn test_map_replace_if_equal_mismatch() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-riemm");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put("k".to_string(), "actual".to_string()).await.unwrap();
-    let ok = map.replace_if_equal(
-        &"k".to_string(), &"wrong".to_string(), "new".to_string()
-    ).await.unwrap();
+    map.put("k".to_string(), "actual".to_string())
+        .await
+        .unwrap();
+    let ok = map
+        .replace_if_equal(&"k".to_string(), &"wrong".to_string(), "new".to_string())
+        .await
+        .unwrap();
     assert!(!ok);
 
     let val = map.get(&"k".to_string()).await.unwrap();
@@ -166,11 +205,14 @@ async fn test_map_replace_if_equal_mismatch() {
 
 #[tokio::test]
 async fn test_map_remove() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-rm");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -186,11 +228,14 @@ async fn test_map_remove() {
 
 #[tokio::test]
 async fn test_map_remove_returns_old() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-rmold");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -206,20 +251,29 @@ async fn test_map_remove_returns_old() {
 
 #[tokio::test]
 async fn test_map_remove_if_equal() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-rmie");
     let map = client.get_map::<String, String>(&map_name);
 
     map.put("k".to_string(), "v".to_string()).await.unwrap();
 
-    let miss = map.remove_if_equal(&"k".to_string(), &"wrong".to_string()).await.unwrap();
+    let miss = map
+        .remove_if_equal(&"k".to_string(), &"wrong".to_string())
+        .await
+        .unwrap();
     assert!(!miss);
 
-    let hit = map.remove_if_equal(&"k".to_string(), &"v".to_string()).await.unwrap();
+    let hit = map
+        .remove_if_equal(&"k".to_string(), &"v".to_string())
+        .await
+        .unwrap();
     assert!(hit);
 
     assert!(map.get(&"k".to_string()).await.unwrap().is_none());
@@ -229,11 +283,14 @@ async fn test_map_remove_if_equal() {
 
 #[tokio::test]
 async fn test_map_contains_key_true() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-ckt");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -245,11 +302,14 @@ async fn test_map_contains_key_true() {
 
 #[tokio::test]
 async fn test_map_contains_key_false() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-ckf");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -260,11 +320,14 @@ async fn test_map_contains_key_false() {
 
 #[tokio::test]
 async fn test_map_delete() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-del");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -277,11 +340,14 @@ async fn test_map_delete() {
 
 #[tokio::test]
 async fn test_map_set_fire_forget() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-set");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -294,11 +360,14 @@ async fn test_map_set_fire_forget() {
 
 #[tokio::test]
 async fn test_map_size_empty() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-sze");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -309,11 +378,14 @@ async fn test_map_size_empty() {
 
 #[tokio::test]
 async fn test_map_size_after_puts() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-szp");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -327,11 +399,14 @@ async fn test_map_size_after_puts() {
 
 #[tokio::test]
 async fn test_map_is_empty() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-ie");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -348,16 +423,21 @@ async fn test_map_is_empty() {
 
 #[tokio::test]
 async fn test_map_set_ttl_expires() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-sttl");
     let map = client.get_map::<String, String>(&map_name);
 
     map.put("k".to_string(), "v".to_string()).await.unwrap();
-    map.set_ttl(&"k".to_string(), Duration::from_secs(2)).await.unwrap();
+    map.set_ttl(&"k".to_string(), Duration::from_secs(2))
+        .await
+        .unwrap();
 
     let before = map.get(&"k".to_string()).await.unwrap();
     assert_eq!(before, Some("v".to_string()));
@@ -372,18 +452,25 @@ async fn test_map_set_ttl_expires() {
 
 #[tokio::test]
 async fn test_map_put_with_ttl() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-pttl");
     let map = client.get_map::<String, String>(&map_name);
 
     map.put_with_ttl_and_max_idle(
-        "k".to_string(), "v".to_string(),
-        Duration::from_secs(2), Duration::ZERO,
-    ).await.unwrap();
+        "k".to_string(),
+        "v".to_string(),
+        Duration::from_secs(2),
+        Duration::ZERO,
+    )
+    .await
+    .unwrap();
 
     let before = map.get(&"k".to_string()).await.unwrap();
     assert_eq!(before, Some("v".to_string()));
@@ -402,11 +489,14 @@ async fn test_map_put_with_ttl() {
 
 #[tokio::test]
 async fn test_map_lock_unlock() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-lu");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -423,17 +513,23 @@ async fn test_map_lock_unlock() {
 
 #[tokio::test]
 async fn test_map_try_lock_success() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-tls");
     let map = client.get_map::<String, String>(&map_name);
 
     map.put("k".to_string(), "v".to_string()).await.unwrap();
 
-    let ok = map.try_lock(&"k".to_string(), Duration::from_secs(1)).await.unwrap();
+    let ok = map
+        .try_lock(&"k".to_string(), Duration::from_secs(1))
+        .await
+        .unwrap();
     assert!(ok);
 
     map.unlock(&"k".to_string()).await.unwrap();
@@ -443,11 +539,14 @@ async fn test_map_try_lock_success() {
 
 #[tokio::test]
 async fn test_map_is_locked() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-il");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -463,11 +562,14 @@ async fn test_map_is_locked() {
 
 #[tokio::test]
 async fn test_map_force_unlock() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-fu");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -488,19 +590,23 @@ async fn test_map_force_unlock() {
 
 #[tokio::test]
 async fn test_map_compute_increment() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-cinc");
     let map = client.get_map::<String, i64>(&map_name);
 
     map.put("counter".to_string(), 10i64).await.unwrap();
 
-    let result = map.compute(&"counter".to_string(), |_key, old| {
-        old.map(|v| v + 1)
-    }).await.unwrap();
+    let result = map
+        .compute(&"counter".to_string(), |_key, old| old.map(|v| v + 1))
+        .await
+        .unwrap();
 
     assert_eq!(result, Some(11i64));
 
@@ -512,24 +618,29 @@ async fn test_map_compute_increment() {
 
 #[tokio::test]
 async fn test_map_compute_if_absent() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-cia");
     let map = client.get_map::<String, String>(&map_name);
 
     // Key does not exist yet — should set it
-    let result = map.compute_if_absent(&"k".to_string(), |_key| {
-        Some("default".to_string())
-    }).await.unwrap();
+    let result = map
+        .compute_if_absent(&"k".to_string(), |_key| Some("default".to_string()))
+        .await
+        .unwrap();
     assert_eq!(result, Some("default".to_string()));
 
     // Key already exists — should not overwrite
-    let result = map.compute_if_absent(&"k".to_string(), |_key| {
-        Some("other".to_string())
-    }).await.unwrap();
+    let result = map
+        .compute_if_absent(&"k".to_string(), |_key| Some("other".to_string()))
+        .await
+        .unwrap();
     assert_eq!(result, Some("default".to_string()));
 
     map.clear().await.unwrap();
@@ -541,11 +652,14 @@ async fn test_map_compute_if_absent() {
 
 #[tokio::test]
 async fn test_map_put_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-pa");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -556,18 +670,24 @@ async fn test_map_put_all() {
     map.put_all(entries).await.unwrap();
 
     assert_eq!(map.size().await.unwrap(), 10);
-    assert_eq!(map.get(&"k5".to_string()).await.unwrap(), Some("v5".to_string()));
+    assert_eq!(
+        map.get(&"k5".to_string()).await.unwrap(),
+        Some("v5".to_string())
+    );
 
     map.clear().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_map_get_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-ga");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -585,11 +705,14 @@ async fn test_map_get_all() {
 
 #[tokio::test]
 async fn test_map_clear() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-clr");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -604,11 +727,14 @@ async fn test_map_clear() {
 
 #[tokio::test]
 async fn test_map_remove_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-ra");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -632,11 +758,14 @@ async fn test_map_remove_all() {
 
 #[tokio::test]
 async fn test_map_key_set_collects_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-ks");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -653,11 +782,14 @@ async fn test_map_key_set_collects_all() {
 
 #[tokio::test]
 async fn test_map_entry_set_collects_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-es");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -678,11 +810,14 @@ async fn test_map_entry_set_collects_all() {
 
 #[tokio::test]
 async fn test_map_get_nonexistent() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-gne");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -694,15 +829,20 @@ async fn test_map_get_nonexistent() {
 
 #[tokio::test]
 async fn test_map_contains_value() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-cv");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put("k".to_string(), "target".to_string()).await.unwrap();
+    map.put("k".to_string(), "target".to_string())
+        .await
+        .unwrap();
     assert!(map.contains_value(&"target".to_string()).await.unwrap());
     assert!(!map.contains_value(&"missing".to_string()).await.unwrap());
 
@@ -711,11 +851,14 @@ async fn test_map_contains_value() {
 
 #[tokio::test]
 async fn test_map_evict() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-evict");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -731,11 +874,14 @@ async fn test_map_evict() {
 
 #[tokio::test]
 async fn test_map_evict_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-evall");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -752,17 +898,21 @@ async fn test_map_evict_all() {
 
 #[tokio::test]
 async fn test_map_try_put() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-tp");
     let map = client.get_map::<String, String>(&map_name);
 
-    let ok = map.try_put(
-        "k".to_string(), "v".to_string(), Duration::from_secs(5)
-    ).await.unwrap();
+    let ok = map
+        .try_put("k".to_string(), "v".to_string(), Duration::from_secs(5))
+        .await
+        .unwrap();
     assert!(ok);
 
     let val = map.get(&"k".to_string()).await.unwrap();
@@ -773,17 +923,20 @@ async fn test_map_try_put() {
 
 #[tokio::test]
 async fn test_map_put_with_max_idle() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-pmi");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put_with_max_idle(
-        "k".to_string(), "v".to_string(), Duration::from_secs(2)
-    ).await.unwrap();
+    map.put_with_max_idle("k".to_string(), "v".to_string(), Duration::from_secs(2))
+        .await
+        .unwrap();
 
     let before = map.get(&"k".to_string()).await.unwrap();
     assert_eq!(before, Some("v".to_string()));
@@ -798,18 +951,25 @@ async fn test_map_put_with_max_idle() {
 
 #[tokio::test]
 async fn test_map_set_with_ttl_and_max_idle() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-swtami");
     let map = client.get_map::<String, String>(&map_name);
 
     map.set_with_ttl_and_max_idle(
-        "k".to_string(), "v".to_string(),
-        Duration::from_secs(2), Duration::ZERO,
-    ).await.unwrap();
+        "k".to_string(),
+        "v".to_string(),
+        Duration::from_secs(2),
+        Duration::ZERO,
+    )
+    .await
+    .unwrap();
 
     let before = map.get(&"k".to_string()).await.unwrap();
     assert_eq!(before, Some("v".to_string()));
@@ -823,17 +983,20 @@ async fn test_map_set_with_ttl_and_max_idle() {
 
 #[tokio::test]
 async fn test_map_put_transient() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-pt");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put_transient(
-        "k".to_string(), "v".to_string(), Duration::from_secs(2)
-    ).await.unwrap();
+    map.put_transient("k".to_string(), "v".to_string(), Duration::from_secs(2))
+        .await
+        .unwrap();
 
     let before = map.get(&"k".to_string()).await.unwrap();
     assert_eq!(before, Some("v".to_string()));
@@ -847,11 +1010,14 @@ async fn test_map_put_transient() {
 
 #[tokio::test]
 async fn test_map_get_entry_view() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-gev");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -864,11 +1030,14 @@ async fn test_map_get_entry_view() {
 
 #[tokio::test]
 async fn test_map_overwrite_preserves_latest() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-opl");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -885,11 +1054,14 @@ async fn test_map_overwrite_preserves_latest() {
 
 #[tokio::test]
 async fn test_map_integer_keys_values() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-ikv");
     let map = client.get_map::<i32, i64>(&map_name);
 
@@ -904,11 +1076,14 @@ async fn test_map_integer_keys_values() {
 
 #[tokio::test]
 async fn test_map_large_values() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-lv");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -922,42 +1097,62 @@ async fn test_map_large_values() {
 
 #[tokio::test]
 async fn test_map_empty_key_and_value() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-ekv");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put(String::new(), "empty-key".to_string()).await.unwrap();
-    assert_eq!(map.get(&String::new()).await.unwrap(), Some("empty-key".to_string()));
+    map.put(String::new(), "empty-key".to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        map.get(&String::new()).await.unwrap(),
+        Some("empty-key".to_string())
+    );
 
     map.put("k".to_string(), String::new()).await.unwrap();
-    assert_eq!(map.get(&"k".to_string()).await.unwrap(), Some(String::new()));
+    assert_eq!(
+        map.get(&"k".to_string()).await.unwrap(),
+        Some(String::new())
+    );
 
     map.clear().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_map_special_characters() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-sc");
     let map = client.get_map::<String, String>(&map_name);
 
     let keys = vec![
-        "spaces in key", "key:colons", "key/slashes",
-        "unicode-\u{1F680}", "newline\nkey",
+        "spaces in key",
+        "key:colons",
+        "key/slashes",
+        "unicode-\u{1F680}",
+        "newline\nkey",
     ];
     for (i, k) in keys.iter().enumerate() {
         map.put(k.to_string(), format!("v{}", i)).await.unwrap();
     }
     for (i, k) in keys.iter().enumerate() {
-        assert_eq!(map.get(&k.to_string()).await.unwrap(), Some(format!("v{}", i)));
+        assert_eq!(
+            map.get(&k.to_string()).await.unwrap(),
+            Some(format!("v{}", i))
+        );
     }
 
     map.clear().await.unwrap();
@@ -965,11 +1160,14 @@ async fn test_map_special_characters() {
 
 #[tokio::test]
 async fn test_map_flush() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-flush");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -982,11 +1180,14 @@ async fn test_map_flush() {
 
 #[tokio::test]
 async fn test_map_set_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-sa");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -1002,25 +1203,36 @@ async fn test_map_set_all() {
 
 #[tokio::test]
 async fn test_map_compute_if_present() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-cip");
     let map = client.get_map::<String, String>(&map_name);
 
     // Key absent: should be no-op
-    let result = map.compute_if_present(&"k".to_string(), |_key, old| {
-        Some(format!("{}-modified", old))
-    }).await.unwrap();
+    let result = map
+        .compute_if_present(&"k".to_string(), |_key, old| {
+            Some(format!("{}-modified", old))
+        })
+        .await
+        .unwrap();
     assert!(result.is_none());
 
     // Key present: should update
-    map.put("k".to_string(), "original".to_string()).await.unwrap();
-    let result = map.compute_if_present(&"k".to_string(), |_key, old| {
-        Some(format!("{}-modified", old))
-    }).await.unwrap();
+    map.put("k".to_string(), "original".to_string())
+        .await
+        .unwrap();
+    let result = map
+        .compute_if_present(&"k".to_string(), |_key, old| {
+            Some(format!("{}-modified", old))
+        })
+        .await
+        .unwrap();
     assert_eq!(result, Some("original-modified".to_string()));
 
     map.clear().await.unwrap();
@@ -1028,11 +1240,14 @@ async fn test_map_compute_if_present() {
 
 #[tokio::test]
 async fn test_map_clone_shares_state() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-css");
     let map1 = client.get_map::<String, String>(&map_name);
     let map2 = map1.clone();
@@ -1046,11 +1261,14 @@ async fn test_map_clone_shares_state() {
 
 #[tokio::test]
 async fn test_map_put_all_large_batch() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-map-palb");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -1075,11 +1293,14 @@ async fn test_map_put_all_large_batch() {
 
 #[tokio::test]
 async fn test_set_add_returns_true() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("cft-set-art");
     let set = client.get_set::<String>(&set_name);
 
@@ -1092,11 +1313,14 @@ async fn test_set_add_returns_true() {
 
 #[tokio::test]
 async fn test_set_add_duplicate_returns_false() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("cft-set-adrf");
     let set = client.get_set::<String>(&set_name);
 
@@ -1110,11 +1334,14 @@ async fn test_set_add_duplicate_returns_false() {
 
 #[tokio::test]
 async fn test_set_remove() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("cft-set-rm");
     let set = client.get_set::<String>(&set_name);
 
@@ -1130,11 +1357,14 @@ async fn test_set_remove() {
 
 #[tokio::test]
 async fn test_set_contains_true() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("cft-set-ct");
     let set = client.get_set::<String>(&set_name);
 
@@ -1146,11 +1376,14 @@ async fn test_set_contains_true() {
 
 #[tokio::test]
 async fn test_set_contains_false() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("cft-set-cf");
     let set = client.get_set::<String>(&set_name);
 
@@ -1161,11 +1394,14 @@ async fn test_set_contains_false() {
 
 #[tokio::test]
 async fn test_set_size() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("cft-set-sz");
     let set = client.get_set::<String>(&set_name);
 
@@ -1179,11 +1415,14 @@ async fn test_set_size() {
 
 #[tokio::test]
 async fn test_set_is_empty_after_clear() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("cft-set-ieac");
     let set = client.get_set::<String>(&set_name);
 
@@ -1196,11 +1435,14 @@ async fn test_set_is_empty_after_clear() {
 
 #[tokio::test]
 async fn test_set_get_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("cft-set-gall");
     let set = client.get_set::<String>(&set_name);
 
@@ -1216,11 +1458,14 @@ async fn test_set_get_all() {
 
 #[tokio::test]
 async fn test_set_add_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("cft-set-aall");
     let set = client.get_set::<String>(&set_name);
 
@@ -1235,11 +1480,14 @@ async fn test_set_add_all() {
 
 #[tokio::test]
 async fn test_set_contains_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("cft-set-call");
     let set = client.get_set::<String>(&set_name);
 
@@ -1262,11 +1510,14 @@ async fn test_set_contains_all() {
 
 #[tokio::test]
 async fn test_list_add_get() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("cft-list-ag");
     let list = client.get_list::<String>(&list_name);
 
@@ -1280,11 +1531,14 @@ async fn test_list_add_get() {
 
 #[tokio::test]
 async fn test_list_add_at_0() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("cft-list-aa0");
     let list = client.get_list::<String>(&list_name);
 
@@ -1300,11 +1554,14 @@ async fn test_list_add_at_0() {
 
 #[tokio::test]
 async fn test_list_remove_at() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("cft-list-ra");
     let list = client.get_list::<String>(&list_name);
 
@@ -1321,11 +1578,14 @@ async fn test_list_remove_at() {
 
 #[tokio::test]
 async fn test_list_set_at_index() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("cft-list-sai");
     let list = client.get_list::<String>(&list_name);
 
@@ -1339,11 +1599,14 @@ async fn test_list_set_at_index() {
 
 #[tokio::test]
 async fn test_list_index_of() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("cft-list-io");
     let list = client.get_list::<String>(&list_name);
 
@@ -1362,11 +1625,14 @@ async fn test_list_index_of() {
 
 #[tokio::test]
 async fn test_list_size() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("cft-list-sz");
     let list = client.get_list::<String>(&list_name);
 
@@ -1380,11 +1646,14 @@ async fn test_list_size() {
 
 #[tokio::test]
 async fn test_list_is_empty_after_clear() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("cft-list-ieac");
     let list = client.get_list::<String>(&list_name);
 
@@ -1397,11 +1666,14 @@ async fn test_list_is_empty_after_clear() {
 
 #[tokio::test]
 async fn test_list_contains() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("cft-list-con");
     let list = client.get_list::<String>(&list_name);
 
@@ -1414,11 +1686,14 @@ async fn test_list_contains() {
 
 #[tokio::test]
 async fn test_list_add_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("cft-list-aall");
     let list = client.get_list::<String>(&list_name);
 
@@ -1433,11 +1708,14 @@ async fn test_list_add_all() {
 
 #[tokio::test]
 async fn test_list_contains_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("cft-list-call");
     let list = client.get_list::<String>(&list_name);
 
@@ -1460,11 +1738,14 @@ async fn test_list_contains_all() {
 
 #[tokio::test]
 async fn test_queue_offer_poll() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("cft-q-op");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1479,11 +1760,14 @@ async fn test_queue_offer_poll() {
 
 #[tokio::test]
 async fn test_queue_peek() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("cft-q-peek");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1499,11 +1783,14 @@ async fn test_queue_peek() {
 
 #[tokio::test]
 async fn test_queue_size() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("cft-q-sz");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1518,11 +1805,14 @@ async fn test_queue_size() {
 
 #[tokio::test]
 async fn test_queue_is_empty() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("cft-q-ie");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1535,11 +1825,14 @@ async fn test_queue_is_empty() {
 
 #[tokio::test]
 async fn test_queue_clear() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("cft-q-clr");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1551,11 +1844,14 @@ async fn test_queue_clear() {
 
 #[tokio::test]
 async fn test_queue_remaining_capacity() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("cft-q-rc");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1568,11 +1864,14 @@ async fn test_queue_remaining_capacity() {
 
 #[tokio::test]
 async fn test_queue_contains() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("cft-q-con");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1585,11 +1884,14 @@ async fn test_queue_contains() {
 
 #[tokio::test]
 async fn test_queue_remove() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("cft-q-rm");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1608,11 +1910,14 @@ async fn test_queue_remove() {
 
 #[tokio::test]
 async fn test_queue_add_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("cft-q-aall");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1627,11 +1932,14 @@ async fn test_queue_add_all() {
 
 #[tokio::test]
 async fn test_queue_drain_to() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("cft-q-dt");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1650,11 +1958,14 @@ async fn test_queue_drain_to() {
 
 #[tokio::test]
 async fn test_atomic_long_get_set() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-al-gs");
     let counter = client.get_atomic_long(&name);
 
@@ -1665,11 +1976,14 @@ async fn test_atomic_long_get_set() {
 
 #[tokio::test]
 async fn test_atomic_long_increment_and_get() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-al-iag");
     let counter = client.get_atomic_long(&name);
 
@@ -1680,11 +1994,14 @@ async fn test_atomic_long_increment_and_get() {
 
 #[tokio::test]
 async fn test_atomic_long_decrement_and_get() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-al-dag");
     let counter = client.get_atomic_long(&name);
 
@@ -1695,11 +2012,14 @@ async fn test_atomic_long_decrement_and_get() {
 
 #[tokio::test]
 async fn test_atomic_long_add_and_get() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-al-aag");
     let counter = client.get_atomic_long(&name);
 
@@ -1710,11 +2030,14 @@ async fn test_atomic_long_add_and_get() {
 
 #[tokio::test]
 async fn test_atomic_long_get_and_set() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-al-gas");
     let counter = client.get_atomic_long(&name);
 
@@ -1726,11 +2049,14 @@ async fn test_atomic_long_get_and_set() {
 
 #[tokio::test]
 async fn test_atomic_long_compare_and_set_success() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-al-cass");
     let counter = client.get_atomic_long(&name);
 
@@ -1741,11 +2067,14 @@ async fn test_atomic_long_compare_and_set_success() {
 
 #[tokio::test]
 async fn test_atomic_long_compare_and_set_failure() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-al-casf");
     let counter = client.get_atomic_long(&name);
 
@@ -1756,11 +2085,14 @@ async fn test_atomic_long_compare_and_set_failure() {
 
 #[tokio::test]
 async fn test_atomic_long_get_and_increment() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-al-gai");
     let counter = client.get_atomic_long(&name);
 
@@ -1776,11 +2108,14 @@ async fn test_atomic_long_get_and_increment() {
 
 #[tokio::test]
 async fn test_multimap_put_get() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-mm-pg");
     let mm = client.get_multimap::<String, String>(&name);
 
@@ -1794,11 +2129,14 @@ async fn test_multimap_put_get() {
 
 #[tokio::test]
 async fn test_multimap_multiple_values_same_key() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-mm-mvsk");
     let mm = client.get_multimap::<String, String>(&name);
 
@@ -1814,18 +2152,24 @@ async fn test_multimap_multiple_values_same_key() {
 
 #[tokio::test]
 async fn test_multimap_remove_value() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-mm-rv");
     let mm = client.get_multimap::<String, String>(&name);
 
     mm.put("k".to_string(), "v1".to_string()).await.unwrap();
     mm.put("k".to_string(), "v2".to_string()).await.unwrap();
 
-    let removed = mm.remove(&"k".to_string(), &"v1".to_string()).await.unwrap();
+    let removed = mm
+        .remove(&"k".to_string(), &"v1".to_string())
+        .await
+        .unwrap();
     assert!(removed);
 
     let vals = mm.get(&"k".to_string()).await.unwrap();
@@ -1836,11 +2180,14 @@ async fn test_multimap_remove_value() {
 
 #[tokio::test]
 async fn test_multimap_remove_all_for_key() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-mm-rafk");
     let mm = client.get_multimap::<String, String>(&name);
 
@@ -1858,11 +2205,14 @@ async fn test_multimap_remove_all_for_key() {
 
 #[tokio::test]
 async fn test_multimap_contains_key() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-mm-ck");
     let mm = client.get_multimap::<String, String>(&name);
 
@@ -1875,11 +2225,14 @@ async fn test_multimap_contains_key() {
 
 #[tokio::test]
 async fn test_multimap_size() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-mm-sz");
     let mm = client.get_multimap::<String, String>(&name);
 
@@ -1894,11 +2247,14 @@ async fn test_multimap_size() {
 
 #[tokio::test]
 async fn test_multimap_value_count() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-mm-vc");
     let mm = client.get_multimap::<String, String>(&name);
 
@@ -1913,11 +2269,14 @@ async fn test_multimap_value_count() {
 
 #[tokio::test]
 async fn test_multimap_clear() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-mm-clr");
     let mm = client.get_multimap::<String, String>(&name);
 
@@ -1932,11 +2291,14 @@ async fn test_multimap_clear() {
 
 #[tokio::test]
 async fn test_replicated_map_put_get() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-rm-pg");
     let map = client.get_replicated_map::<String, String>(&name);
 
@@ -1951,11 +2313,14 @@ async fn test_replicated_map_put_get() {
 
 #[tokio::test]
 async fn test_replicated_map_size() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-rm-sz");
     let map = client.get_replicated_map::<String, String>(&name);
 
@@ -1971,11 +2336,14 @@ async fn test_replicated_map_size() {
 
 #[tokio::test]
 async fn test_replicated_map_contains_key() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-rm-ck");
     let map = client.get_replicated_map::<String, String>(&name);
 
@@ -1989,11 +2357,14 @@ async fn test_replicated_map_contains_key() {
 
 #[tokio::test]
 async fn test_replicated_map_is_empty_after_clear() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-rm-ieac");
     let map = client.get_replicated_map::<String, String>(&name);
 
@@ -2006,11 +2377,14 @@ async fn test_replicated_map_is_empty_after_clear() {
 
 #[tokio::test]
 async fn test_replicated_map_key_set() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-rm-ks");
     let map = client.get_replicated_map::<String, String>(&name);
 
@@ -2035,11 +2409,14 @@ async fn test_replicated_map_key_set() {
 
 #[tokio::test]
 async fn test_ringbuffer_add_read_one() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-rb-aro");
     let rb = client.get_ringbuffer::<String>(&name);
 
@@ -2052,11 +2429,14 @@ async fn test_ringbuffer_add_read_one() {
 
 #[tokio::test]
 async fn test_ringbuffer_capacity() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-rb-cap");
     let rb = client.get_ringbuffer::<String>(&name);
 
@@ -2066,11 +2446,14 @@ async fn test_ringbuffer_capacity() {
 
 #[tokio::test]
 async fn test_ringbuffer_head_tail_sequence() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-rb-hts");
     let rb = client.get_ringbuffer::<String>(&name);
 
@@ -2081,16 +2464,22 @@ async fn test_ringbuffer_head_tail_sequence() {
     let head = rb.head_sequence().await.unwrap();
     let tail = rb.tail_sequence().await.unwrap();
     assert!(tail >= head);
-    assert!(tail - head >= 2, "should have at least 3 entries spanning 2 sequence positions");
+    assert!(
+        tail - head >= 2,
+        "should have at least 3 entries spanning 2 sequence positions"
+    );
 }
 
 #[tokio::test]
 async fn test_ringbuffer_add_multiple_read_many() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-rb-amrm");
     let rb = client.get_ringbuffer::<String>(&name);
 
@@ -2104,11 +2493,14 @@ async fn test_ringbuffer_add_multiple_read_many() {
 
 #[tokio::test]
 async fn test_ringbuffer_size() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-rb-sz");
     let rb = client.get_ringbuffer::<String>(&name);
 
@@ -2125,11 +2517,14 @@ async fn test_ringbuffer_size() {
 
 #[tokio::test]
 async fn test_topic_publish_no_error() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-topic-pne");
     let topic = client.get_topic::<String>(&name);
 
@@ -2139,11 +2534,14 @@ async fn test_topic_publish_no_error() {
 
 #[tokio::test]
 async fn test_topic_publish_multiple() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-topic-pm");
     let topic = client.get_topic::<String>(&name);
 
@@ -2154,11 +2552,14 @@ async fn test_topic_publish_multiple() {
 
 #[tokio::test]
 async fn test_topic_message_count() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-topic-mc");
     let topic = client.get_topic::<String>(&name);
 
@@ -2177,11 +2578,14 @@ async fn test_topic_message_count() {
 
 #[tokio::test]
 async fn test_countdown_latch_try_set_count() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-cdl-tsc");
     let latch = client.get_countdown_latch(&name);
 
@@ -2191,11 +2595,14 @@ async fn test_countdown_latch_try_set_count() {
 
 #[tokio::test]
 async fn test_countdown_latch_get_count() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-cdl-gc");
     let latch = client.get_countdown_latch(&name);
 
@@ -2206,11 +2613,14 @@ async fn test_countdown_latch_get_count() {
 
 #[tokio::test]
 async fn test_countdown_latch_count_down() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-cdl-cd");
     let latch = client.get_countdown_latch(&name);
 
@@ -2227,11 +2637,14 @@ async fn test_countdown_latch_count_down() {
 
 #[tokio::test]
 async fn test_semaphore_init_acquire_release() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-sem-iar");
     let mut sem = client.get_semaphore(&name);
 
@@ -2245,11 +2658,14 @@ async fn test_semaphore_init_acquire_release() {
 
 #[tokio::test]
 async fn test_semaphore_try_acquire() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-sem-ta");
     let mut sem = client.get_semaphore(&name);
 
@@ -2258,7 +2674,10 @@ async fn test_semaphore_try_acquire() {
     assert!(ok);
 
     // All permits consumed; second attempt should time out
-    let fail = sem.try_acquire(1, Duration::from_millis(200)).await.unwrap();
+    let fail = sem
+        .try_acquire(1, Duration::from_millis(200))
+        .await
+        .unwrap();
     assert!(!fail);
 
     sem.release(1).await.unwrap();
@@ -2266,11 +2685,14 @@ async fn test_semaphore_try_acquire() {
 
 #[tokio::test]
 async fn test_semaphore_available_permits() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-sem-ap");
     let sem = client.get_semaphore(&name);
 
@@ -2284,11 +2706,14 @@ async fn test_semaphore_available_permits() {
 
 #[tokio::test]
 async fn test_fenced_lock_lock_unlock() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-fl-lu");
     let mut lock = client.get_fenced_lock(&name);
 
@@ -2303,11 +2728,14 @@ async fn test_fenced_lock_lock_unlock() {
 
 #[tokio::test]
 async fn test_fenced_lock_try_lock() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-fl-tl");
     let mut lock = client.get_fenced_lock(&name);
 
@@ -2320,11 +2748,14 @@ async fn test_fenced_lock_try_lock() {
 
 #[tokio::test]
 async fn test_fenced_lock_is_locked() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let name = unique_name("cft-fl-il");
     let mut lock = client.get_fenced_lock(&name);
 
@@ -2340,11 +2771,14 @@ async fn test_fenced_lock_is_locked() {
 
 #[tokio::test]
 async fn test_client_connect_disconnect() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
 
     // Basic smoke: connection should be alive
     assert!(client.connection_count().await > 0);
@@ -2354,23 +2788,32 @@ async fn test_client_connect_disconnect() {
 
 #[tokio::test]
 async fn test_client_connection_count() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
 
     let count = client.connection_count().await;
-    assert!(count >= 1, "should have at least one connection to the cluster");
+    assert!(
+        count >= 1,
+        "should have at least one connection to the cluster"
+    );
 }
 
 #[tokio::test]
 async fn test_client_get_map_returns_proxy() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("cft-cli-gmrp");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -2384,18 +2827,24 @@ async fn test_client_get_map_returns_proxy() {
 
 #[tokio::test]
 async fn test_client_multiple_clients_same_cluster() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client1 = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect client 1");
+        .await
+        .expect("failed to connect client 1");
     let client2 = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect client 2");
+        .await
+        .expect("failed to connect client 2");
 
     let map_name = unique_name("cft-cli-mcsc");
 
     let map1 = client1.get_map::<String, String>(&map_name);
-    map1.put("k".to_string(), "from-client1".to_string()).await.unwrap();
+    map1.put("k".to_string(), "from-client1".to_string())
+        .await
+        .unwrap();
 
     let map2 = client2.get_map::<String, String>(&map_name);
     let val = map2.get(&"k".to_string()).await.unwrap();

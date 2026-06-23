@@ -34,7 +34,10 @@ impl Permission {
     pub fn implies(&self, other: Permission) -> bool {
         match self {
             Permission::All => true,
-            Permission::Write => matches!(other, Permission::Write | Permission::Put | Permission::Remove),
+            Permission::Write => matches!(
+                other,
+                Permission::Write | Permission::Put | Permission::Remove
+            ),
             _ => *self == other,
         }
     }
@@ -130,7 +133,12 @@ impl PermissionGrant {
     }
 
     /// Checks if this grant allows the specified permission on the resource.
-    pub fn allows(&self, permission: Permission, resource_type: ResourceType, resource_name: &str) -> bool {
+    pub fn allows(
+        &self,
+        permission: Permission,
+        resource_type: ResourceType,
+        resource_name: &str,
+    ) -> bool {
         if !self.resource_type.matches(resource_type) {
             return false;
         }
@@ -200,8 +208,15 @@ impl Role {
     }
 
     /// Checks if this role allows the specified permission.
-    pub fn allows(&self, permission: Permission, resource_type: ResourceType, resource_name: &str) -> bool {
-        self.grants.iter().any(|g| g.allows(permission, resource_type, resource_name))
+    pub fn allows(
+        &self,
+        permission: Permission,
+        resource_type: ResourceType,
+        resource_name: &str,
+    ) -> bool {
+        self.grants
+            .iter()
+            .any(|g| g.allows(permission, resource_type, resource_name))
     }
 }
 
@@ -230,9 +245,7 @@ impl Role {
 
     /// Creates an admin role with all permissions.
     pub fn admin(name: impl Into<String>) -> Self {
-        Self::new(name).with_grant(
-            PermissionGrant::new(ResourceType::All).with_all_permissions(),
-        )
+        Self::new(name).with_grant(PermissionGrant::new(ResourceType::All).with_all_permissions())
     }
 }
 
@@ -334,7 +347,11 @@ impl AuthorizationContext {
             });
         }
 
-        if self.roles.iter().any(|r| r.allows(permission, resource_type, resource_name)) {
+        if self
+            .roles
+            .iter()
+            .any(|r| r.allows(permission, resource_type, resource_name))
+        {
             Ok(())
         } else {
             Err(PermissionDenied {
@@ -463,8 +480,7 @@ mod tests {
 
     #[test]
     fn test_permission_grant_wildcard_pattern() {
-        let grant = PermissionGrant::new(ResourceType::Map)
-            .with_permission(Permission::Read);
+        let grant = PermissionGrant::new(ResourceType::Map).with_permission(Permission::Read);
 
         assert!(grant.allows(Permission::Read, ResourceType::Map, "any-map"));
         assert!(grant.allows(Permission::Read, ResourceType::Map, "another-map"));
@@ -504,16 +520,14 @@ mod tests {
 
     #[test]
     fn test_permission_grant_wrong_resource_type() {
-        let grant = PermissionGrant::new(ResourceType::Map)
-            .with_permission(Permission::Read);
+        let grant = PermissionGrant::new(ResourceType::Map).with_permission(Permission::Read);
 
         assert!(!grant.allows(Permission::Read, ResourceType::Queue, "any-queue"));
     }
 
     #[test]
     fn test_permission_grant_wrong_permission() {
-        let grant = PermissionGrant::new(ResourceType::Map)
-            .with_permission(Permission::Read);
+        let grant = PermissionGrant::new(ResourceType::Map).with_permission(Permission::Read);
 
         assert!(!grant.allows(Permission::Write, ResourceType::Map, "any-map"));
     }
@@ -521,10 +535,7 @@ mod tests {
     #[test]
     fn test_role_builder() {
         let role = Role::new("test-role")
-            .with_grant(
-                PermissionGrant::new(ResourceType::Map)
-                    .with_permission(Permission::Read),
-            );
+            .with_grant(PermissionGrant::new(ResourceType::Map).with_permission(Permission::Read));
 
         assert_eq!(role.name(), "test-role");
         assert_eq!(role.grants().len(), 1);
@@ -533,10 +544,7 @@ mod tests {
     #[test]
     fn test_role_allows_permission() {
         let role = Role::new("reader")
-            .with_grant(
-                PermissionGrant::new(ResourceType::Map)
-                    .with_permission(Permission::Read),
-            );
+            .with_grant(PermissionGrant::new(ResourceType::Map).with_permission(Permission::Read));
 
         assert!(role.allows(Permission::Read, ResourceType::Map, "test-map"));
         assert!(!role.allows(Permission::Write, ResourceType::Map, "test-map"));
@@ -544,13 +552,10 @@ mod tests {
 
     #[test]
     fn test_role_multiple_grants() {
-        let role = Role::new("multi")
-            .with_grants([
-                PermissionGrant::new(ResourceType::Map)
-                    .with_permission(Permission::Read),
-                PermissionGrant::new(ResourceType::Queue)
-                    .with_permission(Permission::Write),
-            ]);
+        let role = Role::new("multi").with_grants([
+            PermissionGrant::new(ResourceType::Map).with_permission(Permission::Read),
+            PermissionGrant::new(ResourceType::Queue).with_permission(Permission::Write),
+        ]);
 
         assert!(role.allows(Permission::Read, ResourceType::Map, "m"));
         assert!(role.allows(Permission::Write, ResourceType::Queue, "q"));
@@ -592,16 +597,16 @@ mod tests {
 
     #[test]
     fn test_authorization_context_check_permission_granted() {
-        let ctx = AuthorizationContext::new()
-            .with_role(Role::read_only("reader"));
+        let ctx = AuthorizationContext::new().with_role(Role::read_only("reader"));
 
-        assert!(ctx.check_permission(Permission::Read, ResourceType::Map, "test").is_ok());
+        assert!(ctx
+            .check_permission(Permission::Read, ResourceType::Map, "test")
+            .is_ok());
     }
 
     #[test]
     fn test_authorization_context_check_permission_denied() {
-        let ctx = AuthorizationContext::new()
-            .with_role(Role::read_only("reader"));
+        let ctx = AuthorizationContext::new().with_role(Role::read_only("reader"));
 
         let result = ctx.check_permission(Permission::Write, ResourceType::Map, "test");
         assert!(result.is_err());
@@ -625,33 +630,39 @@ mod tests {
     fn test_authorization_context_disabled() {
         let ctx = AuthorizationContext::disabled();
 
-        assert!(ctx.check_permission(Permission::Write, ResourceType::Map, "test").is_ok());
-        assert!(ctx.check_permission(Permission::Destroy, ResourceType::Queue, "q").is_ok());
+        assert!(ctx
+            .check_permission(Permission::Write, ResourceType::Map, "test")
+            .is_ok());
+        assert!(ctx
+            .check_permission(Permission::Destroy, ResourceType::Queue, "q")
+            .is_ok());
     }
 
     #[test]
     fn test_authorization_context_multiple_roles() {
-        let ctx = AuthorizationContext::new()
-            .with_roles([
-                Role::new("map-reader").with_grant(
-                    PermissionGrant::new(ResourceType::Map)
-                        .with_permission(Permission::Read),
-                ),
-                Role::new("queue-writer").with_grant(
-                    PermissionGrant::new(ResourceType::Queue)
-                        .with_permission(Permission::Write),
-                ),
-            ]);
+        let ctx = AuthorizationContext::new().with_roles([
+            Role::new("map-reader").with_grant(
+                PermissionGrant::new(ResourceType::Map).with_permission(Permission::Read),
+            ),
+            Role::new("queue-writer").with_grant(
+                PermissionGrant::new(ResourceType::Queue).with_permission(Permission::Write),
+            ),
+        ]);
 
-        assert!(ctx.check_permission(Permission::Read, ResourceType::Map, "m").is_ok());
-        assert!(ctx.check_permission(Permission::Write, ResourceType::Queue, "q").is_ok());
-        assert!(ctx.check_permission(Permission::Write, ResourceType::Map, "m").is_err());
+        assert!(ctx
+            .check_permission(Permission::Read, ResourceType::Map, "m")
+            .is_ok());
+        assert!(ctx
+            .check_permission(Permission::Write, ResourceType::Queue, "q")
+            .is_ok());
+        assert!(ctx
+            .check_permission(Permission::Write, ResourceType::Map, "m")
+            .is_err());
     }
 
     #[test]
     fn test_check_map_operations() {
-        let ctx = AuthorizationContext::new()
-            .with_role(Role::read_write("editor"));
+        let ctx = AuthorizationContext::new().with_role(Role::read_write("editor"));
 
         assert!(ctx.check_map_read("users").is_ok());
         assert!(ctx.check_map_write("users").is_ok());
@@ -663,8 +674,7 @@ mod tests {
 
     #[test]
     fn test_check_queue_operations() {
-        let ctx = AuthorizationContext::new()
-            .with_role(Role::read_write("editor"));
+        let ctx = AuthorizationContext::new().with_role(Role::read_write("editor"));
 
         assert!(ctx.check_queue_read("tasks").is_ok());
         assert!(ctx.check_queue_write("tasks").is_ok());
@@ -702,13 +712,14 @@ mod tests {
         ctx.set_enabled(false);
         assert!(!ctx.is_enabled());
 
-        assert!(ctx.check_permission(Permission::Destroy, ResourceType::Map, "x").is_ok());
+        assert!(ctx
+            .check_permission(Permission::Destroy, ResourceType::Map, "x")
+            .is_ok());
     }
 
     #[test]
     fn test_permission_grant_all_permissions() {
-        let grant = PermissionGrant::new(ResourceType::Map)
-            .with_all_permissions();
+        let grant = PermissionGrant::new(ResourceType::Map).with_all_permissions();
 
         assert!(grant.allows(Permission::Read, ResourceType::Map, "m"));
         assert!(grant.allows(Permission::Write, ResourceType::Map, "m"));
@@ -718,8 +729,11 @@ mod tests {
 
     #[test]
     fn test_permission_grant_multiple_permissions() {
-        let grant = PermissionGrant::new(ResourceType::Queue)
-            .with_permissions([Permission::Read, Permission::Put, Permission::Remove]);
+        let grant = PermissionGrant::new(ResourceType::Queue).with_permissions([
+            Permission::Read,
+            Permission::Put,
+            Permission::Remove,
+        ]);
 
         assert!(grant.allows(Permission::Read, ResourceType::Queue, "q"));
         assert!(grant.allows(Permission::Put, ResourceType::Queue, "q"));
@@ -750,8 +764,7 @@ mod tests {
 
     #[test]
     fn test_authorization_context_clone() {
-        let ctx = AuthorizationContext::new()
-            .with_role(Role::admin("admin"));
+        let ctx = AuthorizationContext::new().with_role(Role::admin("admin"));
 
         let cloned = ctx.clone();
         assert_eq!(cloned.roles().len(), ctx.roles().len());
@@ -760,12 +773,11 @@ mod tests {
 
     #[test]
     fn test_map_read_only_role_denies_write() {
-        let role = Role::new("map-reader")
-            .with_grant(
-                PermissionGrant::new(ResourceType::Map)
-                    .with_pattern("public-*")
-                    .with_permission(Permission::Read),
-            );
+        let role = Role::new("map-reader").with_grant(
+            PermissionGrant::new(ResourceType::Map)
+                .with_pattern("public-*")
+                .with_permission(Permission::Read),
+        );
 
         let ctx = AuthorizationContext::new().with_role(role);
 
@@ -778,17 +790,13 @@ mod tests {
     #[test]
     fn test_queue_producer_consumer_roles() {
         let producer = Role::new("producer")
-            .with_grant(
-                PermissionGrant::new(ResourceType::Queue)
-                    .with_permission(Permission::Put),
-            );
+            .with_grant(PermissionGrant::new(ResourceType::Queue).with_permission(Permission::Put));
 
-        let consumer = Role::new("consumer")
-            .with_grant(
-                PermissionGrant::new(ResourceType::Queue)
-                    .with_permission(Permission::Read)
-                    .with_permission(Permission::Remove),
-            );
+        let consumer = Role::new("consumer").with_grant(
+            PermissionGrant::new(ResourceType::Queue)
+                .with_permission(Permission::Read)
+                .with_permission(Permission::Remove),
+        );
 
         let producer_ctx = AuthorizationContext::new().with_role(producer);
         assert!(producer_ctx.check_queue_put("tasks").is_ok());

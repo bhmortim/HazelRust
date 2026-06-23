@@ -6,8 +6,8 @@
 //!
 //! Requires a Hazelcast cluster running on localhost:5701.
 
-use hazelcast_client::{ClientConfig, HazelcastClient};
 use hazelcast_client::listener::EntryListenerConfig;
+use hazelcast_client::{ClientConfig, HazelcastClient};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,40 +36,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add entry listener
     let listener_reg = map
-        .add_entry_listener(
-            listener_config,
-            move |event| {
-                match event.event_type {
-                    hazelcast_client::listener::EntryEventType::Added => {
-                        add_counter.fetch_add(1, Ordering::SeqCst);
-                        println!(
-                            "[ADDED] {} -> {:?}",
-                            event.key,
-                            event.new_value,
-                        );
-                    }
-                    hazelcast_client::listener::EntryEventType::Updated => {
-                        update_counter.fetch_add(1, Ordering::SeqCst);
-                        println!(
-                            "[UPDATED] {} -> {:?} (was: {:?})",
-                            event.key,
-                            event.new_value,
-                            event.old_value,
-                        );
-                    }
-                    hazelcast_client::listener::EntryEventType::Removed => {
-                        remove_counter.fetch_add(1, Ordering::SeqCst);
-                        println!("[REMOVED] {}", event.key);
-                    }
-                    hazelcast_client::listener::EntryEventType::Evicted => {
-                        println!("[EVICTED] {}", event.key);
-                    }
-                    hazelcast_client::listener::EntryEventType::Expired => {
-                        println!("[EXPIRED] {}", event.key);
-                    }
-                }
-            },
-        )
+        .add_entry_listener(listener_config, move |event| match event.event_type {
+            hazelcast_client::listener::EntryEventType::Added => {
+                add_counter.fetch_add(1, Ordering::SeqCst);
+                println!("[ADDED] {} -> {:?}", event.key, event.new_value,);
+            }
+            hazelcast_client::listener::EntryEventType::Updated => {
+                update_counter.fetch_add(1, Ordering::SeqCst);
+                println!(
+                    "[UPDATED] {} -> {:?} (was: {:?})",
+                    event.key, event.new_value, event.old_value,
+                );
+            }
+            hazelcast_client::listener::EntryEventType::Removed => {
+                remove_counter.fetch_add(1, Ordering::SeqCst);
+                println!("[REMOVED] {}", event.key);
+            }
+            hazelcast_client::listener::EntryEventType::Evicted => {
+                println!("[EVICTED] {}", event.key);
+            }
+            hazelcast_client::listener::EntryEventType::Expired => {
+                println!("[EXPIRED] {}", event.key);
+            }
+        })
         .await?;
 
     println!("Listener registered: {:?}", listener_reg);

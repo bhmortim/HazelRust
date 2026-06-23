@@ -5,11 +5,11 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hazelcast_client::HazelcastClient;
-use hazelcast_client::proxy::{IndexConfig, IndexType};
 use hazelcast_client::listener::EntryListenerConfig;
+use hazelcast_client::proxy::{IndexConfig, IndexType};
+use hazelcast_client::HazelcastClient;
 
-use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
+use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};
 
 #[tokio::test]
 async fn test_map_put_and_get() {
@@ -24,7 +24,10 @@ async fn test_map_put_and_get() {
     let map_name = unique_name("test-map");
     let map = client.get_map::<String, String>(&map_name);
 
-    let old = map.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    let old = map
+        .put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
     assert!(old.is_none());
 
     let value = map.get(&"key1".to_string()).await.unwrap();
@@ -46,9 +49,14 @@ async fn test_map_put_returns_old_value() {
     let map_name = unique_name("test-map");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
-    let old = map.put("key1".to_string(), "value2".to_string()).await.unwrap();
-    
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
+    let old = map
+        .put("key1".to_string(), "value2".to_string())
+        .await
+        .unwrap();
+
     assert_eq!(old, Some("value1".to_string()));
 
     let current = map.get(&"key1".to_string()).await.unwrap();
@@ -70,8 +78,10 @@ async fn test_map_remove() {
     let map_name = unique_name("test-map");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
-    
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
+
     let removed = map.remove(&"key1".to_string()).await.unwrap();
     assert_eq!(removed, Some("value1".to_string()));
 
@@ -99,7 +109,9 @@ async fn test_map_contains_key() {
 
     assert!(!map.contains_key(&"key1".to_string()).await.unwrap());
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
     assert!(map.contains_key(&"key1".to_string()).await.unwrap());
 
     map.remove(&"key1".to_string()).await.unwrap();
@@ -123,10 +135,14 @@ async fn test_map_size() {
 
     assert_eq!(map.size().await.unwrap(), 0);
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
     assert_eq!(map.size().await.unwrap(), 1);
 
-    map.put("key2".to_string(), "value2".to_string()).await.unwrap();
+    map.put("key2".to_string(), "value2".to_string())
+        .await
+        .unwrap();
     assert_eq!(map.size().await.unwrap(), 2);
 
     map.remove(&"key1".to_string()).await.unwrap();
@@ -150,7 +166,9 @@ async fn test_map_clear() {
     let map = client.get_map::<String, String>(&map_name);
 
     for i in 0..10 {
-        map.put(format!("key{}", i), format!("value{}", i)).await.unwrap();
+        map.put(format!("key{}", i), format!("value{}", i))
+            .await
+            .unwrap();
     }
     assert_eq!(map.size().await.unwrap(), 10);
 
@@ -172,7 +190,7 @@ async fn test_map_with_integer_keys() {
     let map = client.get_map::<i32, String>(&map_name);
 
     map.put(42, "answer".to_string()).await.unwrap();
-    
+
     let value = map.get(&42).await.unwrap();
     assert_eq!(value, Some("answer".to_string()));
 
@@ -193,7 +211,7 @@ async fn test_map_with_integer_values() {
     let map = client.get_map::<String, i64>(&map_name);
 
     map.put("counter".to_string(), 100).await.unwrap();
-    
+
     let value = map.get(&"counter".to_string()).await.unwrap();
     assert_eq!(value, Some(100i64));
 
@@ -237,7 +255,7 @@ async fn test_map_concurrent_operations() {
     let client = Arc::new(
         HazelcastClient::new(common::default_config())
             .await
-            .expect("failed to connect")
+            .expect("failed to connect"),
     );
     let map_name = unique_name("test-map-concurrent");
 
@@ -246,17 +264,16 @@ async fn test_map_concurrent_operations() {
     for i in 0..10 {
         let client_clone = Arc::clone(&client);
         let map_name_clone = map_name.clone();
-        
+
         let handle = tokio::spawn(async move {
-            let map = client_clone
-                .get_map::<String, i32>(&map_name_clone);
-            
+            let map = client_clone.get_map::<String, i32>(&map_name_clone);
+
             for j in 0..10 {
                 let key = format!("key-{}-{}", i, j);
                 map.put(key, i * 10 + j).await.unwrap();
             }
         });
-        
+
         handles.push(handle);
     }
 
@@ -286,9 +303,7 @@ async fn test_map_entry_listener_added_event() {
     let events = Arc::new(std::sync::Mutex::new(Vec::new()));
     let events_clone = Arc::clone(&events);
 
-    let config = EntryListenerConfig::new()
-        .include_value(true)
-        .on_added();
+    let config = EntryListenerConfig::new().include_value(true).on_added();
 
     let registration = map
         .add_entry_listener(config, move |event| {
@@ -299,7 +314,9 @@ async fn test_map_entry_listener_added_event() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -367,7 +384,9 @@ async fn test_map_special_characters_in_keys() {
     ];
 
     for (i, key) in special_keys.iter().enumerate() {
-        map.put(key.to_string(), format!("value-{}", i)).await.unwrap();
+        map.put(key.to_string(), format!("value-{}", i))
+            .await
+            .unwrap();
     }
 
     for (i, key) in special_keys.iter().enumerate() {
@@ -392,7 +411,9 @@ async fn test_map_large_values() {
     let map = client.get_map::<String, String>(&map_name);
 
     let large_value = "x".repeat(100_000);
-    map.put("large-key".to_string(), large_value.clone()).await.unwrap();
+    map.put("large-key".to_string(), large_value.clone())
+        .await
+        .unwrap();
 
     let retrieved = map.get(&"large-key".to_string()).await.unwrap();
     assert_eq!(retrieved, Some(large_value));
@@ -413,11 +434,15 @@ async fn test_map_empty_string_key_and_value() {
     let map_name = unique_name("test-map-empty");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put(String::new(), "empty-key-value".to_string()).await.unwrap();
+    map.put(String::new(), "empty-key-value".to_string())
+        .await
+        .unwrap();
     let value = map.get(&String::new()).await.unwrap();
     assert_eq!(value, Some("empty-key-value".to_string()));
 
-    map.put("non-empty-key".to_string(), String::new()).await.unwrap();
+    map.put("non-empty-key".to_string(), String::new())
+        .await
+        .unwrap();
     let value = map.get(&"non-empty-key".to_string()).await.unwrap();
     assert_eq!(value, Some(String::new()));
 
@@ -438,12 +463,16 @@ async fn test_map_clone_shares_state() {
     let map1 = client.get_map::<String, String>(&map_name);
     let map2 = map1.clone();
 
-    map1.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map1.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
 
     let value = map2.get(&"key1".to_string()).await.unwrap();
     assert_eq!(value, Some("value1".to_string()));
 
-    map2.put("key2".to_string(), "value2".to_string()).await.unwrap();
+    map2.put("key2".to_string(), "value2".to_string())
+        .await
+        .unwrap();
 
     let value = map1.get(&"key2".to_string()).await.unwrap();
     assert_eq!(value, Some("value2".to_string()));

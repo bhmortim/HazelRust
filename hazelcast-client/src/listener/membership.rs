@@ -204,7 +204,10 @@ mod tests {
     #[test]
     fn test_member_event_type_from_value() {
         assert_eq!(MemberEventType::from_value(1), Some(MemberEventType::Added));
-        assert_eq!(MemberEventType::from_value(2), Some(MemberEventType::Removed));
+        assert_eq!(
+            MemberEventType::from_value(2),
+            Some(MemberEventType::Removed)
+        );
         assert_eq!(MemberEventType::from_value(0), None);
         assert_eq!(MemberEventType::from_value(99), None);
     }
@@ -238,7 +241,10 @@ mod tests {
 
         assert_eq!(member.uuid(), uuid);
         assert_eq!(member.address(), addr);
-        assert_eq!(member.attributes().get("zone"), Some(&"us-east-1".to_string()));
+        assert_eq!(
+            member.attributes().get("zone"),
+            Some(&"us-east-1".to_string())
+        );
         assert!(member.is_lite_member());
     }
 
@@ -356,9 +362,10 @@ mod tests {
 
     #[test]
     fn test_initial_membership_event_display() {
-        let members = vec![
-            Member::new(Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
-        ];
+        let members = vec![Member::new(
+            Uuid::new_v4(),
+            "127.0.0.1:5701".parse().unwrap(),
+        )];
         let event = InitialMembershipEvent::new(members);
 
         let display = event.to_string();

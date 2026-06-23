@@ -38,14 +38,22 @@ async fn test_map_operations_for_journal() {
     let map = client.get_map::<String, i32>(&map_name);
 
     // Add entries that would generate journal events
-    map.put("key1".to_string(), 10).await.expect("put should succeed");
-    map.put("key2".to_string(), 20).await.expect("put should succeed");
+    map.put("key1".to_string(), 10)
+        .await
+        .expect("put should succeed");
+    map.put("key2".to_string(), 20)
+        .await
+        .expect("put should succeed");
 
     // Update generates Updated event in journal
-    map.put("key1".to_string(), 15).await.expect("update should succeed");
+    map.put("key1".to_string(), 15)
+        .await
+        .expect("update should succeed");
 
     // Remove generates Removed event in journal
-    map.remove(&"key2".to_string()).await.expect("remove should succeed");
+    map.remove(&"key2".to_string())
+        .await
+        .expect("remove should succeed");
 
     // Verify map state
     let val = map.get(&"key1".to_string()).await.expect("get should work");
@@ -91,13 +99,23 @@ async fn test_map_clone_shares_event_journal() {
     let map2 = map1.clone();
 
     // Operations through either reference affect same map
-    map1.put("key-a".to_string(), 1).await.expect("put should work");
-    map2.put("key-b".to_string(), 2).await.expect("put should work");
+    map1.put("key-a".to_string(), 1)
+        .await
+        .expect("put should work");
+    map2.put("key-b".to_string(), 2)
+        .await
+        .expect("put should work");
 
-    let val_a = map2.get(&"key-a".to_string()).await.expect("get should work");
+    let val_a = map2
+        .get(&"key-a".to_string())
+        .await
+        .expect("get should work");
     assert_eq!(val_a, Some(1));
 
-    let val_b = map1.get(&"key-b".to_string()).await.expect("get should work");
+    let val_b = map1
+        .get(&"key-b".to_string())
+        .await
+        .expect("get should work");
     assert_eq!(val_b, Some(2));
 
     // Cleanup

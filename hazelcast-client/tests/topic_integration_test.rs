@@ -2,12 +2,15 @@
 
 mod common;
 
-use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
 use hazelcast_client::HazelcastClient;
 
-use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
+use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};
 
 #[tokio::test]
 async fn test_topic_publish() {
@@ -78,9 +81,12 @@ async fn test_topic_add_message_listener() {
     let counter = Arc::new(AtomicU32::new(0));
     let counter_clone = Arc::clone(&counter);
 
-    let registration = topic.add_message_listener(move |_msg| {
-        counter_clone.fetch_add(1, Ordering::SeqCst);
-    }).await.unwrap();
+    let registration = topic
+        .add_message_listener(move |_msg| {
+            counter_clone.fetch_add(1, Ordering::SeqCst);
+        })
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -109,9 +115,12 @@ async fn test_topic_listener_deactivation() {
     let counter = Arc::new(AtomicU32::new(0));
     let counter_clone = Arc::clone(&counter);
 
-    let registration = topic.add_message_listener(move |_msg| {
-        counter_clone.fetch_add(1, Ordering::SeqCst);
-    }).await.unwrap();
+    let registration = topic
+        .add_message_listener(move |_msg| {
+            counter_clone.fetch_add(1, Ordering::SeqCst);
+        })
+        .await
+        .unwrap();
 
     assert!(registration.is_active());
 
@@ -214,7 +223,7 @@ async fn test_topic_concurrent_publishers() {
     let client = Arc::new(
         HazelcastClient::new(common::default_config())
             .await
-            .expect("failed to connect")
+            .expect("failed to connect"),
     );
     let topic_name = unique_name("test-topic-concurrent");
 
@@ -223,16 +232,18 @@ async fn test_topic_concurrent_publishers() {
     for i in 0..5 {
         let client_clone = Arc::clone(&client);
         let topic_name_clone = topic_name.clone();
-        
+
         let handle = tokio::spawn(async move {
-            let topic = client_clone
-                .get_topic::<String>(&topic_name_clone);
-            
+            let topic = client_clone.get_topic::<String>(&topic_name_clone);
+
             for j in 0..10 {
-                topic.publish(format!("publisher-{}-msg-{}", i, j)).await.unwrap();
+                topic
+                    .publish(format!("publisher-{}-msg-{}", i, j))
+                    .await
+                    .unwrap();
             }
         });
-        
+
         handles.push(handle);
     }
 

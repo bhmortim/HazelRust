@@ -6,8 +6,8 @@
 use std::net::SocketAddr;
 
 use hazelcast_client::executor::{
-    Callable, CallableTask, ExecutionCallback, ExecutionTarget, ExecutorService,
-    MemberSelector, Runnable, RunnableTask,
+    Callable, CallableTask, ExecutionCallback, ExecutionTarget, ExecutorService, MemberSelector,
+    Runnable, RunnableTask,
 };
 use hazelcast_client::listener::Member;
 use hazelcast_client::{ClientConfig, HazelcastClient};
@@ -31,8 +31,12 @@ struct SimpleCallable {
 }
 
 impl Callable<i32> for SimpleCallable {
-    fn factory_id(&self) -> i32 { 1 }
-    fn class_id(&self) -> i32 { 1 }
+    fn factory_id(&self) -> i32 {
+        1
+    }
+    fn class_id(&self) -> i32 {
+        1
+    }
 }
 
 impl Serializable for SimpleCallable {
@@ -47,8 +51,12 @@ struct SimpleRunnable {
 }
 
 impl Runnable for SimpleRunnable {
-    fn factory_id(&self) -> i32 { 1 }
-    fn class_id(&self) -> i32 { 2 }
+    fn factory_id(&self) -> i32 {
+        1
+    }
+    fn class_id(&self) -> i32 {
+        2
+    }
 }
 
 impl Serializable for SimpleRunnable {
@@ -253,8 +261,12 @@ fn test_executor_with_complex_callable() {
     }
 
     impl Callable<String> for ComplexCallable {
-        fn factory_id(&self) -> i32 { 1 }
-        fn class_id(&self) -> i32 { 3 }
+        fn factory_id(&self) -> i32 {
+            1
+        }
+        fn class_id(&self) -> i32 {
+            3
+        }
     }
 
     impl Serializable for ComplexCallable {

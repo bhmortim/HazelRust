@@ -139,15 +139,12 @@ impl WebSocketConnection {
                     )));
                 }
                 Some(Ok(Message::Ping(data))) => {
-                    self.stream
-                        .send(Message::Pong(data))
-                        .await
-                        .map_err(|e| {
-                            HazelcastError::Connection(format!(
-                                "failed to send pong to {}: {}",
-                                self.url, e
-                            ))
-                        })?;
+                    self.stream.send(Message::Pong(data)).await.map_err(|e| {
+                        HazelcastError::Connection(format!(
+                            "failed to send pong to {}: {}",
+                            self.url, e
+                        ))
+                    })?;
                 }
                 Some(Ok(Message::Pong(_))) => {
                     self.last_read_at = Instant::now();
@@ -176,15 +173,9 @@ impl WebSocketConnection {
 
     /// Sends a heartbeat ping message.
     pub async fn send_heartbeat(&mut self) -> Result<()> {
-        self.stream
-            .send(Message::Ping(vec![]))
-            .await
-            .map_err(|e| {
-                HazelcastError::Connection(format!(
-                    "failed to send heartbeat to {}: {}",
-                    self.url, e
-                ))
-            })?;
+        self.stream.send(Message::Ping(vec![])).await.map_err(|e| {
+            HazelcastError::Connection(format!("failed to send heartbeat to {}: {}", self.url, e))
+        })?;
         self.last_write_at = Instant::now();
         Ok(())
     }

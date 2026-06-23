@@ -109,7 +109,12 @@ impl MigrationEvent {
 
     /// Creates a migration completed event.
     pub fn completed(partition_id: i32, old_owner: Option<Uuid>, new_owner: Option<Uuid>) -> Self {
-        Self::new(partition_id, MigrationState::Completed, old_owner, new_owner)
+        Self::new(
+            partition_id,
+            MigrationState::Completed,
+            old_owner,
+            new_owner,
+        )
     }
 
     /// Creates a migration failed event.
@@ -346,7 +351,10 @@ impl PartitionService {
 
         let partition_id = ((hash as i64).abs() % (partition_count as i64)) as i32;
 
-        let owner_uuid = self.connection_manager.get_partition_owner(partition_id).await;
+        let owner_uuid = self
+            .connection_manager
+            .get_partition_owner(partition_id)
+            .await;
         Partition::new(partition_id, owner_uuid)
     }
 
@@ -357,7 +365,10 @@ impl PartitionService {
     /// - The partition owner is not yet known
     /// - The owning member has left the cluster
     pub async fn get_partition_owner(&self, partition_id: i32) -> Option<Member> {
-        let owner_uuid = self.connection_manager.get_partition_owner(partition_id).await?;
+        let owner_uuid = self
+            .connection_manager
+            .get_partition_owner(partition_id)
+            .await?;
         self.connection_manager.get_member(&owner_uuid).await
     }
 
@@ -449,7 +460,9 @@ mod tests {
         let owner = Uuid::new_v4();
         let partition_with_owner = Partition::new(10, Some(owner));
         assert!(partition_with_owner.to_string().contains("id=10"));
-        assert!(partition_with_owner.to_string().contains(&owner.to_string()));
+        assert!(partition_with_owner
+            .to_string()
+            .contains(&owner.to_string()));
     }
 
     #[test]
@@ -563,9 +576,15 @@ mod tests {
         let failed = Arc::clone(&failed_count);
 
         let listener = FnMigrationListener::new(
-            move |_| { started.fetch_add(1, Ordering::Relaxed); },
-            move |_| { completed.fetch_add(1, Ordering::Relaxed); },
-            move |_| { failed.fetch_add(1, Ordering::Relaxed); },
+            move |_| {
+                started.fetch_add(1, Ordering::Relaxed);
+            },
+            move |_| {
+                completed.fetch_add(1, Ordering::Relaxed);
+            },
+            move |_| {
+                failed.fetch_add(1, Ordering::Relaxed);
+            },
         );
 
         let event = MigrationEvent::started(1, None, Some(Uuid::new_v4()));

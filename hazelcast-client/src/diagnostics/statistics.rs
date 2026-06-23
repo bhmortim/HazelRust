@@ -236,10 +236,12 @@ impl ClientStatistics {
     ///
     /// Returns `0.0` if no near caches are configured or no lookups occurred.
     pub fn aggregate_near_cache_hit_ratio(&self) -> f64 {
-        let (total_hits, total_misses) = self.near_cache_stats.values().fold(
-            (0u64, 0u64),
-            |(hits, misses), stats| (hits + stats.hits, misses + stats.misses),
-        );
+        let (total_hits, total_misses) = self
+            .near_cache_stats
+            .values()
+            .fold((0u64, 0u64), |(hits, misses), stats| {
+                (hits + stats.hits, misses + stats.misses)
+            });
 
         let total = total_hits + total_misses;
         if total == 0 {

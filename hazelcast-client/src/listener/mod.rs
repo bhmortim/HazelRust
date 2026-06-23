@@ -26,8 +26,8 @@ pub use membership::{
 
 pub use crate::cluster::{
     BoxedMigrationListener, BoxedPartitionLostListener, FnMigrationListener,
-    FnPartitionLostListener, MigrationEvent, MigrationListener, MigrationState,
-    PartitionLostEvent, PartitionLostListener,
+    FnPartitionLostListener, MigrationEvent, MigrationListener, MigrationState, PartitionLostEvent,
+    PartitionLostListener,
 };
 
 /// A listener for client state changes (connection, disconnection, etc.).
@@ -643,7 +643,10 @@ mod tests {
     #[test]
     fn test_distributed_object_event_type_display() {
         assert_eq!(DistributedObjectEventType::Created.to_string(), "CREATED");
-        assert_eq!(DistributedObjectEventType::Destroyed.to_string(), "DESTROYED");
+        assert_eq!(
+            DistributedObjectEventType::Destroyed.to_string(),
+            "DESTROYED"
+        );
     }
 
     #[test]
@@ -795,7 +798,10 @@ mod tests {
         assert_eq!(EntryEventType::from_value(2), Some(EntryEventType::Updated));
         assert_eq!(EntryEventType::from_value(4), Some(EntryEventType::Removed));
         assert_eq!(EntryEventType::from_value(8), Some(EntryEventType::Evicted));
-        assert_eq!(EntryEventType::from_value(16), Some(EntryEventType::Expired));
+        assert_eq!(
+            EntryEventType::from_value(16),
+            Some(EntryEventType::Expired)
+        );
         assert_eq!(EntryEventType::from_value(0), None);
         assert_eq!(EntryEventType::from_value(99), None);
     }
@@ -856,10 +862,7 @@ mod tests {
 
     #[test]
     fn test_entry_listener_config_for_key() {
-        let config = EntryListenerConfig::new()
-            .on_added()
-            .on_removed()
-            .for_key();
+        let config = EntryListenerConfig::new().on_added().on_removed().for_key();
 
         assert!(config.on_added);
         assert!(config.on_removed);
@@ -885,9 +888,7 @@ mod tests {
 
     #[test]
     fn test_entry_listener_config_accepts() {
-        let config = EntryListenerConfig::new()
-            .on_added()
-            .on_updated();
+        let config = EntryListenerConfig::new().on_added().on_updated();
 
         assert!(config.accepts(EntryEventType::Added));
         assert!(config.accepts(EntryEventType::Updated));

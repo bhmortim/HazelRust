@@ -16,9 +16,8 @@ use crate::diagnostics::{ClientStatistics, StatisticsCollector};
 use crate::executor::ExecutorService;
 use crate::jet::JetService;
 use crate::listener::{
-    ClientStateListener, DistributedObjectEvent,
-    DistributedObjectListener, LifecycleEvent, ListenerId, ListenerRegistration, Member,
-    MemberEvent, MigrationListener, MigrationState,
+    ClientStateListener, DistributedObjectEvent, DistributedObjectListener, LifecycleEvent,
+    ListenerId, ListenerRegistration, Member, MemberEvent, MigrationListener, MigrationState,
     PartitionLostListener,
 };
 use crate::proxy::{
@@ -88,7 +87,10 @@ impl DistributedObjectInfo {
 
 /// Internal state for managing distributed object listeners.
 struct DistributedObjectListenerState {
-    listeners: std::collections::HashMap<ListenerId, (Arc<dyn DistributedObjectListener>, ListenerRegistration)>,
+    listeners: std::collections::HashMap<
+        ListenerId,
+        (Arc<dyn DistributedObjectListener>, ListenerRegistration),
+    >,
 }
 
 impl std::fmt::Debug for DistributedObjectListenerState {
@@ -101,7 +103,8 @@ impl std::fmt::Debug for DistributedObjectListenerState {
 
 /// Internal state for managing client state listeners.
 struct ClientStateListenerState {
-    listeners: std::collections::HashMap<ListenerId, (Arc<dyn ClientStateListener>, ListenerRegistration)>,
+    listeners:
+        std::collections::HashMap<ListenerId, (Arc<dyn ClientStateListener>, ListenerRegistration)>,
 }
 
 impl std::fmt::Debug for ClientStateListenerState {
@@ -114,7 +117,10 @@ impl std::fmt::Debug for ClientStateListenerState {
 
 /// Internal state for managing partition lost listeners.
 struct PartitionLostListenerState {
-    listeners: std::collections::HashMap<ListenerId, (Arc<dyn PartitionLostListener>, ListenerRegistration)>,
+    listeners: std::collections::HashMap<
+        ListenerId,
+        (Arc<dyn PartitionLostListener>, ListenerRegistration),
+    >,
 }
 
 impl std::fmt::Debug for PartitionLostListenerState {
@@ -127,7 +133,8 @@ impl std::fmt::Debug for PartitionLostListenerState {
 
 /// Internal state for managing migration listeners.
 struct MigrationListenerState {
-    listeners: std::collections::HashMap<ListenerId, (Arc<dyn MigrationListener>, ListenerRegistration)>,
+    listeners:
+        std::collections::HashMap<ListenerId, (Arc<dyn MigrationListener>, ListenerRegistration)>,
 }
 
 impl std::fmt::Debug for MigrationListenerState {
@@ -170,7 +177,8 @@ pub trait ConnectionListener: Send + Sync {
 
 /// Internal state for managing connection listeners.
 struct ConnectionListenerState {
-    listeners: std::collections::HashMap<ListenerId, (Arc<dyn ConnectionListener>, ListenerRegistration)>,
+    listeners:
+        std::collections::HashMap<ListenerId, (Arc<dyn ConnectionListener>, ListenerRegistration)>,
 }
 
 impl std::fmt::Debug for ConnectionListenerState {
@@ -219,7 +227,8 @@ pub struct HazelcastClient {
     partition_lost_listeners: RwLock<PartitionLostListenerState>,
     migration_listeners: RwLock<MigrationListenerState>,
     connection_listeners: RwLock<ConnectionListenerState>,
-    user_context: Arc<RwLock<std::collections::HashMap<String, Box<dyn std::any::Any + Send + Sync>>>>,
+    user_context:
+        Arc<RwLock<std::collections::HashMap<String, Box<dyn std::any::Any + Send + Sync>>>>,
 }
 
 impl HazelcastClient {
@@ -1183,11 +1192,7 @@ impl HazelcastClient {
     /// // Destroy a queue
     /// client.destroy_distributed_object("hz:impl:queueService", "my-queue").await?;
     /// ```
-    pub async fn destroy_distributed_object(
-        &self,
-        service_name: &str,
-        name: &str,
-    ) -> Result<()> {
+    pub async fn destroy_distributed_object(&self, service_name: &str, name: &str) -> Result<()> {
         use hazelcast_core::protocol::constants::{CLIENT_DESTROY_PROXY, PARTITION_ID_ANY};
         use hazelcast_core::protocol::{ClientMessage, Frame};
 
@@ -1282,11 +1287,12 @@ impl HazelcastClient {
         });
 
         {
-            let mut state = self
-                .distributed_object_listeners
-                .write()
-                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
-            state.listeners.insert(listener_id, (listener_arc, registration));
+            let mut state = self.distributed_object_listeners.write().map_err(|_| {
+                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+            })?;
+            state
+                .listeners
+                .insert(listener_id, (listener_arc, registration));
         }
 
         tracing::debug!(listener_id = %listener_id, "added distributed object listener");
@@ -1310,12 +1316,14 @@ impl HazelcastClient {
     /// // ... later ...
     /// let removed = client.remove_distributed_object_listener(listener_id).await?;
     /// ```
-    pub async fn remove_distributed_object_listener(&self, listener_id: ListenerId) -> Result<bool> {
+    pub async fn remove_distributed_object_listener(
+        &self,
+        listener_id: ListenerId,
+    ) -> Result<bool> {
         let removed = {
-            let mut state = self
-                .distributed_object_listeners
-                .write()
-                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+            let mut state = self.distributed_object_listeners.write().map_err(|_| {
+                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+            })?;
 
             if let Some((_, registration)) = state.listeners.remove(&listener_id) {
                 registration.deactivate();
@@ -1418,11 +1426,12 @@ impl HazelcastClient {
         });
 
         {
-            let mut state = self
-                .client_state_listeners
-                .write()
-                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
-            state.listeners.insert(listener_id, (listener_arc, registration));
+            let mut state = self.client_state_listeners.write().map_err(|_| {
+                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+            })?;
+            state
+                .listeners
+                .insert(listener_id, (listener_arc, registration));
         }
 
         tracing::debug!(listener_id = %listener_id, "added client state listener");
@@ -1448,10 +1457,9 @@ impl HazelcastClient {
     /// ```
     pub async fn remove_client_state_listener(&self, listener_id: ListenerId) -> Result<bool> {
         let removed = {
-            let mut state = self
-                .client_state_listeners
-                .write()
-                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+            let mut state = self.client_state_listeners.write().map_err(|_| {
+                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+            })?;
 
             if let Some((_, registration)) = state.listeners.remove(&listener_id) {
                 registration.deactivate();
@@ -1528,11 +1536,12 @@ impl HazelcastClient {
         });
 
         {
-            let mut state = self
-                .partition_lost_listeners
-                .write()
-                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
-            state.listeners.insert(listener_id, (listener_arc, registration));
+            let mut state = self.partition_lost_listeners.write().map_err(|_| {
+                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+            })?;
+            state
+                .listeners
+                .insert(listener_id, (listener_arc, registration));
         }
 
         tracing::debug!(listener_id = %listener_id, "added partition lost listener");
@@ -1550,10 +1559,9 @@ impl HazelcastClient {
     /// `true` if the listener was found and removed, `false` otherwise.
     pub async fn remove_partition_lost_listener(&self, listener_id: ListenerId) -> Result<bool> {
         let removed = {
-            let mut state = self
-                .partition_lost_listeners
-                .write()
-                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+            let mut state = self.partition_lost_listeners.write().map_err(|_| {
+                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+            })?;
 
             if let Some((_, registration)) = state.listeners.remove(&listener_id) {
                 registration.deactivate();
@@ -1648,11 +1656,12 @@ impl HazelcastClient {
         });
 
         {
-            let mut state = self
-                .migration_listeners
-                .write()
-                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
-            state.listeners.insert(listener_id, (listener_arc, registration));
+            let mut state = self.migration_listeners.write().map_err(|_| {
+                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+            })?;
+            state
+                .listeners
+                .insert(listener_id, (listener_arc, registration));
         }
 
         tracing::debug!(listener_id = %listener_id, "added migration listener");
@@ -1670,10 +1679,9 @@ impl HazelcastClient {
     /// `true` if the listener was found and removed, `false` otherwise.
     pub async fn remove_migration_listener(&self, listener_id: ListenerId) -> Result<bool> {
         let removed = {
-            let mut state = self
-                .migration_listeners
-                .write()
-                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+            let mut state = self.migration_listeners.write().map_err(|_| {
+                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+            })?;
 
             if let Some((_, registration)) = state.listeners.remove(&listener_id) {
                 registration.deactivate();
@@ -1787,11 +1795,12 @@ impl HazelcastClient {
         });
 
         {
-            let mut state = self
-                .connection_listeners
-                .write()
-                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
-            state.listeners.insert(listener_id, (listener_arc, registration));
+            let mut state = self.connection_listeners.write().map_err(|_| {
+                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+            })?;
+            state
+                .listeners
+                .insert(listener_id, (listener_arc, registration));
         }
 
         tracing::debug!(listener_id = %listener_id, "added connection listener");
@@ -1809,10 +1818,9 @@ impl HazelcastClient {
     /// `true` if the listener was found and removed, `false` otherwise.
     pub async fn remove_connection_listener(&self, listener_id: ListenerId) -> Result<bool> {
         let removed = {
-            let mut state = self
-                .connection_listeners
-                .write()
-                .map_err(|_| hazelcast_core::HazelcastError::IllegalState("lock poisoned".into()))?;
+            let mut state = self.connection_listeners.write().map_err(|_| {
+                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+            })?;
 
             if let Some((_, registration)) = state.listeners.remove(&listener_id) {
                 registration.deactivate();
@@ -1838,7 +1846,9 @@ impl HazelcastClient {
     /// # Returns
     ///
     /// A reference to the thread-safe user context map.
-    pub fn get_user_context(&self) -> &Arc<RwLock<std::collections::HashMap<String, Box<dyn std::any::Any + Send + Sync>>>> {
+    pub fn get_user_context(
+        &self,
+    ) -> &Arc<RwLock<std::collections::HashMap<String, Box<dyn std::any::Any + Send + Sync>>>> {
         &self.user_context
     }
 

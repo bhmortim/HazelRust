@@ -56,9 +56,13 @@ impl DefaultPortableWriter {
             }
         } else if self.lenient {
             let index = self.class_def.field_count() as i32;
-            self.class_def.add_field(FieldDefinition::new(name, expected_type, index));
+            self.class_def
+                .add_field(FieldDefinition::new(name, expected_type, index));
         } else {
-            return Err(HazelcastError::Serialization(format!("Unknown field: {}", name)));
+            return Err(HazelcastError::Serialization(format!(
+                "Unknown field: {}",
+                name
+            )));
         }
 
         self.fields.insert(name.to_string(), data);
@@ -160,8 +164,11 @@ impl PortableWriter for DefaultPortableWriter {
                 out.write_int(p.factory_id())?;
                 out.write_int(p.class_id())?;
 
-                let mut nested_writer =
-                    DefaultPortableWriter::new_lenient(ClassDefinition::new(p.factory_id(), p.class_id(), 0));
+                let mut nested_writer = DefaultPortableWriter::new_lenient(ClassDefinition::new(
+                    p.factory_id(),
+                    p.class_id(),
+                    0,
+                ));
                 p.write_portable(&mut nested_writer)?;
                 let nested_bytes = nested_writer.to_bytes();
                 out.write_int(nested_bytes.len() as i32)?;
@@ -337,11 +344,9 @@ impl PortableWriter for DefaultPortableWriter {
                     out.write_int(p.factory_id())?;
                     out.write_int(p.class_id())?;
 
-                    let mut nested_writer = DefaultPortableWriter::new_lenient(ClassDefinition::new(
-                        p.factory_id(),
-                        p.class_id(),
-                        0,
-                    ));
+                    let mut nested_writer = DefaultPortableWriter::new_lenient(
+                        ClassDefinition::new(p.factory_id(), p.class_id(), 0),
+                    );
                     p.write_portable(&mut nested_writer)?;
                     let nested_bytes = nested_writer.to_bytes();
                     out.write_int(nested_bytes.len() as i32)?;
@@ -425,7 +430,6 @@ impl DefaultPortableReader {
             None => Ok(None),
         }
     }
-
 }
 
 impl PortableReader for DefaultPortableReader {
@@ -756,11 +760,8 @@ impl PortableReader for DefaultPortableReader {
 
                     let mut instance = P::default();
 
-                    let mut nested_reader = DefaultPortableReader::from_bytes(
-                        &nested_data,
-                        0,
-                        self.factories.clone(),
-                    )?;
+                    let mut nested_reader =
+                        DefaultPortableReader::from_bytes(&nested_data, 0, self.factories.clone())?;
                     instance.read_portable(&mut nested_reader)?;
 
                     result.push(instance);
@@ -894,8 +895,7 @@ mod tests {
             .unwrap();
 
         let bytes = writer.to_bytes();
-        let mut reader =
-            DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
+        let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
 
         assert_eq!(reader.read_byte("byte_field").unwrap(), 42);
         assert!(reader.read_bool("bool_field").unwrap());
@@ -913,15 +913,18 @@ mod tests {
 
     #[test]
     fn test_null_string() {
-        let class_def =
-            ClassDefinition::with_fields(1, 1, 1, vec![FieldDefinition::new("s", FieldType::Utf8, 0)]);
+        let class_def = ClassDefinition::with_fields(
+            1,
+            1,
+            1,
+            vec![FieldDefinition::new("s", FieldType::Utf8, 0)],
+        );
 
         let mut writer = DefaultPortableWriter::new(class_def);
         writer.write_string("s", None).unwrap();
 
         let bytes = writer.to_bytes();
-        let mut reader =
-            DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
+        let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
 
         assert_eq!(reader.read_string("s").unwrap(), None);
     }
@@ -950,8 +953,7 @@ mod tests {
             .unwrap();
 
         let bytes = writer.to_bytes();
-        let mut reader =
-            DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
+        let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
 
         assert_eq!(
             reader.read_int_array("int_array").unwrap(),
@@ -976,16 +978,19 @@ mod tests {
         writer.write_int_array("int_array", None).unwrap();
 
         let bytes = writer.to_bytes();
-        let mut reader =
-            DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
+        let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
 
         assert_eq!(reader.read_int_array("int_array").unwrap(), None);
     }
 
     #[test]
     fn test_field_type_mismatch() {
-        let class_def =
-            ClassDefinition::with_fields(1, 1, 1, vec![FieldDefinition::new("f", FieldType::Int, 0)]);
+        let class_def = ClassDefinition::with_fields(
+            1,
+            1,
+            1,
+            vec![FieldDefinition::new("f", FieldType::Int, 0)],
+        );
 
         let mut writer = DefaultPortableWriter::new(class_def);
         let result = writer.write_string("f", Some("test"));
@@ -1002,8 +1007,12 @@ mod tests {
 
     #[test]
     fn test_has_field() {
-        let class_def =
-            ClassDefinition::with_fields(1, 1, 1, vec![FieldDefinition::new("f", FieldType::Int, 0)]);
+        let class_def = ClassDefinition::with_fields(
+            1,
+            1,
+            1,
+            vec![FieldDefinition::new("f", FieldType::Int, 0)],
+        );
 
         let mut writer = DefaultPortableWriter::new(class_def);
         writer.write_int("f", 42).unwrap();
@@ -1027,14 +1036,17 @@ mod tests {
 
     #[test]
     fn test_missing_field_returns_default() {
-        let class_def =
-            ClassDefinition::with_fields(1, 1, 1, vec![FieldDefinition::new("f", FieldType::Int, 0)]);
+        let class_def = ClassDefinition::with_fields(
+            1,
+            1,
+            1,
+            vec![FieldDefinition::new("f", FieldType::Int, 0)],
+        );
 
         let writer = DefaultPortableWriter::new(class_def);
         let bytes = writer.to_bytes();
 
-        let mut reader =
-            DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
+        let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
 
         assert_eq!(reader.read_int("f").unwrap(), 0);
     }
@@ -1182,22 +1194,51 @@ mod tests {
         );
 
         let mut writer = DefaultPortableWriter::new(class_def);
-        writer.write_byte_array("bytes", Some(&[1, 2, -128, 127])).unwrap();
-        writer.write_bool_array("bools", Some(&[true, false, true])).unwrap();
-        writer.write_char_array("chars", Some(&['a', 'z', '日'])).unwrap();
-        writer.write_short_array("shorts", Some(&[i16::MIN, 0, i16::MAX])).unwrap();
-        writer.write_long_array("longs", Some(&[i64::MIN, 0, i64::MAX])).unwrap();
-        writer.write_float_array("floats", Some(&[f32::MIN, 0.0, f32::MAX])).unwrap();
-        writer.write_double_array("doubles", Some(&[f64::MIN, 0.0, f64::MAX])).unwrap();
+        writer
+            .write_byte_array("bytes", Some(&[1, 2, -128, 127]))
+            .unwrap();
+        writer
+            .write_bool_array("bools", Some(&[true, false, true]))
+            .unwrap();
+        writer
+            .write_char_array("chars", Some(&['a', 'z', '日']))
+            .unwrap();
+        writer
+            .write_short_array("shorts", Some(&[i16::MIN, 0, i16::MAX]))
+            .unwrap();
+        writer
+            .write_long_array("longs", Some(&[i64::MIN, 0, i64::MAX]))
+            .unwrap();
+        writer
+            .write_float_array("floats", Some(&[f32::MIN, 0.0, f32::MAX]))
+            .unwrap();
+        writer
+            .write_double_array("doubles", Some(&[f64::MIN, 0.0, f64::MAX]))
+            .unwrap();
 
         let bytes = writer.to_bytes();
         let mut reader = DefaultPortableReader::from_bytes(&bytes, 1, HashMap::new()).unwrap();
 
-        assert_eq!(reader.read_byte_array("bytes").unwrap(), Some(vec![1, 2, -128, 127]));
-        assert_eq!(reader.read_bool_array("bools").unwrap(), Some(vec![true, false, true]));
-        assert_eq!(reader.read_char_array("chars").unwrap(), Some(vec!['a', 'z', '日']));
-        assert_eq!(reader.read_short_array("shorts").unwrap(), Some(vec![i16::MIN, 0, i16::MAX]));
-        assert_eq!(reader.read_long_array("longs").unwrap(), Some(vec![i64::MIN, 0, i64::MAX]));
+        assert_eq!(
+            reader.read_byte_array("bytes").unwrap(),
+            Some(vec![1, 2, -128, 127])
+        );
+        assert_eq!(
+            reader.read_bool_array("bools").unwrap(),
+            Some(vec![true, false, true])
+        );
+        assert_eq!(
+            reader.read_char_array("chars").unwrap(),
+            Some(vec!['a', 'z', '日'])
+        );
+        assert_eq!(
+            reader.read_short_array("shorts").unwrap(),
+            Some(vec![i16::MIN, 0, i16::MAX])
+        );
+        assert_eq!(
+            reader.read_long_array("longs").unwrap(),
+            Some(vec![i64::MIN, 0, i64::MAX])
+        );
 
         let floats = reader.read_float_array("floats").unwrap().unwrap();
         assert_eq!(floats.len(), 3);

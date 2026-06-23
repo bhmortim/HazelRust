@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hazelcast_client::{
-    ClientConfigBuilder, HazelcastClient, NearCacheConfig, EvictionPolicy, InMemoryFormat,
+    ClientConfigBuilder, EvictionPolicy, HazelcastClient, InMemoryFormat, NearCacheConfig,
 };
 
-use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
+use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};
 
 #[tokio::test]
 async fn test_near_cache_get_populates_cache() {
@@ -19,7 +19,7 @@ async fn test_near_cache_get_populates_cache() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-populate");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(1000)
         .time_to_live(Duration::from_secs(300))
@@ -33,12 +33,16 @@ async fn test_near_cache_get_populates_cache() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
     assert!(map.has_near_cache());
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
 
     let _ = map.get(&"key1".to_string()).await.unwrap();
 
@@ -62,7 +66,7 @@ async fn test_near_cache_put_invalidates() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-invalidate");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(1000)
         .build()
@@ -75,13 +79,19 @@ async fn test_near_cache_put_invalidates() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
     let _ = map.get(&"key1".to_string()).await.unwrap();
 
-    map.put("key1".to_string(), "value2".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value2".to_string())
+        .await
+        .unwrap();
 
     let value = map.get(&"key1".to_string()).await.unwrap();
     assert_eq!(value, Some("value2".to_string()));
@@ -97,7 +107,7 @@ async fn test_near_cache_remove_invalidates() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-remove");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(1000)
         .build()
@@ -110,10 +120,14 @@ async fn test_near_cache_remove_invalidates() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
     let _ = map.get(&"key1".to_string()).await.unwrap();
 
     map.remove(&"key1".to_string()).await.unwrap();
@@ -132,7 +146,7 @@ async fn test_near_cache_clear_invalidates_all() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-clear");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(1000)
         .build()
@@ -145,11 +159,15 @@ async fn test_near_cache_clear_invalidates_all() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
     for i in 0..10 {
-        map.put(format!("key{}", i), format!("value{}", i)).await.unwrap();
+        map.put(format!("key{}", i), format!("value{}", i))
+            .await
+            .unwrap();
     }
 
     for i in 0..10 {
@@ -172,7 +190,7 @@ async fn test_near_cache_manual_invalidation() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-manual");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(1000)
         .build()
@@ -185,13 +203,18 @@ async fn test_near_cache_manual_invalidation() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
     let _ = map.get(&"key1".to_string()).await.unwrap();
 
-    map.invalidate_near_cache_entry(&"key1".to_string()).unwrap();
+    map.invalidate_near_cache_entry(&"key1".to_string())
+        .unwrap();
 
     let _ = map.get(&"key1".to_string()).await.unwrap();
 
@@ -209,7 +232,7 @@ async fn test_near_cache_clear_local_only() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-clear-local");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(1000)
         .build()
@@ -222,10 +245,14 @@ async fn test_near_cache_clear_local_only() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
     let _ = map.get(&"key1".to_string()).await.unwrap();
 
     map.clear_near_cache();
@@ -244,7 +271,7 @@ async fn test_near_cache_stats() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-stats");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(1000)
         .build()
@@ -257,15 +284,19 @@ async fn test_near_cache_stats() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
     let initial_stats = map.near_cache_stats().unwrap();
     assert_eq!(initial_stats.hits(), 0);
     assert_eq!(initial_stats.misses(), 0);
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
-    
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
+
     let _ = map.get(&"key1".to_string()).await.unwrap();
     let stats = map.near_cache_stats().unwrap();
     assert_eq!(stats.misses(), 1);
@@ -286,7 +317,7 @@ async fn test_near_cache_with_ttl() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-ttl");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(1000)
         .time_to_live(Duration::from_secs(1))
@@ -300,10 +331,14 @@ async fn test_near_cache_with_ttl() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
     let _ = map.get(&"key1".to_string()).await.unwrap();
     let _ = map.get(&"key1".to_string()).await.unwrap();
 
@@ -328,7 +363,7 @@ async fn test_near_cache_eviction_lru() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-lru");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(10)
         .eviction_policy(EvictionPolicy::Lru)
@@ -342,11 +377,15 @@ async fn test_near_cache_eviction_lru() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
     for i in 0..20 {
-        map.put(format!("key{}", i), format!("value{}", i)).await.unwrap();
+        map.put(format!("key{}", i), format!("value{}", i))
+            .await
+            .unwrap();
         let _ = map.get(&format!("key{}", i)).await.unwrap();
     }
 
@@ -364,7 +403,7 @@ async fn test_near_cache_eviction_lfu() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-lfu");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(10)
         .eviction_policy(EvictionPolicy::Lfu)
@@ -378,11 +417,15 @@ async fn test_near_cache_eviction_lfu() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
     for i in 0..5 {
-        map.put(format!("key{}", i), format!("value{}", i)).await.unwrap();
+        map.put(format!("key{}", i), format!("value{}", i))
+            .await
+            .unwrap();
         let _ = map.get(&format!("key{}", i)).await.unwrap();
     }
 
@@ -391,7 +434,9 @@ async fn test_near_cache_eviction_lfu() {
     }
 
     for i in 5..15 {
-        map.put(format!("key{}", i), format!("value{}", i)).await.unwrap();
+        map.put(format!("key{}", i), format!("value{}", i))
+            .await
+            .unwrap();
         let _ = map.get(&format!("key{}", i)).await.unwrap();
     }
 
@@ -410,7 +455,7 @@ async fn test_near_cache_wildcard_config() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("users-cache");
-    
+
     let near_cache_config = NearCacheConfig::builder("users-*")
         .max_size(1000)
         .build()
@@ -423,7 +468,9 @@ async fn test_near_cache_wildcard_config() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
     assert!(map.has_near_cache());
@@ -439,7 +486,7 @@ async fn test_near_cache_clone_shares_cache() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-clone");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(1000)
         .build()
@@ -452,18 +499,22 @@ async fn test_near_cache_clone_shares_cache() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map1 = client.get_map::<String, String>(&map_name);
     let map2 = map1.clone();
 
-    map1.put("key1".to_string(), "value1".to_string()).await.unwrap();
+    map1.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
     let _ = map1.get(&"key1".to_string()).await.unwrap();
 
     let _ = map2.get(&"key1".to_string()).await.unwrap();
 
     let stats1 = map1.near_cache_stats().unwrap();
     let stats2 = map2.near_cache_stats().unwrap();
-    
+
     assert_eq!(stats1.hits(), stats2.hits());
 
     map1.clear().await.unwrap();
@@ -477,7 +528,7 @@ async fn test_near_cache_concurrent_access() {
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("test-nc-concurrent");
-    
+
     let near_cache_config = NearCacheConfig::builder(&map_name)
         .max_size(1000)
         .build()
@@ -490,11 +541,17 @@ async fn test_near_cache_concurrent_access() {
         .build()
         .unwrap();
 
-    let client = Arc::new(HazelcastClient::new(config).await.expect("failed to connect"));
-    
+    let client = Arc::new(
+        HazelcastClient::new(config)
+            .await
+            .expect("failed to connect"),
+    );
+
     let map = client.get_map::<String, String>(&map_name);
     for i in 0..10 {
-        map.put(format!("key{}", i), format!("value{}", i)).await.unwrap();
+        map.put(format!("key{}", i), format!("value{}", i))
+            .await
+            .unwrap();
     }
 
     let mut handles = Vec::new();
@@ -502,7 +559,7 @@ async fn test_near_cache_concurrent_access() {
     for _ in 0..5 {
         let client_clone = Arc::clone(&client);
         let map_name_clone = map_name.clone();
-        
+
         let handle = tokio::spawn(async move {
             let map = client_clone.get_map::<String, String>(&map_name_clone);
             for _ in 0..100 {
@@ -511,7 +568,7 @@ async fn test_near_cache_concurrent_access() {
                 }
             }
         });
-        
+
         handles.push(handle);
     }
 

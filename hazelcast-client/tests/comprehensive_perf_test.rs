@@ -14,11 +14,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use hazelcast_client::{
-    ClientConfigBuilder, HazelcastClient, NearCacheConfig,
-};
+use hazelcast_client::{ClientConfigBuilder, HazelcastClient, NearCacheConfig};
 
-use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
+use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,11 +51,14 @@ fn val(size: usize) -> String {
 
 #[tokio::test]
 async fn bench_map_put_64b() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-put64");
     let map = client.get_map::<String, String>(&map_name);
     let value = val(64);
@@ -79,11 +80,14 @@ async fn bench_map_put_64b() {
 
 #[tokio::test]
 async fn bench_map_put_1kb() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-put1k");
     let map = client.get_map::<String, String>(&map_name);
     let value = val(1024);
@@ -105,11 +109,14 @@ async fn bench_map_put_1kb() {
 
 #[tokio::test]
 async fn bench_map_put_10kb() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-put10k");
     let map = client.get_map::<String, String>(&map_name);
     let value = val(10240);
@@ -131,11 +138,14 @@ async fn bench_map_put_10kb() {
 
 #[tokio::test]
 async fn bench_map_get() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-get");
     let map = client.get_map::<String, String>(&map_name);
     let value = val(64);
@@ -163,11 +173,14 @@ async fn bench_map_get() {
 
 #[tokio::test]
 async fn bench_map_get_missing() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-getmiss");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -189,11 +202,14 @@ async fn bench_map_get_missing() {
 
 #[tokio::test]
 async fn bench_map_remove() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-remove");
     let map = client.get_map::<String, String>(&map_name);
     let value = val(64);
@@ -221,11 +237,14 @@ async fn bench_map_remove() {
 
 #[tokio::test]
 async fn bench_map_contains_key() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-contains");
     let map = client.get_map::<String, String>(&map_name);
     let value = val(64);
@@ -253,11 +272,14 @@ async fn bench_map_contains_key() {
 
 #[tokio::test]
 async fn bench_map_size() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-size");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -285,16 +307,21 @@ async fn bench_map_size() {
 async fn bench_map_compute() {
     // Atomic read-modify-write via get + replace.
     // Simulates an increment-counter pattern.
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-compute");
     let map = client.get_map::<String, String>(&map_name);
 
     // Seed a counter key
-    map.put("counter".to_string(), "0".to_string()).await.unwrap();
+    map.put("counter".to_string(), "0".to_string())
+        .await
+        .unwrap();
 
     let mut latencies = Vec::with_capacity(N);
     let mut errors = 0usize;
@@ -305,7 +332,9 @@ async fn bench_map_compute() {
         let ok = match current {
             Ok(v) => {
                 let cur: i64 = v.unwrap_or_else(|| "0".to_string()).parse().unwrap_or(0);
-                map.put("counter".to_string(), (cur + 1).to_string()).await.is_ok()
+                map.put("counter".to_string(), (cur + 1).to_string())
+                    .await
+                    .is_ok()
             }
             Err(_) => false,
         };
@@ -322,11 +351,14 @@ async fn bench_map_compute() {
 
 #[tokio::test]
 async fn bench_map_set_ttl() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-setttl");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -353,11 +385,14 @@ async fn bench_map_set_ttl() {
 
 #[tokio::test]
 async fn bench_map_put_all_10() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-putall10");
     let map = client.get_map::<String, String>(&map_name);
     let value = val(64);
@@ -383,11 +418,14 @@ async fn bench_map_put_all_10() {
 
 #[tokio::test]
 async fn bench_map_put_all_100() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-putall100");
     let map = client.get_map::<String, String>(&map_name);
     let value = val(64);
@@ -415,11 +453,14 @@ async fn bench_map_put_all_100() {
 
 #[tokio::test]
 async fn bench_map_get_all_10() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-getall10");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -432,7 +473,9 @@ async fn bench_map_get_all_10() {
     let mut errors = 0usize;
 
     for batch in 0..N {
-        let keys: Vec<String> = (0..10).map(|j| format!("k{}", (batch * 10 + j) % 100)).collect();
+        let keys: Vec<String> = (0..10)
+            .map(|j| format!("k{}", (batch * 10 + j) % 100))
+            .collect();
         let start = Instant::now();
         match map.get_all(&keys).await {
             Ok(_) => latencies.push(start.elapsed().as_micros() as f64 / 1000.0),
@@ -446,11 +489,14 @@ async fn bench_map_get_all_10() {
 
 #[tokio::test]
 async fn bench_map_get_all_100() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-getall100");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -464,7 +510,9 @@ async fn bench_map_get_all_100() {
     let mut errors = 0usize;
 
     for batch in 0..iters {
-        let keys: Vec<String> = (0..100).map(|j| format!("k{}", (batch * 100 + j) % 1000)).collect();
+        let keys: Vec<String> = (0..100)
+            .map(|j| format!("k{}", (batch * 100 + j) % 1000))
+            .collect();
         let start = Instant::now();
         match map.get_all(&keys).await {
             Ok(_) => latencies.push(start.elapsed().as_micros() as f64 / 1000.0),
@@ -478,11 +526,14 @@ async fn bench_map_get_all_100() {
 
 #[tokio::test]
 async fn bench_map_key_set_100() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-keyset100");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -498,15 +549,13 @@ async fn bench_map_key_set_100() {
     for _ in 0..iters {
         let start = Instant::now();
         match map.key_set().await {
-            Ok(iter) => {
-                match iter.collect().await {
-                    Ok(keys) => {
-                        let _ = keys.len();
-                        latencies.push(start.elapsed().as_micros() as f64 / 1000.0);
-                    }
-                    Err(_) => errors += 1,
+            Ok(iter) => match iter.collect().await {
+                Ok(keys) => {
+                    let _ = keys.len();
+                    latencies.push(start.elapsed().as_micros() as f64 / 1000.0);
                 }
-            }
+                Err(_) => errors += 1,
+            },
             Err(_) => errors += 1,
         }
     }
@@ -517,11 +566,14 @@ async fn bench_map_key_set_100() {
 
 #[tokio::test]
 async fn bench_map_key_set_1000() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-keyset1k");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -537,15 +589,13 @@ async fn bench_map_key_set_1000() {
     for _ in 0..iters {
         let start = Instant::now();
         match map.key_set().await {
-            Ok(iter) => {
-                match iter.collect().await {
-                    Ok(keys) => {
-                        let _ = keys.len();
-                        latencies.push(start.elapsed().as_micros() as f64 / 1000.0);
-                    }
-                    Err(_) => errors += 1,
+            Ok(iter) => match iter.collect().await {
+                Ok(keys) => {
+                    let _ = keys.len();
+                    latencies.push(start.elapsed().as_micros() as f64 / 1000.0);
                 }
-            }
+                Err(_) => errors += 1,
+            },
             Err(_) => errors += 1,
         }
     }
@@ -556,11 +606,14 @@ async fn bench_map_key_set_1000() {
 
 #[tokio::test]
 async fn bench_map_entry_set_100() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-entryset100");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -576,15 +629,13 @@ async fn bench_map_entry_set_100() {
     for _ in 0..iters {
         let start = Instant::now();
         match map.entry_set().await {
-            Ok(iter) => {
-                match iter.collect_entries().await {
-                    Ok(entries) => {
-                        let _ = entries.len();
-                        latencies.push(start.elapsed().as_micros() as f64 / 1000.0);
-                    }
-                    Err(_) => errors += 1,
+            Ok(iter) => match iter.collect_entries().await {
+                Ok(entries) => {
+                    let _ = entries.len();
+                    latencies.push(start.elapsed().as_micros() as f64 / 1000.0);
                 }
-            }
+                Err(_) => errors += 1,
+            },
             Err(_) => errors += 1,
         }
     }
@@ -595,11 +646,14 @@ async fn bench_map_entry_set_100() {
 
 #[tokio::test]
 async fn bench_map_lock_unlock() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-lock");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -631,11 +685,14 @@ async fn bench_map_lock_unlock() {
 
 #[tokio::test]
 async fn bench_map_delete() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-delete");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -662,11 +719,14 @@ async fn bench_map_delete() {
 
 #[tokio::test]
 async fn bench_map_replace() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-replace");
     let map = client.get_map::<String, String>(&map_name);
     let value = val(64);
@@ -700,11 +760,14 @@ async fn bench_map_replace() {
 
 #[tokio::test]
 async fn bench_set_add() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("bench-setadd");
     let set = client.get_set::<String>(&set_name);
 
@@ -725,11 +788,14 @@ async fn bench_set_add() {
 
 #[tokio::test]
 async fn bench_set_contains() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("bench-setcontains");
     let set = client.get_set::<String>(&set_name);
 
@@ -756,11 +822,14 @@ async fn bench_set_contains() {
 
 #[tokio::test]
 async fn bench_set_size() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("bench-setsize");
     let set = client.get_set::<String>(&set_name);
 
@@ -786,11 +855,14 @@ async fn bench_set_size() {
 
 #[tokio::test]
 async fn bench_set_get_all() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let set_name = unique_name("bench-setgetall");
     let set = client.get_set::<String>(&set_name);
 
@@ -825,11 +897,14 @@ async fn bench_set_get_all() {
 
 #[tokio::test]
 async fn bench_list_add() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("bench-listadd");
     let list = client.get_list::<String>(&list_name);
 
@@ -850,11 +925,14 @@ async fn bench_list_add() {
 
 #[tokio::test]
 async fn bench_list_get() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("bench-listget");
     let list = client.get_list::<String>(&list_name);
 
@@ -880,11 +958,14 @@ async fn bench_list_get() {
 
 #[tokio::test]
 async fn bench_list_remove_at() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("bench-listremove");
     let list = client.get_list::<String>(&list_name);
 
@@ -911,11 +992,14 @@ async fn bench_list_remove_at() {
 
 #[tokio::test]
 async fn bench_list_size() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let list_name = unique_name("bench-listsize");
     let list = client.get_list::<String>(&list_name);
 
@@ -946,11 +1030,14 @@ async fn bench_list_size() {
 
 #[tokio::test]
 async fn bench_queue_offer() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("bench-qoffer");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -972,11 +1059,14 @@ async fn bench_queue_offer() {
 
 #[tokio::test]
 async fn bench_queue_poll() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("bench-qpoll");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1001,11 +1091,14 @@ async fn bench_queue_poll() {
 
 #[tokio::test]
 async fn bench_queue_peek() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("bench-qpeek");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1029,11 +1122,14 @@ async fn bench_queue_peek() {
 
 #[tokio::test]
 async fn bench_queue_size() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let queue_name = unique_name("bench-qsize");
     let queue = client.get_queue::<String>(&queue_name);
 
@@ -1063,11 +1159,14 @@ async fn bench_queue_size() {
 
 #[tokio::test]
 async fn bench_atomic_increment() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let counter_name = unique_name("bench-atominc");
     let counter = client.get_atomic_long(&counter_name);
     counter.set(0).await.unwrap();
@@ -1088,11 +1187,14 @@ async fn bench_atomic_increment() {
 
 #[tokio::test]
 async fn bench_atomic_compare_and_set() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let counter_name = unique_name("bench-atomcas");
     let counter = client.get_atomic_long(&counter_name);
     counter.set(0).await.unwrap();
@@ -1114,11 +1216,14 @@ async fn bench_atomic_compare_and_set() {
 
 #[tokio::test]
 async fn bench_atomic_get() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let counter_name = unique_name("bench-atomget");
     let counter = client.get_atomic_long(&counter_name);
     counter.set(42).await.unwrap();
@@ -1143,7 +1248,9 @@ async fn bench_atomic_get() {
 
 #[tokio::test]
 async fn bench_near_cache_hits() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let map_name = unique_name("bench-nc-hits");
@@ -1161,7 +1268,9 @@ async fn bench_near_cache_hits() {
         .build()
         .unwrap();
 
-    let client = HazelcastClient::new(config).await.expect("failed to connect");
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("failed to connect");
     let map = client.get_map::<String, String>(&map_name);
 
     // Setup: put 100 keys and do a first get to populate near cache
@@ -1197,12 +1306,15 @@ async fn bench_near_cache_hits() {
 
 #[tokio::test]
 async fn bench_concurrent_4_tasks() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = Arc::new(
         HazelcastClient::new(common::default_config())
-            .await.expect("failed to connect")
+            .await
+            .expect("failed to connect"),
     );
     let map_name = unique_name("bench-concurrent4");
 
@@ -1258,8 +1370,10 @@ async fn bench_concurrent_4_tasks() {
     let wall_ops_sec = total_ops_done as f64 / wall_time.as_secs_f64();
 
     report("bench_concurrent_4_tasks", &all_latencies, total_errors);
-    println!("  wall-clock throughput: {wall_ops_sec:.0} ops/s  ({total_ops_done} ops in {:.2}s)",
-             wall_time.as_secs_f64());
+    println!(
+        "  wall-clock throughput: {wall_ops_sec:.0} ops/s  ({total_ops_done} ops in {:.2}s)",
+        wall_time.as_secs_f64()
+    );
 
     let map = client.get_map::<String, String>(&map_name);
     let _ = map.clear().await;
@@ -1268,11 +1382,14 @@ async fn bench_concurrent_4_tasks() {
 #[tokio::test]
 async fn bench_mixed_workload_70_20_10() {
     // 70% get, 20% put, 10% delete -- 1000 ops total
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-mixed");
     let map = client.get_map::<String, String>(&map_name);
     let value = val(64);
@@ -1319,17 +1436,23 @@ async fn bench_mixed_workload_70_20_10() {
     }
 
     report("bench_mixed_workload_70_20_10", &latencies, errors);
-    println!("  mix: gets=700 puts={put_count} deletes={}", N - 700 - put_count);
+    println!(
+        "  mix: gets=700 puts={put_count} deletes={}",
+        N - 700 - put_count
+    );
     let _ = map.clear().await;
 }
 
 #[tokio::test]
 async fn bench_large_key_set_iteration() {
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = HazelcastClient::new(common::default_config())
-        .await.expect("failed to connect");
+        .await
+        .expect("failed to connect");
     let map_name = unique_name("bench-largeks");
     let map = client.get_map::<String, String>(&map_name);
 
@@ -1346,15 +1469,17 @@ async fn bench_large_key_set_iteration() {
     for _ in 0..iters {
         let start = Instant::now();
         match map.key_set().await {
-            Ok(iter) => {
-                match iter.collect().await {
-                    Ok(keys) => {
-                        assert!(keys.len() >= 4000, "Expected ~5000 keys, got {}", keys.len());
-                        latencies.push(start.elapsed().as_micros() as f64 / 1000.0);
-                    }
-                    Err(_) => errors += 1,
+            Ok(iter) => match iter.collect().await {
+                Ok(keys) => {
+                    assert!(
+                        keys.len() >= 4000,
+                        "Expected ~5000 keys, got {}",
+                        keys.len()
+                    );
+                    latencies.push(start.elapsed().as_micros() as f64 / 1000.0);
                 }
-            }
+                Err(_) => errors += 1,
+            },
             Err(_) => errors += 1,
         }
     }
@@ -1367,12 +1492,15 @@ async fn bench_large_key_set_iteration() {
 async fn bench_pipeline_style_batch() {
     // Fire 100 puts concurrently via join_all, then collect all.
     // Simulates pipeline-style batching.
-    if skip_if_no_cluster() { return; }
+    if skip_if_no_cluster() {
+        return;
+    }
     wait_for_cluster_ready().await;
 
     let client = Arc::new(
         HazelcastClient::new(common::default_config())
-            .await.expect("failed to connect")
+            .await
+            .expect("failed to connect"),
     );
     let map_name = unique_name("bench-pipeline");
     let value = val(64);

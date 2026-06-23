@@ -165,7 +165,11 @@ impl SqlService {
         Ok(request)
     }
 
-    fn encode_parameters(&self, request: &mut ClientMessage, parameters: &[SqlValue]) -> Result<()> {
+    fn encode_parameters(
+        &self,
+        request: &mut ClientMessage,
+        parameters: &[SqlValue],
+    ) -> Result<()> {
         if parameters.is_empty() {
             // Empty list frame
             let mut buf = Vec::new();
@@ -234,7 +238,9 @@ impl SqlService {
             }
             SqlValue::Date(d) => {
                 buf.push(1);
-                let epoch_days = d.signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()).num_days() as i32;
+                let epoch_days = d
+                    .signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+                    .num_days() as i32;
                 buf.extend_from_slice(&epoch_days.to_le_bytes());
             }
             SqlValue::Time(t) => {
@@ -288,9 +294,7 @@ impl SqlService {
 
         // Row metadata present flag
         if data.len() < offset + 1 {
-            return Err(HazelcastError::Protocol(
-                "missing row metadata flag".into(),
-            ));
+            return Err(HazelcastError::Protocol("missing row metadata flag".into()));
         }
         let row_metadata_present = data[offset] != 0;
         offset += 1;
@@ -352,7 +356,8 @@ impl SqlService {
         if data.len() < 4 {
             return Err(HazelcastError::Protocol("missing column count".into()));
         }
-        let column_count = i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+        let column_count =
+            i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
         offset += 4;
 
         let mut columns = Vec::with_capacity(column_count);
@@ -378,9 +383,12 @@ impl SqlService {
 
             // Column name length and value
             if data.len() < offset + 4 {
-                return Err(HazelcastError::Protocol("missing column name length".into()));
+                return Err(HazelcastError::Protocol(
+                    "missing column name length".into(),
+                ));
             }
-            let name_len = i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+            let name_len =
+                i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
             offset += 4;
 
             if data.len() < offset + name_len {
@@ -450,7 +458,9 @@ impl SqlService {
         column: Option<&SqlColumnMetadata>,
     ) -> Result<SqlValue> {
         if data.len() <= *offset {
-            return Err(HazelcastError::Protocol("unexpected end of row data".into()));
+            return Err(HazelcastError::Protocol(
+                "unexpected end of row data".into(),
+            ));
         }
 
         // Null check
@@ -470,7 +480,8 @@ impl SqlService {
                 if data.len() < *offset + 4 {
                     return Err(HazelcastError::Protocol("missing string length".into()));
                 }
-                let len = i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap()) as usize;
+                let len =
+                    i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap()) as usize;
                 *offset += 4;
 
                 if data.len() < *offset + len {
@@ -594,7 +605,8 @@ impl SqlService {
                 *offset += 8;
                 let nanos = i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
                 *offset += 4;
-                let offset_secs = i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
+                let offset_secs =
+                    i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
                 *offset += 4;
 
                 let fixed_offset = FixedOffset::east_opt(offset_secs)
@@ -609,7 +621,8 @@ impl SqlService {
                 if data.len() < *offset + 4 {
                     return Err(HazelcastError::Protocol("missing bytes length".into()));
                 }
-                let len = i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap()) as usize;
+                let len =
+                    i32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap()) as usize;
                 *offset += 4;
 
                 if data.len() < *offset + len {

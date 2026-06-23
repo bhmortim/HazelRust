@@ -65,7 +65,9 @@ where
     }
 
     async fn check_quorum(&self, is_read: bool) -> Result<()> {
-        self.connection_manager.check_quorum(&self.name, is_read).await
+        self.connection_manager
+            .check_quorum(&self.name, is_read)
+            .await
     }
 
     /// Gets the value associated with the specified key.
@@ -260,9 +262,10 @@ where
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_optional_value_response(response: &ClientMessage) -> Result<Option<V>> {

@@ -10,8 +10,8 @@ pub fn derive_compact_impl(input: TokenStream) -> TokenStream {
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     // Parse struct-level attributes
-    let type_name = parse_struct_attr(&input.attrs, "type_name")
-        .unwrap_or_else(|| name.to_string());
+    let type_name =
+        parse_struct_attr(&input.attrs, "type_name").unwrap_or_else(|| name.to_string());
 
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
@@ -94,24 +94,46 @@ fn generate_write_stmt(
                 "i64" => quote! { writer.write_nullable_int64(#wire_name, self.#field_ident)?; },
                 "f32" => quote! { writer.write_nullable_float32(#wire_name, self.#field_ident)?; },
                 "f64" => quote! { writer.write_nullable_float64(#wire_name, self.#field_ident)?; },
-                "String" => quote! { writer.write_string(#wire_name, self.#field_ident.as_deref())?; },
-                _ => quote! { writer.write_string(#wire_name, self.#field_ident.as_ref().map(|v| v.to_string()).as_deref())?; },
+                "String" => {
+                    quote! { writer.write_string(#wire_name, self.#field_ident.as_deref())?; }
+                }
+                _ => {
+                    quote! { writer.write_string(#wire_name, self.#field_ident.as_ref().map(|v| v.to_string()).as_deref())?; }
+                }
             }
         }
         s if s.starts_with("Vec<") => {
             let inner = extract_inner_type(s);
             match inner.as_str() {
-                "bool" => quote! { writer.write_array_of_boolean(#wire_name, Some(&self.#field_ident))?; },
-                "i8" => quote! { writer.write_array_of_int8(#wire_name, Some(&self.#field_ident))?; },
-                "i16" => quote! { writer.write_array_of_int16(#wire_name, Some(&self.#field_ident))?; },
-                "i32" => quote! { writer.write_array_of_int32(#wire_name, Some(&self.#field_ident))?; },
-                "i64" => quote! { writer.write_array_of_int64(#wire_name, Some(&self.#field_ident))?; },
-                "f32" => quote! { writer.write_array_of_float32(#wire_name, Some(&self.#field_ident))?; },
-                "f64" => quote! { writer.write_array_of_float64(#wire_name, Some(&self.#field_ident))?; },
-                _ => quote! { writer.write_string(#wire_name, Some(&format!("{:?}", self.#field_ident)))?; },
+                "bool" => {
+                    quote! { writer.write_array_of_boolean(#wire_name, Some(&self.#field_ident))?; }
+                }
+                "i8" => {
+                    quote! { writer.write_array_of_int8(#wire_name, Some(&self.#field_ident))?; }
+                }
+                "i16" => {
+                    quote! { writer.write_array_of_int16(#wire_name, Some(&self.#field_ident))?; }
+                }
+                "i32" => {
+                    quote! { writer.write_array_of_int32(#wire_name, Some(&self.#field_ident))?; }
+                }
+                "i64" => {
+                    quote! { writer.write_array_of_int64(#wire_name, Some(&self.#field_ident))?; }
+                }
+                "f32" => {
+                    quote! { writer.write_array_of_float32(#wire_name, Some(&self.#field_ident))?; }
+                }
+                "f64" => {
+                    quote! { writer.write_array_of_float64(#wire_name, Some(&self.#field_ident))?; }
+                }
+                _ => {
+                    quote! { writer.write_string(#wire_name, Some(&format!("{:?}", self.#field_ident)))?; }
+                }
             }
         }
-        _ => quote! { writer.write_string(#wire_name, Some(&format!("{:?}", self.#field_ident)))?; },
+        _ => {
+            quote! { writer.write_string(#wire_name, Some(&format!("{:?}", self.#field_ident)))?; }
+        }
     }
 }
 

@@ -99,8 +99,14 @@ mod tests {
         assert_eq!(LifecycleEvent::ShuttingDown.name(), "SHUTTING_DOWN");
         assert_eq!(LifecycleEvent::Shutdown.name(), "SHUTDOWN");
         assert_eq!(LifecycleEvent::ClientConnected.name(), "CLIENT_CONNECTED");
-        assert_eq!(LifecycleEvent::ClientDisconnected.name(), "CLIENT_DISCONNECTED");
-        assert_eq!(LifecycleEvent::ClientChangedCluster.name(), "CLIENT_CHANGED_CLUSTER");
+        assert_eq!(
+            LifecycleEvent::ClientDisconnected.name(),
+            "CLIENT_DISCONNECTED"
+        );
+        assert_eq!(
+            LifecycleEvent::ClientChangedCluster.name(),
+            "CLIENT_CHANGED_CLUSTER"
+        );
     }
 
     #[test]
@@ -109,9 +115,18 @@ mod tests {
         assert_eq!(LifecycleEvent::Started.to_string(), "STARTED");
         assert_eq!(LifecycleEvent::ShuttingDown.to_string(), "SHUTTING_DOWN");
         assert_eq!(LifecycleEvent::Shutdown.to_string(), "SHUTDOWN");
-        assert_eq!(LifecycleEvent::ClientConnected.to_string(), "CLIENT_CONNECTED");
-        assert_eq!(LifecycleEvent::ClientDisconnected.to_string(), "CLIENT_DISCONNECTED");
-        assert_eq!(LifecycleEvent::ClientChangedCluster.to_string(), "CLIENT_CHANGED_CLUSTER");
+        assert_eq!(
+            LifecycleEvent::ClientConnected.to_string(),
+            "CLIENT_CONNECTED"
+        );
+        assert_eq!(
+            LifecycleEvent::ClientDisconnected.to_string(),
+            "CLIENT_DISCONNECTED"
+        );
+        assert_eq!(
+            LifecycleEvent::ClientChangedCluster.to_string(),
+            "CLIENT_CHANGED_CLUSTER"
+        );
     }
 
     #[test]

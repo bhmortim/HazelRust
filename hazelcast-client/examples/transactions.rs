@@ -25,14 +25,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     accounts.put("bob".into(), 500).await?;
 
     println!("Initial balances:");
-    println!("  Alice: ${}", accounts.get(&"alice".into()).await?.unwrap_or(0));
-    println!("  Bob:   ${}", accounts.get(&"bob".into()).await?.unwrap_or(0));
+    println!(
+        "  Alice: ${}",
+        accounts.get(&"alice".into()).await?.unwrap_or(0)
+    );
+    println!(
+        "  Bob:   ${}",
+        accounts.get(&"bob".into()).await?.unwrap_or(0)
+    );
 
     // Successful transaction: transfer $200 from Alice to Bob
     println!("\n--- Transaction 1: Transfer $200 from Alice to Bob ---");
     {
-        let options = TransactionOptions::new()
-            .with_timeout(Duration::from_secs(30));
+        let options = TransactionOptions::new().with_timeout(Duration::from_secs(30));
 
         let mut txn = client.new_transaction_context(options);
         txn.begin().await?;
@@ -53,10 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .put("bob".into(), bob_balance + transfer_amount)
                 .await?;
             tx_log
-                .offer(format!(
-                    "TRANSFER: Alice -> Bob: ${}",
-                    transfer_amount
-                ))
+                .offer(format!("TRANSFER: Alice -> Bob: ${}", transfer_amount))
                 .await?;
 
             txn.commit().await?;
@@ -68,14 +70,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\nBalances after transfer:");
-    println!("  Alice: ${}", accounts.get(&"alice".into()).await?.unwrap_or(0));
-    println!("  Bob:   ${}", accounts.get(&"bob".into()).await?.unwrap_or(0));
+    println!(
+        "  Alice: ${}",
+        accounts.get(&"alice".into()).await?.unwrap_or(0)
+    );
+    println!(
+        "  Bob:   ${}",
+        accounts.get(&"bob".into()).await?.unwrap_or(0)
+    );
 
     // Failed transaction: attempt to transfer $1000 from Bob (insufficient funds)
     println!("\n--- Transaction 2: Attempt $1000 transfer from Bob (will fail) ---");
     {
-        let options = TransactionOptions::new()
-            .with_timeout(Duration::from_secs(30));
+        let options = TransactionOptions::new().with_timeout(Duration::from_secs(30));
 
         let mut txn = client.new_transaction_context(options);
         txn.begin().await?;
@@ -90,20 +97,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .put("bob".into(), bob_balance - transfer_amount)
                 .await?;
             tx_accounts
-                .put("alice".into(), accounts.get(&"alice".into()).await?.unwrap_or(0) + transfer_amount)
+                .put(
+                    "alice".into(),
+                    accounts.get(&"alice".into()).await?.unwrap_or(0) + transfer_amount,
+                )
                 .await?;
 
             txn.commit().await?;
             println!("  Transaction committed");
         } else {
             txn.rollback().await?;
-            println!("  Transaction rolled back: Bob has ${}, needs ${}", bob_balance, transfer_amount);
+            println!(
+                "  Transaction rolled back: Bob has ${}, needs ${}",
+                bob_balance, transfer_amount
+            );
         }
     }
 
     println!("\nFinal balances (unchanged from failed transaction):");
-    println!("  Alice: ${}", accounts.get(&"alice".into()).await?.unwrap_or(0));
-    println!("  Bob:   ${}", accounts.get(&"bob".into()).await?.unwrap_or(0));
+    println!(
+        "  Alice: ${}",
+        accounts.get(&"alice".into()).await?.unwrap_or(0)
+    );
+    println!(
+        "  Bob:   ${}",
+        accounts.get(&"bob".into()).await?.unwrap_or(0)
+    );
 
     // Show transaction log
     let log = client.get_queue::<String>("transaction-log");

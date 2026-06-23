@@ -259,7 +259,8 @@ mod tests {
 
     #[test]
     fn test_single_attribute_projection_nested() {
-        let proj: SingleAttributeProjection<String> = SingleAttributeProjection::new("address.city");
+        let proj: SingleAttributeProjection<String> =
+            SingleAttributeProjection::new("address.city");
         assert_eq!(proj.attribute(), "address.city");
 
         let data = proj.to_projection_data().unwrap();
@@ -282,7 +283,8 @@ mod tests {
 
     #[test]
     fn test_multi_attribute_projection_empty() {
-        let proj: MultiAttributeProjection<String> = MultiAttributeProjection::new(Vec::<String>::new());
+        let proj: MultiAttributeProjection<String> =
+            MultiAttributeProjection::new(Vec::<String>::new());
         assert_eq!(proj.attributes().len(), 0);
 
         let data = proj.to_projection_data().unwrap();
@@ -318,7 +320,8 @@ mod tests {
 
     #[test]
     fn test_multi_projection_data_format() {
-        let proj: MultiAttributeProjection<String> = MultiAttributeProjection::new(["field1", "field2"]);
+        let proj: MultiAttributeProjection<String> =
+            MultiAttributeProjection::new(["field1", "field2"]);
         let data = proj.to_projection_data().unwrap();
 
         assert!(data.len() > 8);

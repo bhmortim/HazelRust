@@ -412,11 +412,7 @@ pub struct BetweenPredicate {
 
 impl BetweenPredicate {
     /// Creates a new between predicate (inclusive on both ends).
-    pub fn new<V: Serializable>(
-        attribute: impl Into<String>,
-        from: &V,
-        to: &V,
-    ) -> Result<Self> {
+    pub fn new<V: Serializable>(attribute: impl Into<String>, from: &V, to: &V) -> Result<Self> {
         Ok(Self {
             attribute: attribute.into(),
             from: serialize_value(from)?,
@@ -447,14 +443,8 @@ pub struct InPredicate {
 
 impl InPredicate {
     /// Creates a new in predicate.
-    pub fn new<V: Serializable>(
-        attribute: impl Into<String>,
-        values: &[V],
-    ) -> Result<Self> {
-        let serialized: Result<Vec<Vec<u8>>> = values
-            .iter()
-            .map(|v| serialize_value(v))
-            .collect();
+    pub fn new<V: Serializable>(attribute: impl Into<String>, values: &[V]) -> Result<Self> {
+        let serialized: Result<Vec<Vec<u8>>> = values.iter().map(|v| serialize_value(v)).collect();
         Ok(Self {
             attribute: attribute.into(),
             values: serialized?,
@@ -763,32 +753,50 @@ impl Predicates {
     }
 
     /// Returns a predicate that checks for equality.
-    pub fn equal<V: Serializable>(attribute: impl Into<String>, value: &V) -> Result<EqualPredicate> {
+    pub fn equal<V: Serializable>(
+        attribute: impl Into<String>,
+        value: &V,
+    ) -> Result<EqualPredicate> {
         EqualPredicate::new(attribute, value)
     }
 
     /// Returns a predicate that checks for inequality.
-    pub fn not_equal<V: Serializable>(attribute: impl Into<String>, value: &V) -> Result<NotEqualPredicate> {
+    pub fn not_equal<V: Serializable>(
+        attribute: impl Into<String>,
+        value: &V,
+    ) -> Result<NotEqualPredicate> {
         NotEqualPredicate::new(attribute, value)
     }
 
     /// Returns a predicate that checks if value is less than threshold.
-    pub fn less_than<V: Serializable>(attribute: impl Into<String>, value: &V) -> Result<LessThanPredicate> {
+    pub fn less_than<V: Serializable>(
+        attribute: impl Into<String>,
+        value: &V,
+    ) -> Result<LessThanPredicate> {
         LessThanPredicate::new(attribute, value)
     }
 
     /// Returns a predicate that checks if value is less than or equal to threshold.
-    pub fn less_than_or_equal<V: Serializable>(attribute: impl Into<String>, value: &V) -> Result<LessThanPredicate> {
+    pub fn less_than_or_equal<V: Serializable>(
+        attribute: impl Into<String>,
+        value: &V,
+    ) -> Result<LessThanPredicate> {
         LessThanPredicate::or_equal(attribute, value)
     }
 
     /// Returns a predicate that checks if value is greater than threshold.
-    pub fn greater_than<V: Serializable>(attribute: impl Into<String>, value: &V) -> Result<GreaterThanPredicate> {
+    pub fn greater_than<V: Serializable>(
+        attribute: impl Into<String>,
+        value: &V,
+    ) -> Result<GreaterThanPredicate> {
         GreaterThanPredicate::new(attribute, value)
     }
 
     /// Returns a predicate that checks if value is greater than or equal to threshold.
-    pub fn greater_than_or_equal<V: Serializable>(attribute: impl Into<String>, value: &V) -> Result<GreaterThanPredicate> {
+    pub fn greater_than_or_equal<V: Serializable>(
+        attribute: impl Into<String>,
+        value: &V,
+    ) -> Result<GreaterThanPredicate> {
         GreaterThanPredicate::or_equal(attribute, value)
     }
 
@@ -829,10 +837,7 @@ impl Predicates {
     /// # Arguments
     /// * `path` - A JSON path expression (e.g., `$.user.name`)
     /// * `value` - The value to compare against
-    pub fn json_value_equals(
-        path: impl Into<String>,
-        value: impl Into<String>,
-    ) -> JsonPredicate {
+    pub fn json_value_equals(path: impl Into<String>, value: impl Into<String>) -> JsonPredicate {
         JsonPredicate::value_equals(path, value)
     }
 
@@ -841,10 +846,7 @@ impl Predicates {
     /// # Arguments
     /// * `path` - A JSON path expression (e.g., `$.user.name`)
     /// * `substring` - The substring to search for
-    pub fn json_contains(
-        path: impl Into<String>,
-        substring: impl Into<String>,
-    ) -> JsonPredicate {
+    pub fn json_contains(path: impl Into<String>, substring: impl Into<String>) -> JsonPredicate {
         JsonPredicate::contains(path, substring)
     }
 

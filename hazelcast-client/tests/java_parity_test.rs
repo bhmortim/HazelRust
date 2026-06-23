@@ -22,7 +22,9 @@ async fn create_test_client() -> HazelcastClient {
         .add_address("127.0.0.1:5701".parse::<SocketAddr>().unwrap())
         .build()
         .expect("Failed to build config");
-    HazelcastClient::new(config).await.expect("Failed to create client")
+    HazelcastClient::new(config)
+        .await
+        .expect("Failed to create client")
 }
 
 /// Test helper to get a uniquely named map for test isolation.
@@ -80,11 +82,21 @@ async fn test_put_if_absent() {
     let value1 = "value1".to_string();
     let value2 = "value2".to_string();
 
-    let result1 = map.put_if_absent(key.clone(), value1.clone()).await.unwrap();
+    let result1 = map
+        .put_if_absent(key.clone(), value1.clone())
+        .await
+        .unwrap();
     assert!(result1.is_none(), "First put_if_absent should return None");
 
-    let result2 = map.put_if_absent(key.clone(), value2.clone()).await.unwrap();
-    assert_eq!(result2, Some(value1.clone()), "Second put_if_absent should return existing value");
+    let result2 = map
+        .put_if_absent(key.clone(), value2.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        result2,
+        Some(value1.clone()),
+        "Second put_if_absent should return existing value"
+    );
 
     let retrieved = map.get(&key).await.unwrap();
     assert_eq!(retrieved, Some(value1), "Value should not have changed");
@@ -163,7 +175,10 @@ async fn test_replace() {
     let value2 = "value2".to_string();
 
     let no_replace = map.replace(&key, value2.clone()).await.unwrap();
-    assert!(no_replace.is_none(), "Replace on missing key should return None");
+    assert!(
+        no_replace.is_none(),
+        "Replace on missing key should return None"
+    );
 
     map.put(key.clone(), value1.clone()).await.unwrap();
 
@@ -189,10 +204,16 @@ async fn test_replace_if_equal() {
 
     map.put(key.clone(), value1.clone()).await.unwrap();
 
-    let not_replaced = map.replace_if_equal(&key, &wrong, value2.clone()).await.unwrap();
+    let not_replaced = map
+        .replace_if_equal(&key, &wrong, value2.clone())
+        .await
+        .unwrap();
     assert!(!not_replaced);
 
-    let replaced = map.replace_if_equal(&key, &value1, value2.clone()).await.unwrap();
+    let replaced = map
+        .replace_if_equal(&key, &value1, value2.clone())
+        .await
+        .unwrap();
     assert!(replaced);
 
     assert_eq!(map.get(&key).await.unwrap(), Some(value2));
@@ -214,7 +235,9 @@ async fn test_put_with_ttl() {
     let value = "ttl_value".to_string();
     let ttl = Duration::from_secs(2);
 
-    map.put_with_ttl_and_max_idle(key.clone(), value.clone(), ttl, Duration::from_secs(0)).await.unwrap();
+    map.put_with_ttl_and_max_idle(key.clone(), value.clone(), ttl, Duration::from_secs(0))
+        .await
+        .unwrap();
 
     let retrieved = map.get(&key).await.unwrap();
     assert_eq!(retrieved, Some(value.clone()));
@@ -248,7 +271,10 @@ async fn test_put_with_ttl_and_max_idle() {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     let expired = map.get(&key).await.unwrap();
-    assert!(expired.is_none(), "Entry should have expired due to max-idle");
+    assert!(
+        expired.is_none(),
+        "Entry should have expired due to max-idle"
+    );
 
     map.clear().await.unwrap();
 }
@@ -263,7 +289,9 @@ async fn test_set_with_ttl() {
     let value = "value".to_string();
     let ttl = Duration::from_secs(2);
 
-    map.set_with_ttl_and_max_idle(key.clone(), value.clone(), ttl, Duration::from_secs(0)).await.unwrap();
+    map.set_with_ttl_and_max_idle(key.clone(), value.clone(), ttl, Duration::from_secs(0))
+        .await
+        .unwrap();
 
     assert_eq!(map.get(&key).await.unwrap(), Some(value));
 
@@ -284,7 +312,9 @@ async fn test_put_transient() {
     let value = "transient_value".to_string();
     let ttl = Duration::from_secs(2);
 
-    map.put_transient(key.clone(), value.clone(), ttl).await.unwrap();
+    map.put_transient(key.clone(), value.clone(), ttl)
+        .await
+        .unwrap();
 
     assert_eq!(map.get(&key).await.unwrap(), Some(value));
 
@@ -348,9 +378,15 @@ async fn test_get_all() {
     let client = create_test_client().await;
     let map = get_test_map(&client, "get_all");
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
-    map.put("key2".to_string(), "value2".to_string()).await.unwrap();
-    map.put("key3".to_string(), "value3".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
+    map.put("key2".to_string(), "value2".to_string())
+        .await
+        .unwrap();
+    map.put("key3".to_string(), "value3".to_string())
+        .await
+        .unwrap();
 
     let keys = vec!["key1".to_string(), "key2".to_string(), "key4".to_string()];
     let results = map.get_all(&keys).await.unwrap();
@@ -369,8 +405,12 @@ async fn test_clear() {
     let client = create_test_client().await;
     let map = get_test_map(&client, "clear");
 
-    map.put("key1".to_string(), "value1".to_string()).await.unwrap();
-    map.put("key2".to_string(), "value2".to_string()).await.unwrap();
+    map.put("key1".to_string(), "value1".to_string())
+        .await
+        .unwrap();
+    map.put("key2".to_string(), "value2".to_string())
+        .await
+        .unwrap();
 
     assert_eq!(map.size().await.unwrap(), 2);
 
@@ -392,9 +432,15 @@ async fn test_key_set_with_predicate() {
     let client = create_test_client().await;
     let map = get_test_map(&client, "key_set_predicate");
 
-    map.put("user_1".to_string(), "active".to_string()).await.unwrap();
-    map.put("user_2".to_string(), "inactive".to_string()).await.unwrap();
-    map.put("user_3".to_string(), "active".to_string()).await.unwrap();
+    map.put("user_1".to_string(), "active".to_string())
+        .await
+        .unwrap();
+    map.put("user_2".to_string(), "inactive".to_string())
+        .await
+        .unwrap();
+    map.put("user_3".to_string(), "active".to_string())
+        .await
+        .unwrap();
 
     let predicate = Predicates::equal("this", &"active".to_string()).unwrap();
     let keys = map.keys_with_predicate(&predicate).await.unwrap();
@@ -432,9 +478,15 @@ async fn test_entry_set_with_predicate() {
     let client = create_test_client().await;
     let map = get_test_map(&client, "entry_set_predicate");
 
-    map.put("item_a".to_string(), "100".to_string()).await.unwrap();
-    map.put("item_b".to_string(), "200".to_string()).await.unwrap();
-    map.put("item_c".to_string(), "50".to_string()).await.unwrap();
+    map.put("item_a".to_string(), "100".to_string())
+        .await
+        .unwrap();
+    map.put("item_b".to_string(), "200".to_string())
+        .await
+        .unwrap();
+    map.put("item_c".to_string(), "50".to_string())
+        .await
+        .unwrap();
 
     let predicate = Predicates::sql("this >= 100");
     let entries = map.entries_with_predicate(&predicate).await.unwrap();
@@ -454,10 +506,18 @@ async fn test_remove_all_with_predicate() {
     let client = create_test_client().await;
     let map = get_test_map(&client, "remove_all_predicate");
 
-    map.put("keep_1".to_string(), "important".to_string()).await.unwrap();
-    map.put("delete_1".to_string(), "temporary".to_string()).await.unwrap();
-    map.put("keep_2".to_string(), "important".to_string()).await.unwrap();
-    map.put("delete_2".to_string(), "temporary".to_string()).await.unwrap();
+    map.put("keep_1".to_string(), "important".to_string())
+        .await
+        .unwrap();
+    map.put("delete_1".to_string(), "temporary".to_string())
+        .await
+        .unwrap();
+    map.put("keep_2".to_string(), "important".to_string())
+        .await
+        .unwrap();
+    map.put("delete_2".to_string(), "temporary".to_string())
+        .await
+        .unwrap();
 
     assert_eq!(map.size().await.unwrap(), 4);
 
@@ -483,13 +543,21 @@ async fn test_execute_on_key() {
     let client = create_test_client().await;
     let map = get_test_map(&client, "execute_on_key");
 
-    map.put("counter".to_string(), "0".to_string()).await.unwrap();
+    map.put("counter".to_string(), "0".to_string())
+        .await
+        .unwrap();
 
     let processor = IncrementProcessor::new(5);
-    let result: Option<String> = map.execute_on_key(&"counter".to_string(), &processor).await.unwrap();
+    let result: Option<String> = map
+        .execute_on_key(&"counter".to_string(), &processor)
+        .await
+        .unwrap();
 
     assert_eq!(result, Some("5".to_string()));
-    assert_eq!(map.get(&"counter".to_string()).await.unwrap(), Some("5".to_string()));
+    assert_eq!(
+        map.get(&"counter".to_string()).await.unwrap(),
+        Some("5".to_string())
+    );
 
     map.clear().await.unwrap();
 }
@@ -521,9 +589,15 @@ async fn test_execute_on_entries_with_predicate() {
     let client = create_test_client().await;
     let map = get_test_map(&client, "execute_on_entries_predicate");
 
-    map.put("user_1".to_string(), "50".to_string()).await.unwrap();
-    map.put("user_2".to_string(), "150".to_string()).await.unwrap();
-    map.put("user_3".to_string(), "200".to_string()).await.unwrap();
+    map.put("user_1".to_string(), "50".to_string())
+        .await
+        .unwrap();
+    map.put("user_2".to_string(), "150".to_string())
+        .await
+        .unwrap();
+    map.put("user_3".to_string(), "200".to_string())
+        .await
+        .unwrap();
 
     let predicate = Predicates::sql("this > 100");
     let processor = IncrementProcessor::new(10);
@@ -545,7 +619,9 @@ async fn test_submit_to_key_async() {
     let client = create_test_client().await;
     let map = get_test_map(&client, "submit_to_key");
 
-    map.put("async_key".to_string(), "100".to_string()).await.unwrap();
+    map.put("async_key".to_string(), "100".to_string())
+        .await
+        .unwrap();
 
     let processor = IncrementProcessor::new(50);
     let future = map.submit_to_key("async_key".to_string(), processor);
@@ -593,12 +669,18 @@ async fn test_try_lock_with_timeout() {
 
     map.lock(&key).await.unwrap();
 
-    let acquired = map.try_lock(&key, Duration::from_millis(100)).await.unwrap();
+    let acquired = map
+        .try_lock(&key, Duration::from_millis(100))
+        .await
+        .unwrap();
     assert!(!acquired, "Should not acquire already-locked key");
 
     map.unlock(&key).await.unwrap();
 
-    let acquired_after = map.try_lock(&key, Duration::from_millis(100)).await.unwrap();
+    let acquired_after = map
+        .try_lock(&key, Duration::from_millis(100))
+        .await
+        .unwrap();
     assert!(acquired_after, "Should acquire after unlock");
 
     map.unlock(&key).await.unwrap();
@@ -677,7 +759,11 @@ async fn test_remove_async() {
     let removed = future.await.unwrap().unwrap();
 
     assert_eq!(removed, Some("to_be_removed".to_string()));
-    assert!(map.get(&"async_remove_key".to_string()).await.unwrap().is_none());
+    assert!(map
+        .get(&"async_remove_key".to_string())
+        .await
+        .unwrap()
+        .is_none());
 
     map.clear().await.unwrap();
 }
@@ -756,13 +842,22 @@ async fn test_aggregate() {
     map.put("b".to_string(), 20).await.unwrap();
     map.put("c".to_string(), 30).await.unwrap();
 
-    let sum: i64 = map.aggregate(&hazelcast_client::query::Aggregators::long_sum("this")).await.unwrap();
+    let sum: i64 = map
+        .aggregate(&hazelcast_client::query::Aggregators::long_sum("this"))
+        .await
+        .unwrap();
     assert_eq!(sum, 60);
 
-    let avg: f64 = map.aggregate(&hazelcast_client::query::Aggregators::long_avg("this")).await.unwrap();
+    let avg: f64 = map
+        .aggregate(&hazelcast_client::query::Aggregators::long_avg("this"))
+        .await
+        .unwrap();
     assert!((avg - 20.0).abs() < 0.001);
 
-    let count: i64 = map.aggregate(&hazelcast_client::query::Aggregators::count()).await.unwrap();
+    let count: i64 = map
+        .aggregate(&hazelcast_client::query::Aggregators::count())
+        .await
+        .unwrap();
     assert_eq!(count, 3);
 
     map.clear().await.unwrap();
@@ -781,7 +876,10 @@ async fn test_aggregate_with_predicate() {
 
     let predicate = Predicates::sql("this > 15");
     let sum: i64 = map
-        .aggregate_with_predicate(&hazelcast_client::query::Aggregators::long_sum("this"), &predicate)
+        .aggregate_with_predicate(
+            &hazelcast_client::query::Aggregators::long_sum("this"),
+            &predicate,
+        )
         .await
         .unwrap();
 
@@ -800,18 +898,21 @@ async fn test_project() {
     let client = create_test_client().await;
     let map = get_test_map(&client, "project");
 
-    map.put("user_1".to_string(), r#"{"name":"Alice","age":30}"#.to_string())
-        .await
-        .unwrap();
-    map.put("user_2".to_string(), r#"{"name":"Bob","age":25}"#.to_string())
-        .await
-        .unwrap();
+    map.put(
+        "user_1".to_string(),
+        r#"{"name":"Alice","age":30}"#.to_string(),
+    )
+    .await
+    .unwrap();
+    map.put(
+        "user_2".to_string(),
+        r#"{"name":"Bob","age":25}"#.to_string(),
+    )
+    .await
+    .unwrap();
 
     let projection = Projections::single::<String>("name");
-    let names: Vec<String> = map
-        .project(&projection)
-        .await
-        .unwrap();
+    let names: Vec<String> = map.project(&projection).await.unwrap();
 
     assert_eq!(names.len(), 2);
     assert!(names.contains(&"Alice".to_string()));
@@ -856,7 +957,9 @@ async fn test_get_entry_view() {
 // ============================================================================
 
 use hazelcast_client::proxy::EntryProcessor;
-use hazelcast_core::serialization::{DataInput, DataOutput, Deserializable, ObjectDataOutput, Serializable};
+use hazelcast_core::serialization::{
+    DataInput, DataOutput, Deserializable, ObjectDataOutput, Serializable,
+};
 
 struct IncrementProcessor {
     increment: i64,
@@ -878,4 +981,3 @@ impl Serializable for IncrementProcessor {
         Ok(())
     }
 }
-

@@ -153,8 +153,9 @@ struct DefaultTokenProvider {
 
 impl DefaultTokenProvider {
     fn new() -> Result<Self> {
-        let credential = DefaultAzureCredential::new()
-            .map_err(|e| HazelcastError::Connection(format!("Failed to create Azure credential: {}", e)))?;
+        let credential = DefaultAzureCredential::new().map_err(|e| {
+            HazelcastError::Connection(format!("Failed to create Azure credential: {}", e))
+        })?;
         Ok(Self { credential })
     }
 }
@@ -162,9 +163,12 @@ impl DefaultTokenProvider {
 #[async_trait]
 impl AzureTokenProvider for DefaultTokenProvider {
     async fn get_token(&self) -> Result<String> {
-        let token_response = TokenCredential::get_token(&*self.credential, &[AZURE_MANAGEMENT_SCOPE])
-            .await
-            .map_err(|e| HazelcastError::Connection(format!("Failed to get Azure token: {}", e)))?;
+        let token_response =
+            TokenCredential::get_token(&*self.credential, &[AZURE_MANAGEMENT_SCOPE])
+                .await
+                .map_err(|e| {
+                    HazelcastError::Connection(format!("Failed to get Azure token: {}", e))
+                })?;
 
         Ok(token_response.token.secret().to_string())
     }
@@ -520,8 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discovery_handles_empty_response() {
-        let config = AzureDiscoveryConfig::new("sub-123", "rg-test")
-            .with_scale_set("vmss-empty");
+        let config = AzureDiscoveryConfig::new("sub-123", "rg-test").with_scale_set("vmss-empty");
 
         let response = json!({
             "value": []
@@ -535,8 +538,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discovery_skips_invalid_ips() {
-        let config = AzureDiscoveryConfig::new("sub-123", "rg-test")
-            .with_scale_set("vmss-test");
+        let config = AzureDiscoveryConfig::new("sub-123", "rg-test").with_scale_set("vmss-test");
 
         let response = json!({
             "value": [

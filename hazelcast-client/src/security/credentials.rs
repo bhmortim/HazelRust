@@ -260,8 +260,7 @@ impl CredentialProvider for AwsCredentialProvider {
     }
 
     async fn is_available(&self) -> bool {
-        std::env::var("AWS_ACCESS_KEY_ID").is_ok()
-            && std::env::var("AWS_SECRET_ACCESS_KEY").is_ok()
+        std::env::var("AWS_ACCESS_KEY_ID").is_ok() && std::env::var("AWS_SECRET_ACCESS_KEY").is_ok()
     }
 }
 
@@ -1013,7 +1012,10 @@ mod tests {
     fn test_azure_provider_new() {
         let provider = AzureCredentialProvider::new();
         assert!(provider.client_id().is_none());
-        assert_eq!(provider.resource(), AzureCredentialProvider::DEFAULT_RESOURCE);
+        assert_eq!(
+            provider.resource(),
+            AzureCredentialProvider::DEFAULT_RESOURCE
+        );
         assert_eq!(
             provider.imds_endpoint(),
             AzureCredentialProvider::DEFAULT_IMDS_ENDPOINT
@@ -1043,11 +1045,7 @@ mod tests {
     #[cfg(feature = "azure")]
     #[tokio::test]
     async fn test_azure_provider_env_vars() {
-        let _guard = EnvGuard::new(&[
-            "AZURE_CLIENT_ID",
-            "AZURE_CLIENT_SECRET",
-            "AZURE_TENANT_ID",
-        ]);
+        let _guard = EnvGuard::new(&["AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"]);
 
         env::set_var("AZURE_CLIENT_ID", "client123");
         env::set_var("AZURE_CLIENT_SECRET", "secret456");
@@ -1072,11 +1070,7 @@ mod tests {
     #[cfg(feature = "azure")]
     #[tokio::test]
     async fn test_azure_provider_not_available() {
-        let _guard = EnvGuard::new(&[
-            "AZURE_CLIENT_ID",
-            "AZURE_CLIENT_SECRET",
-            "AZURE_TENANT_ID",
-        ]);
+        let _guard = EnvGuard::new(&["AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"]);
 
         env::remove_var("AZURE_CLIENT_ID");
         env::remove_var("AZURE_CLIENT_SECRET");
@@ -1197,8 +1191,7 @@ mod tests {
     #[cfg(feature = "kubernetes")]
     #[tokio::test]
     async fn test_kubernetes_provider_not_available() {
-        let provider =
-            KubernetesCredentialProvider::with_token_path("/nonexistent/path/to/token");
+        let provider = KubernetesCredentialProvider::with_token_path("/nonexistent/path/to/token");
         assert!(!provider.is_available().await);
 
         let result = provider.get_credentials().await;

@@ -53,7 +53,9 @@ where
     }
 
     async fn check_quorum(&self, is_read: bool) -> Result<()> {
-        self.connection_manager.check_quorum(&self.name, is_read).await
+        self.connection_manager
+            .check_quorum(&self.name, is_read)
+            .await
     }
 
     /// Gets the current value.
@@ -89,7 +91,8 @@ where
     pub async fn get_and_set(&self, value: Option<T>) -> Result<Option<T>> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_REFERENCE_GET_AND_SET);
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_REFERENCE_GET_AND_SET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(self.serialize_optional_value(value.as_ref())?);
 
@@ -103,7 +106,8 @@ where
     pub async fn compare_and_set(&self, expected: Option<&T>, update: Option<T>) -> Result<bool> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_REFERENCE_COMPARE_AND_SET);
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_REFERENCE_COMPARE_AND_SET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(self.serialize_optional_value(expected)?);
         message.add_frame(self.serialize_optional_value(update.as_ref())?);
@@ -116,7 +120,8 @@ where
     pub async fn contains(&self, value: &T) -> Result<bool> {
         self.check_permission(PermissionAction::Read)?;
         self.check_quorum(true).await?;
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_REFERENCE_CONTAINS);
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_REFERENCE_CONTAINS);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(self.serialize_value(value)?);
 
@@ -128,7 +133,8 @@ where
     pub async fn is_null(&self) -> Result<bool> {
         self.check_permission(PermissionAction::Read)?;
         self.check_quorum(true).await?;
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_REFERENCE_IS_NULL);
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_REFERENCE_IS_NULL);
         message.add_frame(Self::string_frame(&self.name));
 
         let response = self.invoke(message).await?;
@@ -166,9 +172,10 @@ where
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_optional_value(&self, response: &ClientMessage) -> Result<Option<T>> {
@@ -194,9 +201,7 @@ where
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -230,7 +235,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_atomic_reference_permission_denied_get() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 
@@ -251,7 +256,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_atomic_reference_permission_denied_set() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 
@@ -287,7 +292,8 @@ mod tests {
             .unwrap();
 
         let cm = Arc::new(ConnectionManager::from_config(config));
-        let reference: AtomicReference<String> = AtomicReference::new("protected-ref".to_string(), cm);
+        let reference: AtomicReference<String> =
+            AtomicReference::new("protected-ref".to_string(), cm);
 
         let result = reference.get().await;
         assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
@@ -298,7 +304,9 @@ mod tests {
         let result = reference.is_null().await;
         assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
 
-        let result = reference.compare_and_set(None, Some("value".to_string())).await;
+        let result = reference
+            .compare_and_set(None, Some("value".to_string()))
+            .await;
         assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
     }
 

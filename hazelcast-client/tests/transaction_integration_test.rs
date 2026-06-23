@@ -4,11 +4,9 @@ mod common;
 
 use std::time::Duration;
 
-use hazelcast_client::{
-    HazelcastClient, TransactionOptions, TransactionType, TransactionState,
-};
+use hazelcast_client::{HazelcastClient, TransactionOptions, TransactionState, TransactionType};
 
-use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
+use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};
 
 #[tokio::test]
 async fn test_transaction_commit_map_operations() {
@@ -34,16 +32,28 @@ async fn test_transaction_commit_map_operations() {
 
     {
         let txn_map = txn.get_map::<String, String>(&map_name).unwrap();
-        txn_map.put("key1".to_string(), "value1".to_string()).await.unwrap();
-        txn_map.put("key2".to_string(), "value2".to_string()).await.unwrap();
+        txn_map
+            .put("key1".to_string(), "value1".to_string())
+            .await
+            .unwrap();
+        txn_map
+            .put("key2".to_string(), "value2".to_string())
+            .await
+            .unwrap();
     }
 
     txn.commit().await.unwrap();
     assert_eq!(txn.state(), TransactionState::Committed);
 
     let map = client.get_map::<String, String>(&map_name);
-    assert_eq!(map.get(&"key1".to_string()).await.unwrap(), Some("value1".to_string()));
-    assert_eq!(map.get(&"key2".to_string()).await.unwrap(), Some("value2".to_string()));
+    assert_eq!(
+        map.get(&"key1".to_string()).await.unwrap(),
+        Some("value1".to_string())
+    );
+    assert_eq!(
+        map.get(&"key2".to_string()).await.unwrap(),
+        Some("value2".to_string())
+    );
 
     map.clear().await.unwrap();
 }
@@ -61,7 +71,9 @@ async fn test_transaction_rollback_map_operations() {
     let map_name = unique_name("test-txn-rollback-map");
 
     let map = client.get_map::<String, String>(&map_name);
-    map.put("key1".to_string(), "original".to_string()).await.unwrap();
+    map.put("key1".to_string(), "original".to_string())
+        .await
+        .unwrap();
 
     let options = TransactionOptions::new();
     let mut txn = client.new_transaction_context(options);
@@ -70,14 +82,23 @@ async fn test_transaction_rollback_map_operations() {
 
     {
         let txn_map = txn.get_map::<String, String>(&map_name).unwrap();
-        txn_map.put("key1".to_string(), "modified".to_string()).await.unwrap();
-        txn_map.put("key2".to_string(), "new".to_string()).await.unwrap();
+        txn_map
+            .put("key1".to_string(), "modified".to_string())
+            .await
+            .unwrap();
+        txn_map
+            .put("key2".to_string(), "new".to_string())
+            .await
+            .unwrap();
     }
 
     txn.rollback().await.unwrap();
     assert_eq!(txn.state(), TransactionState::RolledBack);
 
-    assert_eq!(map.get(&"key1".to_string()).await.unwrap(), Some("original".to_string()));
+    assert_eq!(
+        map.get(&"key1".to_string()).await.unwrap(),
+        Some("original".to_string())
+    );
     assert_eq!(map.get(&"key2".to_string()).await.unwrap(), None);
 
     map.clear().await.unwrap();
@@ -205,13 +226,19 @@ async fn test_transaction_two_phase() {
 
     {
         let txn_map = txn.get_map::<String, String>(&map_name).unwrap();
-        txn_map.put("2pc-key".to_string(), "2pc-value".to_string()).await.unwrap();
+        txn_map
+            .put("2pc-key".to_string(), "2pc-value".to_string())
+            .await
+            .unwrap();
     }
 
     txn.commit().await.unwrap();
 
     let map = client.get_map::<String, String>(&map_name);
-    assert_eq!(map.get(&"2pc-key".to_string()).await.unwrap(), Some("2pc-value".to_string()));
+    assert_eq!(
+        map.get(&"2pc-key".to_string()).await.unwrap(),
+        Some("2pc-value".to_string())
+    );
 
     map.clear().await.unwrap();
 }
@@ -229,7 +256,9 @@ async fn test_transaction_isolation() {
     let map_name = unique_name("test-txn-isolation");
 
     let map = client.get_map::<String, String>(&map_name);
-    map.put("key".to_string(), "initial".to_string()).await.unwrap();
+    map.put("key".to_string(), "initial".to_string())
+        .await
+        .unwrap();
 
     let options = TransactionOptions::new();
     let mut txn = client.new_transaction_context(options);
@@ -238,7 +267,10 @@ async fn test_transaction_isolation() {
 
     {
         let txn_map = txn.get_map::<String, String>(&map_name).unwrap();
-        txn_map.put("key".to_string(), "in-transaction".to_string()).await.unwrap();
+        txn_map
+            .put("key".to_string(), "in-transaction".to_string())
+            .await
+            .unwrap();
 
         let txn_value = txn_map.get(&"key".to_string()).await.unwrap();
         assert_eq!(txn_value, Some("in-transaction".to_string()));
@@ -276,7 +308,10 @@ async fn test_transaction_map_get_and_modify() {
         let txn_map = txn.get_map::<String, i64>(&map_name).unwrap();
 
         let current = txn_map.get(&"counter".to_string()).await.unwrap().unwrap();
-        txn_map.put("counter".to_string(), current + 50).await.unwrap();
+        txn_map
+            .put("counter".to_string(), current + 50)
+            .await
+            .unwrap();
     }
 
     txn.commit().await.unwrap();
@@ -309,7 +344,10 @@ async fn test_transaction_map_contains_key() {
 
         assert!(!txn_map.contains_key(&"key".to_string()).await.unwrap());
 
-        txn_map.put("key".to_string(), "value".to_string()).await.unwrap();
+        txn_map
+            .put("key".to_string(), "value".to_string())
+            .await
+            .unwrap();
 
         assert!(txn_map.contains_key(&"key".to_string()).await.unwrap());
     }
@@ -342,8 +380,14 @@ async fn test_transaction_map_size() {
 
         assert_eq!(txn_map.size().await.unwrap(), 0);
 
-        txn_map.put("key1".to_string(), "value1".to_string()).await.unwrap();
-        txn_map.put("key2".to_string(), "value2".to_string()).await.unwrap();
+        txn_map
+            .put("key1".to_string(), "value1".to_string())
+            .await
+            .unwrap();
+        txn_map
+            .put("key2".to_string(), "value2".to_string())
+            .await
+            .unwrap();
 
         assert_eq!(txn_map.size().await.unwrap(), 2);
     }
@@ -374,10 +418,16 @@ async fn test_transaction_map_put_if_absent() {
     {
         let txn_map = txn.get_map::<String, String>(&map_name).unwrap();
 
-        let result = txn_map.put_if_absent("key".to_string(), "value1".to_string()).await.unwrap();
+        let result = txn_map
+            .put_if_absent("key".to_string(), "value1".to_string())
+            .await
+            .unwrap();
         assert!(result.is_none());
 
-        let result = txn_map.put_if_absent("key".to_string(), "value2".to_string()).await.unwrap();
+        let result = txn_map
+            .put_if_absent("key".to_string(), "value2".to_string())
+            .await
+            .unwrap();
         assert_eq!(result, Some("value1".to_string()));
 
         let current = txn_map.get(&"key".to_string()).await.unwrap();
@@ -403,7 +453,9 @@ async fn test_transaction_map_replace() {
     let map_name = unique_name("test-txn-replace");
 
     let map = client.get_map::<String, String>(&map_name);
-    map.put("key".to_string(), "original".to_string()).await.unwrap();
+    map.put("key".to_string(), "original".to_string())
+        .await
+        .unwrap();
 
     let options = TransactionOptions::new();
     let mut txn = client.new_transaction_context(options);
@@ -413,10 +465,16 @@ async fn test_transaction_map_replace() {
     {
         let txn_map = txn.get_map::<String, String>(&map_name).unwrap();
 
-        let old = txn_map.replace(&"key".to_string(), "replaced".to_string()).await.unwrap();
+        let old = txn_map
+            .replace(&"key".to_string(), "replaced".to_string())
+            .await
+            .unwrap();
         assert_eq!(old, Some("original".to_string()));
 
-        let old = txn_map.replace(&"nonexistent".to_string(), "value".to_string()).await.unwrap();
+        let old = txn_map
+            .replace(&"nonexistent".to_string(), "value".to_string())
+            .await
+            .unwrap();
         assert!(old.is_none());
     }
 
@@ -441,7 +499,9 @@ async fn test_transaction_map_delete() {
     let map_name = unique_name("test-txn-delete");
 
     let map = client.get_map::<String, String>(&map_name);
-    map.put("key".to_string(), "value".to_string()).await.unwrap();
+    map.put("key".to_string(), "value".to_string())
+        .await
+        .unwrap();
 
     let options = TransactionOptions::new();
     let mut txn = client.new_transaction_context(options);

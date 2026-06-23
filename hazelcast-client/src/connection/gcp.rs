@@ -198,10 +198,9 @@ impl GcpTokenProvider for MetadataTokenProvider {
             )));
         }
 
-        let body: Value = response
-            .json()
-            .await
-            .map_err(|e| HazelcastError::Connection(format!("Failed to parse token response: {}", e)))?;
+        let body: Value = response.json().await.map_err(|e| {
+            HazelcastError::Connection(format!("Failed to parse token response: {}", e))
+        })?;
 
         body.get("access_token")
             .and_then(|t| t.as_str())
@@ -323,7 +322,9 @@ impl GcpDiscovery {
         }
 
         let labels = instance.get("labels").and_then(|l| l.as_object())?;
-        let label_value = labels.get(&self.config.label_key).and_then(|v| v.as_str())?;
+        let label_value = labels
+            .get(&self.config.label_key)
+            .and_then(|v| v.as_str())?;
 
         if label_value != self.config.label_value {
             return None;
@@ -403,10 +404,7 @@ mod tests {
         }
     }
 
-    fn create_mock_discovery(
-        config: GcpDiscoveryConfig,
-        responses: Vec<Value>,
-    ) -> GcpDiscovery {
+    fn create_mock_discovery(config: GcpDiscoveryConfig, responses: Vec<Value>) -> GcpDiscovery {
         GcpDiscovery::with_mocks(
             config,
             Box::new(MockHttpClient::new(responses)),
@@ -457,8 +455,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_aggregated_discovery_parses_multiple_zones() {
-        let config = GcpDiscoveryConfig::new("my-project")
-            .with_label("hazelcast", "cluster-1");
+        let config = GcpDiscoveryConfig::new("my-project").with_label("hazelcast", "cluster-1");
 
         let response = json!({
             "items": {
@@ -545,8 +542,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discovery_ignores_non_running_instances() {
-        let config = GcpDiscoveryConfig::new("my-project")
-            .with_zone("us-central1-a");
+        let config = GcpDiscoveryConfig::new("my-project").with_zone("us-central1-a");
 
         let response = json!({
             "items": [
@@ -618,8 +614,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discovery_handles_empty_response() {
-        let config = GcpDiscoveryConfig::new("my-project")
-            .with_zone("us-central1-a");
+        let config = GcpDiscoveryConfig::new("my-project").with_zone("us-central1-a");
 
         let response = json!({
             "items": []
@@ -633,8 +628,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discovery_skips_instances_without_labels() {
-        let config = GcpDiscoveryConfig::new("my-project")
-            .with_zone("us-central1-a");
+        let config = GcpDiscoveryConfig::new("my-project").with_zone("us-central1-a");
 
         let response = json!({
             "items": [
@@ -703,8 +697,7 @@ mod tests {
 
     #[test]
     fn test_gcp_discovery_config_debug() {
-        let config = GcpDiscoveryConfig::new("test-project")
-            .with_zone("us-west1-a");
+        let config = GcpDiscoveryConfig::new("test-project").with_zone("us-west1-a");
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("GcpDiscoveryConfig"));
         assert!(debug_str.contains("test-project"));

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use hazelcast_client::HazelcastClient;
 
-use crate::common::{unique_name, wait_for_cluster_ready, skip_if_no_cluster};
+use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};
 
 #[tokio::test]
 async fn test_atomic_long_get_and_set() {
@@ -286,7 +286,7 @@ async fn test_atomic_long_concurrent_increments() {
     let client = Arc::new(
         HazelcastClient::new(common::default_config())
             .await
-            .expect("failed to connect")
+            .expect("failed to connect"),
     );
     let counter_name = unique_name("test-counter-concurrent");
 
@@ -300,16 +300,15 @@ async fn test_atomic_long_concurrent_increments() {
     for _ in 0..10 {
         let client_clone = Arc::clone(&client);
         let counter_name_clone = counter_name.clone();
-        
+
         let handle = tokio::spawn(async move {
-            let counter = client_clone
-                .get_atomic_long(&counter_name_clone);
-            
+            let counter = client_clone.get_atomic_long(&counter_name_clone);
+
             for _ in 0..100 {
                 counter.increment_and_get().await.unwrap();
             }
         });
-        
+
         handles.push(handle);
     }
 
@@ -332,7 +331,7 @@ async fn test_atomic_long_concurrent_cas() {
     let client = Arc::new(
         HazelcastClient::new(common::default_config())
             .await
-            .expect("failed to connect")
+            .expect("failed to connect"),
     );
     let counter_name = unique_name("test-counter-cas-concurrent");
 
@@ -348,11 +347,10 @@ async fn test_atomic_long_concurrent_cas() {
         let client_clone = Arc::clone(&client);
         let counter_name_clone = counter_name.clone();
         let success_clone = Arc::clone(&success_count);
-        
+
         let handle = tokio::spawn(async move {
-            let counter = client_clone
-                .get_atomic_long(&counter_name_clone);
-            
+            let counter = client_clone.get_atomic_long(&counter_name_clone);
+
             for _ in 0..10 {
                 loop {
                     let current = counter.get().await.unwrap();
@@ -363,7 +361,7 @@ async fn test_atomic_long_concurrent_cas() {
                 }
             }
         });
-        
+
         handles.push(handle);
     }
 
@@ -426,10 +424,10 @@ async fn test_atomic_long_multiple_counters() {
     let client = HazelcastClient::new(common::default_config())
         .await
         .expect("failed to connect");
-    
+
     let counter1_name = unique_name("test-counter-multi-1");
     let counter2_name = unique_name("test-counter-multi-2");
-    
+
     let counter1 = client.get_atomic_long(&counter1_name);
     let counter2 = client.get_atomic_long(&counter2_name);
 

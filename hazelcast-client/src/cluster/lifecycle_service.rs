@@ -34,7 +34,9 @@ impl LifecycleListenerRegistration {
     /// Receives the next lifecycle event.
     ///
     /// Returns the event or an error if the channel is closed or lagged.
-    pub async fn recv(&mut self) -> std::result::Result<LifecycleEvent, broadcast::error::RecvError> {
+    pub async fn recv(
+        &mut self,
+    ) -> std::result::Result<LifecycleEvent, broadcast::error::RecvError> {
         self.receiver.recv().await
     }
 }
@@ -262,10 +264,9 @@ mod tests {
         manager.start().await.unwrap();
 
         let mut events = Vec::new();
-        while let Ok(event) = tokio::time::timeout(
-            Duration::from_millis(100),
-            registration.recv(),
-        ).await {
+        while let Ok(event) =
+            tokio::time::timeout(Duration::from_millis(100), registration.recv()).await
+        {
             if let Ok(e) = event {
                 events.push(e);
             }

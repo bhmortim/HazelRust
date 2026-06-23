@@ -101,7 +101,10 @@ fn test_client_config_with_wan() {
         .unwrap();
 
     assert_eq!(config.network().wan_replication().len(), 1);
-    assert!(config.network().find_wan_replication("disaster-recovery").is_some());
+    assert!(config
+        .network()
+        .find_wan_replication("disaster-recovery")
+        .is_some());
 }
 
 #[test]
@@ -127,16 +130,19 @@ fn test_multiple_wan_configs_in_network() {
         .unwrap();
 
     let config = ClientConfigBuilder::new()
-        .network(|n| {
-            n.add_wan_replication(wan1)
-             .add_wan_replication(wan2)
-        })
+        .network(|n| n.add_wan_replication(wan1).add_wan_replication(wan2))
         .build()
         .unwrap();
 
     assert_eq!(config.network().wan_replication().len(), 2);
-    assert!(config.network().find_wan_replication("wan-scheme-1").is_some());
-    assert!(config.network().find_wan_replication("wan-scheme-2").is_some());
+    assert!(config
+        .network()
+        .find_wan_replication("wan-scheme-1")
+        .is_some());
+    assert!(config
+        .network()
+        .find_wan_replication("wan-scheme-2")
+        .is_some());
 }
 
 #[test]
@@ -150,7 +156,10 @@ fn test_wan_replication_ref() {
         .unwrap();
 
     assert_eq!(wan_ref.name(), "my-wan-config");
-    assert_eq!(wan_ref.merge_policy_class_name(), "com.example.CustomMergePolicy");
+    assert_eq!(
+        wan_ref.merge_policy_class_name(),
+        "com.example.CustomMergePolicy"
+    );
     assert!(wan_ref.republishing_enabled());
     assert_eq!(wan_ref.filters().len(), 2);
 }

@@ -89,7 +89,10 @@ fn test_failover_config_zero_try_count_fails() {
         .build();
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("try_count must be at least 1"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("try_count must be at least 1"));
 }
 
 #[test]
@@ -109,14 +112,8 @@ fn test_failover_config_get_config() {
         .build()
         .unwrap();
 
-    assert_eq!(
-        failover.get_config(0).unwrap().cluster_name(),
-        "cluster-1"
-    );
-    assert_eq!(
-        failover.get_config(1).unwrap().cluster_name(),
-        "cluster-2"
-    );
+    assert_eq!(failover.get_config(0).unwrap().cluster_name(), "cluster-1");
+    assert_eq!(failover.get_config(1).unwrap().cluster_name(), "cluster-2");
     assert!(failover.get_config(2).is_none());
 }
 
@@ -464,11 +461,7 @@ fn test_failover_with_multiple_addresses_per_cluster() {
         .build()
         .unwrap();
 
-    let addresses = failover
-        .get_config(0)
-        .unwrap()
-        .network()
-        .addresses();
+    let addresses = failover.get_config(0).unwrap().network().addresses();
 
     assert_eq!(addresses.len(), 3);
 }

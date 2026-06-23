@@ -218,7 +218,8 @@ impl PrometheusExporter {
         let op_name = op_type.name();
 
         counter!("hazelcast_operations_total", "operation" => op_name).increment(1);
-        histogram!("hazelcast_operation_latency_seconds", "operation" => op_name).record(latency.as_secs_f64());
+        histogram!("hazelcast_operation_latency_seconds", "operation" => op_name)
+            .record(latency.as_secs_f64());
     }
 
     /// Records an operation without latency tracking.
@@ -263,13 +264,16 @@ impl PrometheusExporter {
         }
 
         for (map_name, cache_stats) in stats.near_cache_stats() {
-            gauge!("hazelcast_near_cache_hits_total", "map" => map_name.clone()).set(cache_stats.hits() as f64);
-            gauge!("hazelcast_near_cache_misses_total", "map" => map_name.clone()).set(cache_stats.misses() as f64);
+            gauge!("hazelcast_near_cache_hits_total", "map" => map_name.clone())
+                .set(cache_stats.hits() as f64);
+            gauge!("hazelcast_near_cache_misses_total", "map" => map_name.clone())
+                .set(cache_stats.misses() as f64);
             gauge!("hazelcast_near_cache_evictions_total", "map" => map_name.clone())
                 .set(cache_stats.evictions() as f64);
             gauge!("hazelcast_near_cache_expirations_total", "map" => map_name.clone())
                 .set(cache_stats.expirations() as f64);
-            gauge!("hazelcast_near_cache_hit_ratio", "map" => map_name.clone()).set(cache_stats.hit_ratio());
+            gauge!("hazelcast_near_cache_hit_ratio", "map" => map_name.clone())
+                .set(cache_stats.hit_ratio());
         }
 
         let mem_stats = stats.memory_stats();

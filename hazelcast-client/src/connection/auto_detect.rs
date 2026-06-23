@@ -330,10 +330,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_aws() {
-        let discovery = create_mock_auto_detect(
-            MockDetector::aws(),
-            vec!["127.0.0.1:5701".parse().unwrap()],
-        );
+        let discovery =
+            create_mock_auto_detect(MockDetector::aws(), vec!["127.0.0.1:5701".parse().unwrap()]);
 
         let env = discovery.detect_environment().await;
         assert_eq!(env, DetectedEnvironment::Aws);
@@ -352,10 +350,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_gcp() {
-        let discovery = create_mock_auto_detect(
-            MockDetector::gcp(),
-            vec!["127.0.0.1:5701".parse().unwrap()],
-        );
+        let discovery =
+            create_mock_auto_detect(MockDetector::gcp(), vec!["127.0.0.1:5701".parse().unwrap()]);
 
         let env = discovery.detect_environment().await;
         assert_eq!(env, DetectedEnvironment::Gcp);
@@ -458,7 +454,10 @@ mod tests {
 
     #[test]
     fn test_detected_environment_eq() {
-        assert_eq!(DetectedEnvironment::Kubernetes, DetectedEnvironment::Kubernetes);
+        assert_eq!(
+            DetectedEnvironment::Kubernetes,
+            DetectedEnvironment::Kubernetes
+        );
         assert_ne!(DetectedEnvironment::Aws, DetectedEnvironment::Azure);
     }
 
@@ -486,10 +485,7 @@ mod tests {
             gcp: false,
         };
 
-        let discovery = create_mock_auto_detect(
-            detector,
-            vec!["127.0.0.1:5701".parse().unwrap()],
-        );
+        let discovery = create_mock_auto_detect(detector, vec!["127.0.0.1:5701".parse().unwrap()]);
 
         let env = discovery.detect_environment().await;
         assert_eq!(env, DetectedEnvironment::Kubernetes);
@@ -505,10 +501,7 @@ mod tests {
             gcp: false,
         };
 
-        let discovery = create_mock_auto_detect(
-            detector,
-            vec!["127.0.0.1:5701".parse().unwrap()],
-        );
+        let discovery = create_mock_auto_detect(detector, vec!["127.0.0.1:5701".parse().unwrap()]);
 
         let env = discovery.detect_environment().await;
         assert_eq!(env, DetectedEnvironment::Aws);

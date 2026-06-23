@@ -52,7 +52,11 @@ impl AwsDiscoveryConfig {
     }
 
     /// Sets AWS access credentials.
-    pub fn with_credentials(mut self, access_key: impl Into<String>, secret_key: impl Into<String>) -> Self {
+    pub fn with_credentials(
+        mut self,
+        access_key: impl Into<String>,
+        secret_key: impl Into<String>,
+    ) -> Self {
         self.access_key = Some(access_key.into());
         self.secret_key = Some(secret_key.into());
         self
@@ -158,7 +162,10 @@ pub struct DiscoveredInstance {
 #[async_trait]
 pub trait Ec2ClientProvider: Send + Sync {
     /// Describes EC2 instances matching the given filters.
-    async fn describe_instances(&self, filters: Vec<InstanceFilter>) -> Result<Vec<DiscoveredInstance>>;
+    async fn describe_instances(
+        &self,
+        filters: Vec<InstanceFilter>,
+    ) -> Result<Vec<DiscoveredInstance>>;
 }
 
 /// Production EC2 client using AWS SDK.
@@ -175,11 +182,16 @@ impl AwsSdkEc2Client {
 
 #[async_trait]
 impl Ec2ClientProvider for AwsSdkEc2Client {
-    async fn describe_instances(&self, filters: Vec<InstanceFilter>) -> Result<Vec<DiscoveredInstance>> {
+    async fn describe_instances(
+        &self,
+        filters: Vec<InstanceFilter>,
+    ) -> Result<Vec<DiscoveredInstance>> {
         let mut config_loader = aws_config::from_env()
             .region(aws_sdk_ec2::config::Region::new(self.config.region.clone()));
 
-        if let (Some(access_key), Some(secret_key)) = (&self.config.access_key, &self.config.secret_key) {
+        if let (Some(access_key), Some(secret_key)) =
+            (&self.config.access_key, &self.config.secret_key)
+        {
             let credentials = aws_sdk_ec2::config::Credentials::new(
                 access_key.clone(),
                 secret_key.clone(),
@@ -247,7 +259,10 @@ impl AwsDiscovery {
     }
 
     #[cfg(test)]
-    fn with_mock_client(config: AwsDiscoveryConfig, ec2_client: Box<dyn Ec2ClientProvider>) -> Self {
+    fn with_mock_client(
+        config: AwsDiscoveryConfig,
+        ec2_client: Box<dyn Ec2ClientProvider>,
+    ) -> Self {
         Self { config, ec2_client }
     }
 
@@ -264,10 +279,7 @@ impl AwsDiscovery {
         )];
 
         if let Some(sg) = &self.config.security_group {
-            filters.push(InstanceFilter::new(
-                "instance.group-id",
-                vec![sg.clone()],
-            ));
+            filters.push(InstanceFilter::new("instance.group-id", vec![sg.clone()]));
         }
 
         if let (Some(key), Some(value)) = (&self.config.tag_key, &self.config.tag_value) {
@@ -311,7 +323,10 @@ impl ClusterDiscovery for AwsDiscovery {
         if addresses.is_empty() {
             tracing::warn!("AWS discovery found no Hazelcast members");
         } else {
-            tracing::info!("AWS discovery found {} Hazelcast member(s)", addresses.len());
+            tracing::info!(
+                "AWS discovery found {} Hazelcast member(s)",
+                addresses.len()
+            );
         }
 
         Ok(addresses)
@@ -346,7 +361,10 @@ mod tests {
 
     #[async_trait]
     impl Ec2ClientProvider for MockEc2Client {
-        async fn describe_instances(&self, _filters: Vec<InstanceFilter>) -> Result<Vec<DiscoveredInstance>> {
+        async fn describe_instances(
+            &self,
+            _filters: Vec<InstanceFilter>,
+        ) -> Result<Vec<DiscoveredInstance>> {
             if self.should_error {
                 return Err(HazelcastError::Connection("Mock EC2 API error".into()));
             }
@@ -391,8 +409,7 @@ mod tests {
 
     #[test]
     fn test_aws_discovery_creation() {
-        let config = AwsDiscoveryConfig::new("ap-southeast-1")
-            .with_tag("Name", "hazelcast-node");
+        let config = AwsDiscoveryConfig::new("ap-southeast-1").with_tag("Name", "hazelcast-node");
 
         let discovery = AwsDiscovery::new(config);
         assert_eq!(discovery.config().region(), "ap-southeast-1");
@@ -428,8 +445,7 @@ mod tests {
 
     #[test]
     fn test_aws_config_clone() {
-        let config = AwsDiscoveryConfig::new("eu-central-1")
-            .with_tag("cluster", "test");
+        let config = AwsDiscoveryConfig::new("eu-central-1").with_tag("cluster", "test");
 
         let cloned = config.clone();
         assert_eq!(cloned.region(), "eu-central-1");
@@ -444,8 +460,7 @@ mod tests {
 
     #[test]
     fn test_aws_config_debug() {
-        let config = AwsDiscoveryConfig::new("us-east-2")
-            .with_security_group("sg-test");
+        let config = AwsDiscoveryConfig::new("us-east-2").with_security_group("sg-test");
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("us-east-2"));
         assert!(debug_str.contains("sg-test"));
@@ -533,11 +548,15 @@ mod tests {
     #[tokio::test]
     async fn test_aws_discovery_handles_api_error() {
         let config = AwsDiscoveryConfig::new("us-west-2");
-        let discovery = AwsDiscovery::with_mock_client(config, Box::new(MockEc2Client::with_error()));
+        let discovery =
+            AwsDiscovery::with_mock_client(config, Box::new(MockEc2Client::with_error()));
 
         let result = discovery.discover().await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Mock EC2 API error"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Mock EC2 API error"));
     }
 
     #[tokio::test]
@@ -586,7 +605,9 @@ mod tests {
         let discovery = create_mock_discovery(config.clone(), instances);
         let filters = discovery.build_filters();
 
-        assert!(filters.iter().any(|f| f.name == "tag:hazelcast:cluster" && f.values == vec!["production"]));
+        assert!(filters
+            .iter()
+            .any(|f| f.name == "tag:hazelcast:cluster" && f.values == vec!["production"]));
 
         let addresses = discovery.discover().await.unwrap();
         assert_eq!(addresses.len(), 3);
@@ -595,8 +616,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_aws_discovery_with_security_group() {
-        let config = AwsDiscoveryConfig::new("ap-northeast-1")
-            .with_security_group("sg-hazelcast-cluster");
+        let config =
+            AwsDiscoveryConfig::new("ap-northeast-1").with_security_group("sg-hazelcast-cluster");
 
         let instances = vec![DiscoveredInstance {
             private_ip: Some("192.168.1.100".to_string()),
@@ -606,7 +627,9 @@ mod tests {
         let discovery = create_mock_discovery(config, instances);
         let filters = discovery.build_filters();
 
-        assert!(filters.iter().any(|f| f.name == "instance.group-id" && f.values == vec!["sg-hazelcast-cluster"]));
+        assert!(filters
+            .iter()
+            .any(|f| f.name == "instance.group-id" && f.values == vec!["sg-hazelcast-cluster"]));
 
         let addresses = discovery.discover().await.unwrap();
         assert_eq!(addresses.len(), 1);
@@ -615,7 +638,8 @@ mod tests {
 
     #[test]
     fn test_instance_filter_new() {
-        let filter = InstanceFilter::new("tag:Name", vec!["value1".to_string(), "value2".to_string()]);
+        let filter =
+            InstanceFilter::new("tag:Name", vec!["value1".to_string(), "value2".to_string()]);
         assert_eq!(filter.name, "tag:Name");
         assert_eq!(filter.values.len(), 2);
     }

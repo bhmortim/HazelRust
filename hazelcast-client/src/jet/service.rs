@@ -181,8 +181,9 @@ impl JetService {
         let response = self.connection_manager.send(message).await?;
         let status_value = self.decode_int_response(&response)?;
 
-        JobStatus::from_wire_format(status_value)
-            .ok_or_else(|| HazelcastError::IllegalState(format!("unknown job status: {}", status_value)))
+        JobStatus::from_wire_format(status_value).ok_or_else(|| {
+            HazelcastError::IllegalState(format!("unknown job status: {}", status_value))
+        })
     }
 
     /// Cancels a job by its ID.
@@ -243,7 +244,11 @@ impl JetService {
 
         data.push(if config.auto_scaling() { 1 } else { 0 });
 
-        data.push(if config.split_brain_protection() { 1 } else { 0 });
+        data.push(if config.split_brain_protection() {
+            1
+        } else {
+            0
+        });
 
         data.push(if config.suspend_on_failure() { 1 } else { 0 });
 
@@ -285,9 +290,10 @@ impl JetService {
 
                 for _ in 0..count {
                     if offset + 8 <= content.len() {
-                        let id_bytes: [u8; 8] = content[offset..offset + 8]
-                            .try_into()
-                            .map_err(|_| HazelcastError::Serialization("invalid job id".to_string()))?;
+                        let id_bytes: [u8; 8] =
+                            content[offset..offset + 8].try_into().map_err(|_| {
+                                HazelcastError::Serialization("invalid job id".to_string())
+                            })?;
                         job_ids.push(i64::from_le_bytes(id_bytes));
                         offset += 8;
                     }

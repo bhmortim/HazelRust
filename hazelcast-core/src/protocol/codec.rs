@@ -55,8 +55,7 @@ impl Decoder for ClientMessageCodec {
                 return Ok(None);
             }
 
-            let frame_length =
-                u32::from_le_bytes([src[0], src[1], src[2], src[3]]) as usize;
+            let frame_length = u32::from_le_bytes([src[0], src[1], src[2], src[3]]) as usize;
 
             // frame_length is total frame size (including the 4-byte length prefix)
             if src.len() < frame_length {
@@ -138,11 +137,13 @@ mod tests {
     #[test]
     fn test_decode_incomplete_frame() {
         let mut codec = ClientMessageCodec::new();
-        let mut buf = BytesMut::from(&[
-            0x10, 0x00, 0x00, 0x00, // length = 16
-            0x00, 0x80, // BEGIN flag
-            0x01, 0x02, // only 2 bytes of content (need 14 more)
-        ][..]);
+        let mut buf = BytesMut::from(
+            &[
+                0x10, 0x00, 0x00, 0x00, // length = 16
+                0x00, 0x80, // BEGIN flag
+                0x01, 0x02, // only 2 bytes of content (need 14 more)
+            ][..],
+        );
 
         let result = codec.decode(&mut buf).unwrap();
         assert!(result.is_none());

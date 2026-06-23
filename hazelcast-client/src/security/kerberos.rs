@@ -203,8 +203,7 @@ mod tests {
 
     #[test]
     fn test_kerberos_credentials_full_principal_with_realm() {
-        let creds = KerberosCredentials::new("hz/hazelcast")
-            .with_realm("EXAMPLE.COM");
+        let creds = KerberosCredentials::new("hz/hazelcast").with_realm("EXAMPLE.COM");
 
         assert_eq!(creds.full_service_principal(), "hz/hazelcast@EXAMPLE.COM");
     }
@@ -217,8 +216,7 @@ mod tests {
 
     #[test]
     fn test_kerberos_credentials_clone() {
-        let creds = KerberosCredentials::new("hz/test")
-            .with_realm("TEST.COM");
+        let creds = KerberosCredentials::new("hz/test").with_realm("TEST.COM");
         let cloned = creds.clone();
 
         assert_eq!(cloned.service_principal(), creds.service_principal());
@@ -269,8 +267,8 @@ mod tests {
         let creds = KerberosCredentials::new("hz/test");
         let auth = KerberosAuthenticator::new(creds);
 
-        let custom = CustomCredentials::new("kerberos")
-            .with_attribute("token", b"some-token".to_vec());
+        let custom =
+            CustomCredentials::new("kerberos").with_attribute("token", b"some-token".to_vec());
         let credentials = Credentials::Custom(custom);
 
         let bytes = auth.serialize_credentials(&credentials);
@@ -365,7 +363,8 @@ mod tests {
         // Response should contain the service principal and the challenge
         assert!(!response.is_empty());
         // Verify the principal string is in the response
-        let principal_len = i32::from_be_bytes([response[0], response[1], response[2], response[3]]);
+        let principal_len =
+            i32::from_be_bytes([response[0], response[1], response[2], response[3]]);
         assert_eq!(principal_len as usize, "hz/test@TEST.COM".len());
     }
 }

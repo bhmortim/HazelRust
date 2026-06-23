@@ -240,7 +240,10 @@ pub struct JwtValidationResult {
 fn extract_exp_claim(payload: &str) -> (Option<i64>, bool) {
     if let Some(exp_pos) = payload.find("\"exp\"") {
         let after_exp = &payload[exp_pos + 5..];
-        let after_colon = after_exp.trim_start().strip_prefix(':').unwrap_or(after_exp);
+        let after_colon = after_exp
+            .trim_start()
+            .strip_prefix(':')
+            .unwrap_or(after_exp);
         let value_str = after_colon.trim_start();
 
         let end_pos = value_str
@@ -575,14 +578,8 @@ mod tests {
         let cluster_uuid = uuid::Uuid::new_v4();
         let cluster_id = uuid::Uuid::new_v4();
 
-        let response = AuthResponse::new_authenticated(
-            member_uuid,
-            cluster_uuid,
-            1,
-            271,
-            cluster_id,
-            true,
-        );
+        let response =
+            AuthResponse::new_authenticated(member_uuid, cluster_uuid, 1, 271, cluster_id, true);
 
         assert_eq!(response.status, AuthResponse::STATUS_AUTHENTICATED);
         assert_eq!(response.member_uuid, Some(member_uuid));
@@ -662,8 +659,7 @@ mod tests {
     #[test]
     fn test_default_authenticator_serialize_custom() {
         let auth = DefaultAuthenticator::new();
-        let custom = CustomCredentials::new("test-type")
-            .with_attribute("attr", b"value".to_vec());
+        let custom = CustomCredentials::new("test-type").with_attribute("attr", b"value".to_vec());
         let creds = Credentials::Custom(custom);
 
         let bytes = auth.serialize_credentials(&creds);

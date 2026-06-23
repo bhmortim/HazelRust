@@ -11,16 +11,15 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use hazelcast_core::protocol::{
-    ClientMessage, Frame,
-    DURABLE_EXECUTOR_SUBMIT_TO_PARTITION, DURABLE_EXECUTOR_RETRIEVE_RESULT,
-    DURABLE_EXECUTOR_DISPOSE_RESULT, DURABLE_EXECUTOR_RETRIEVE_AND_DISPOSE_RESULT,
-    DURABLE_EXECUTOR_SHUTDOWN, DURABLE_EXECUTOR_IS_SHUTDOWN,
-    PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    ClientMessage, Frame, DURABLE_EXECUTOR_DISPOSE_RESULT, DURABLE_EXECUTOR_IS_SHUTDOWN,
+    DURABLE_EXECUTOR_RETRIEVE_AND_DISPOSE_RESULT, DURABLE_EXECUTOR_RETRIEVE_RESULT,
+    DURABLE_EXECUTOR_SHUTDOWN, DURABLE_EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY,
+    RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
 
-use crate::connection::ConnectionManager;
 use super::{Callable, CallableTask};
+use crate::connection::ConnectionManager;
 
 /// A handle to a durable executor task result.
 ///
@@ -74,9 +73,7 @@ impl<T: Deserializable> DurableFuture<T> {
     pub async fn get(mut self) -> Result<T> {
         if let Some(receiver) = self.receiver.take() {
             receiver.await.map_err(|_| {
-                HazelcastError::Connection(
-                    "Durable executor task was cancelled".to_string(),
-                )
+                HazelcastError::Connection("Durable executor task was cancelled".to_string())
             })?
         } else {
             Err(HazelcastError::IllegalState(
@@ -130,10 +127,8 @@ impl DurableExecutorService {
         let callable_task = CallableTask::<R>::new(task)?;
         let partition_id = self.select_partition();
 
-        let mut message = ClientMessage::create_for_encode(
-            DURABLE_EXECUTOR_SUBMIT_TO_PARTITION,
-            partition_id,
-        );
+        let mut message =
+            ClientMessage::create_for_encode(DURABLE_EXECUTOR_SUBMIT_TO_PARTITION, partition_id);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(callable_task.data()));
 
@@ -145,13 +140,9 @@ impl DurableExecutorService {
         let name = self.name.clone();
 
         tokio::spawn(async move {
-            let result = retrieve_result_internal::<R>(
-                &connection_manager,
-                &name,
-                sequence,
-                partition_id,
-            )
-            .await;
+            let result =
+                retrieve_result_internal::<R>(&connection_manager, &name, sequence, partition_id)
+                    .await;
             let _ = sender.send(result);
         });
 
@@ -179,10 +170,8 @@ impl DurableExecutorService {
     {
         let callable_task = CallableTask::<R>::new(task)?;
 
-        let mut message = ClientMessage::create_for_encode(
-            DURABLE_EXECUTOR_SUBMIT_TO_PARTITION,
-            partition_id,
-        );
+        let mut message =
+            ClientMessage::create_for_encode(DURABLE_EXECUTOR_SUBMIT_TO_PARTITION, partition_id);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(callable_task.data()));
 
@@ -194,13 +183,9 @@ impl DurableExecutorService {
         let name = self.name.clone();
 
         tokio::spawn(async move {
-            let result = retrieve_result_internal::<R>(
-                &connection_manager,
-                &name,
-                sequence,
-                partition_id,
-            )
-            .await;
+            let result =
+                retrieve_result_internal::<R>(&connection_manager, &name, sequence, partition_id)
+                    .await;
             let _ = sender.send(result);
         });
 
@@ -214,11 +199,7 @@ impl DurableExecutorService {
     }
 
     /// Submits a callable task to the partition owning the specified key.
-    pub async fn submit_to_key_owner<T, R, K>(
-        &self,
-        task: &T,
-        key: &K,
-    ) -> Result<DurableFuture<R>>
+    pub async fn submit_to_key_owner<T, R, K>(&self, task: &T, key: &K) -> Result<DurableFuture<R>>
     where
         T: Callable<R>,
         R: Deserializable + Send + 'static,
@@ -237,23 +218,16 @@ impl DurableExecutorService {
     where
         R: Deserializable,
     {
-        retrieve_result_internal::<R>(
-            &self.connection_manager,
-            &self.name,
-            sequence,
-            partition_id,
-        )
-        .await
+        retrieve_result_internal::<R>(&self.connection_manager, &self.name, sequence, partition_id)
+            .await
     }
 
     /// Disposes of a task result, releasing server-side resources.
     ///
     /// After disposal, the result can no longer be retrieved.
     pub async fn dispose_result(&self, sequence: i64, partition_id: i32) -> Result<()> {
-        let mut message = ClientMessage::create_for_encode(
-            DURABLE_EXECUTOR_DISPOSE_RESULT,
-            partition_id,
-        );
+        let mut message =
+            ClientMessage::create_for_encode(DURABLE_EXECUTOR_DISPOSE_RESULT, partition_id);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(sequence));
 
@@ -288,10 +262,8 @@ impl DurableExecutorService {
     ///
     /// After shutdown, no new tasks can be submitted.
     pub async fn shutdown(&self) -> Result<()> {
-        let mut message = ClientMessage::create_for_encode(
-            DURABLE_EXECUTOR_SHUTDOWN,
-            PARTITION_ID_ANY,
-        );
+        let mut message =
+            ClientMessage::create_for_encode(DURABLE_EXECUTOR_SHUTDOWN, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
         self.invoke(message).await?;
@@ -300,10 +272,8 @@ impl DurableExecutorService {
 
     /// Checks if the durable executor service is shut down.
     pub async fn is_shutdown(&self) -> Result<bool> {
-        let mut message = ClientMessage::create_for_encode(
-            DURABLE_EXECUTOR_IS_SHUTDOWN,
-            PARTITION_ID_ANY,
-        );
+        let mut message =
+            ClientMessage::create_for_encode(DURABLE_EXECUTOR_IS_SHUTDOWN, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
         let response = self.invoke(message).await?;
@@ -313,9 +283,9 @@ impl DurableExecutorService {
     fn select_partition(&self) -> i32 {
         let uuid = Uuid::new_v4();
         let bytes = uuid.as_bytes();
-        let hash = bytes.iter().fold(0u32, |acc, &b| {
-            acc.wrapping_mul(31).wrapping_add(b as u32)
-        });
+        let hash = bytes
+            .iter()
+            .fold(0u32, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u32));
         (hash % 271) as i32
     }
 
@@ -366,7 +336,9 @@ impl DurableExecutorService {
         }
         let content = frames[0].content();
         if content.len() < RESPONSE_HEADER_SIZE + 1 {
-            return Err(HazelcastError::Serialization("Invalid response".to_string()));
+            return Err(HazelcastError::Serialization(
+                "Invalid response".to_string(),
+            ));
         }
         Ok(content[RESPONSE_HEADER_SIZE] != 0)
     }
@@ -378,7 +350,9 @@ impl DurableExecutorService {
         }
         let content = frames[0].content();
         if content.len() < RESPONSE_HEADER_SIZE + 8 {
-            return Err(HazelcastError::Serialization("Invalid response".to_string()));
+            return Err(HazelcastError::Serialization(
+                "Invalid response".to_string(),
+            ));
         }
         let bytes: [u8; 8] = content[RESPONSE_HEADER_SIZE..RESPONSE_HEADER_SIZE + 8]
             .try_into()
@@ -415,10 +389,8 @@ async fn retrieve_result_internal<R: Deserializable>(
     sequence: i64,
     partition_id: i32,
 ) -> Result<R> {
-    let mut message = ClientMessage::create_for_encode(
-        DURABLE_EXECUTOR_RETRIEVE_RESULT,
-        partition_id,
-    );
+    let mut message =
+        ClientMessage::create_for_encode(DURABLE_EXECUTOR_RETRIEVE_RESULT, partition_id);
     message.add_frame(DurableExecutorService::string_frame(name));
     message.add_frame(DurableExecutorService::long_frame(sequence));
 

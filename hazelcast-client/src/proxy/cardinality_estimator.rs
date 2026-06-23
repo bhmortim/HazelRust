@@ -103,7 +103,8 @@ where
     /// // estimate will be approximately 1000 (with some error margin)
     /// ```
     pub async fn estimate(&self) -> Result<i64> {
-        let mut message = ClientMessage::create_for_encode_any_partition(CARDINALITY_ESTIMATOR_ESTIMATE);
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(CARDINALITY_ESTIMATOR_ESTIMATE);
         message.add_frame(Self::string_frame(&self.name));
 
         let response = self.invoke(message).await?;
@@ -126,17 +127,16 @@ where
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_long_response(response: &ClientMessage) -> Result<i64> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];

@@ -9,8 +9,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::local_stats::{LatencyStats, LatencyTracker};
 
 use bytes::BytesMut;
-use tokio::spawn;
-use uuid::Uuid;
 use hazelcast_core::protocol::constants::{
     IS_EVENT_FLAG, IS_NULL_FLAG, PARTITION_ID_ANY, REPLICATED_MAP_ADD_ENTRY_LISTENER,
     REPLICATED_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, REPLICATED_MAP_CLEAR,
@@ -23,11 +21,13 @@ use hazelcast_core::protocol::constants::{
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use tokio::spawn;
+use uuid::Uuid;
 
 use crate::connection::ConnectionManager;
 use crate::listener::{
-    dispatch_entry_event, BoxedEntryListener, EntryEvent, EntryEventType,
-    EntryListenerConfig, ListenerId, ListenerRegistration, ListenerStats,
+    dispatch_entry_event, BoxedEntryListener, EntryEvent, EntryEventType, EntryListenerConfig,
+    ListenerId, ListenerRegistration, ListenerStats,
 };
 
 #[allow(dead_code)]
@@ -240,7 +240,8 @@ where
         let value_data = Self::serialize_value(&value)?;
         let ttl_millis = ttl.as_millis() as i64;
 
-        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_PUT_WITH_TTL, PARTITION_ID_ANY);
+        let mut message =
+            ClientMessage::create_for_encode(REPLICATED_MAP_PUT_WITH_TTL, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
@@ -267,7 +268,8 @@ where
             serialized_entries.push((key_data, value_data));
         }
 
-        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_PUT_ALL, PARTITION_ID_ANY);
+        let mut message =
+            ClientMessage::create_for_encode(REPLICATED_MAP_PUT_ALL, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::int_frame(serialized_entries.len() as i32));
 
@@ -313,7 +315,8 @@ where
     pub async fn contains_key(&self, key: &K) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
 
-        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_CONTAINS_KEY, PARTITION_ID_ANY);
+        let mut message =
+            ClientMessage::create_for_encode(REPLICATED_MAP_CONTAINS_KEY, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -325,7 +328,8 @@ where
     pub async fn contains_value(&self, value: &V) -> Result<bool> {
         let value_data = Self::serialize_value(value)?;
 
-        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_CONTAINS_VALUE, PARTITION_ID_ANY);
+        let mut message =
+            ClientMessage::create_for_encode(REPLICATED_MAP_CONTAINS_VALUE, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&value_data));
 
@@ -344,7 +348,8 @@ where
 
     /// Returns `true` if this map contains no key-value mappings.
     pub async fn is_empty(&self) -> Result<bool> {
-        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_IS_EMPTY, PARTITION_ID_ANY);
+        let mut message =
+            ClientMessage::create_for_encode(REPLICATED_MAP_IS_EMPTY, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
         let response = self.invoke_on_random(message).await?;
@@ -362,7 +367,8 @@ where
 
     /// Returns a collection view of the keys contained in this map.
     pub async fn key_set(&self) -> Result<Vec<K>> {
-        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_KEY_SET, PARTITION_ID_ANY);
+        let mut message =
+            ClientMessage::create_for_encode(REPLICATED_MAP_KEY_SET, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
         let response = self.invoke_on_random(message).await?;
@@ -380,7 +386,8 @@ where
 
     /// Returns a collection view of the mappings contained in this map.
     pub async fn entry_set(&self) -> Result<Vec<(K, V)>> {
-        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_ENTRY_SET, PARTITION_ID_ANY);
+        let mut message =
+            ClientMessage::create_for_encode(REPLICATED_MAP_ENTRY_SET, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
         let response = self.invoke_on_random(message).await?;
@@ -649,8 +656,10 @@ where
     pub async fn remove_entry_listener(&self, registration: &ListenerRegistration) -> Result<bool> {
         registration.deactivate();
 
-        let mut message =
-            ClientMessage::create_for_encode(REPLICATED_MAP_REMOVE_ENTRY_LISTENER, PARTITION_ID_ANY);
+        let mut message = ClientMessage::create_for_encode(
+            REPLICATED_MAP_REMOVE_ENTRY_LISTENER,
+            PARTITION_ID_ANY,
+        );
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::uuid_frame(registration.id().as_uuid()));
 
@@ -792,7 +801,10 @@ where
             let mut key_input = ObjectDataInput::new(&key_frame.content);
             let mut value_input = ObjectDataInput::new(&value_frame.content);
 
-            if let (Ok(key), Ok(value)) = (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
+            if let (Ok(key), Ok(value)) = (
+                K::deserialize(&mut key_input),
+                V::deserialize(&mut value_input),
+            ) {
                 entries.push((key, value));
             }
 
@@ -855,7 +867,10 @@ where
         true
     }
 
-    fn decode_entry_event(message: &ClientMessage, include_value: bool) -> Result<EntryEvent<K, V>> {
+    fn decode_entry_event(
+        message: &ClientMessage,
+        include_value: bool,
+    ) -> Result<EntryEvent<K, V>> {
         let frames = message.frames();
         if frames.len() < 3 {
             return Err(HazelcastError::Serialization(

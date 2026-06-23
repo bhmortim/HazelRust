@@ -104,7 +104,11 @@ mod tests {
             value.map(|v| format!("{}{}", self.prefix, v))
         }
 
-        fn intercept_put(&self, _old_value: Option<Self::Value>, new_value: Self::Value) -> Self::Value {
+        fn intercept_put(
+            &self,
+            _old_value: Option<Self::Value>,
+            new_value: Self::Value,
+        ) -> Self::Value {
             format!("{}{}", self.prefix, new_value)
         }
 
@@ -112,7 +116,10 @@ mod tests {
     }
 
     impl Serializable for TestInterceptor {
-        fn serialize<W: hazelcast_core::serialization::DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
+        fn serialize<W: hazelcast_core::serialization::DataOutput>(
+            &self,
+            output: &mut W,
+        ) -> hazelcast_core::Result<()> {
             output.write_string(&self.prefix)?;
             Ok(())
         }

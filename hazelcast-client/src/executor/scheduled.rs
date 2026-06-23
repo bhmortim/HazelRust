@@ -8,20 +8,19 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use hazelcast_core::protocol::{
-    ClientMessage, Frame,
-    SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION, SCHEDULED_EXECUTOR_SUBMIT_TO_MEMBER,
-    SCHEDULED_EXECUTOR_SHUTDOWN, SCHEDULED_EXECUTOR_IS_SHUTDOWN,
-    SCHEDULED_EXECUTOR_CANCEL_FROM_PARTITION, SCHEDULED_EXECUTOR_CANCEL_FROM_MEMBER,
-    SCHEDULED_EXECUTOR_IS_DONE_FROM_PARTITION, SCHEDULED_EXECUTOR_IS_DONE_FROM_MEMBER,
-    SCHEDULED_EXECUTOR_GET_DELAY_FROM_PARTITION, SCHEDULED_EXECUTOR_GET_DELAY_FROM_MEMBER,
-    SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION, SCHEDULED_EXECUTOR_DISPOSE,
-    PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    ClientMessage, Frame, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    SCHEDULED_EXECUTOR_CANCEL_FROM_MEMBER, SCHEDULED_EXECUTOR_CANCEL_FROM_PARTITION,
+    SCHEDULED_EXECUTOR_DISPOSE, SCHEDULED_EXECUTOR_GET_DELAY_FROM_MEMBER,
+    SCHEDULED_EXECUTOR_GET_DELAY_FROM_PARTITION, SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION,
+    SCHEDULED_EXECUTOR_IS_DONE_FROM_MEMBER, SCHEDULED_EXECUTOR_IS_DONE_FROM_PARTITION,
+    SCHEDULED_EXECUTOR_IS_SHUTDOWN, SCHEDULED_EXECUTOR_SHUTDOWN,
+    SCHEDULED_EXECUTOR_SUBMIT_TO_MEMBER, SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION,
 };
 use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
 
+use super::{Callable, CallableTask};
 use crate::connection::ConnectionManager;
 use crate::listener::Member;
-use super::{Callable, CallableTask};
 
 /// Unit of time for scheduled tasks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,9 +113,7 @@ impl<T: Deserializable> ScheduledFuture<T> {
         }
 
         let (message_type, partition_id) = match &self.target {
-            ScheduledTaskTarget::Partition(pid) => {
-                (SCHEDULED_EXECUTOR_CANCEL_FROM_PARTITION, *pid)
-            }
+            ScheduledTaskTarget::Partition(pid) => (SCHEDULED_EXECUTOR_CANCEL_FROM_PARTITION, *pid),
             ScheduledTaskTarget::Member(_) => {
                 (SCHEDULED_EXECUTOR_CANCEL_FROM_MEMBER, PARTITION_ID_ANY)
             }
@@ -216,7 +213,8 @@ impl<T: Deserializable> ScheduledFuture<T> {
             ScheduledTaskTarget::Member(_) => PARTITION_ID_ANY,
         };
 
-        let mut message = ClientMessage::create_for_encode(SCHEDULED_EXECUTOR_DISPOSE, partition_id);
+        let mut message =
+            ClientMessage::create_for_encode(SCHEDULED_EXECUTOR_DISPOSE, partition_id);
         message.add_frame(Self::string_frame(&self.scheduler_name));
         message.add_frame(Self::string_frame(&self.task_name));
         if let ScheduledTaskTarget::Member(uuid) = &self.target {
@@ -303,7 +301,9 @@ impl<T: Deserializable> ScheduledFuture<T> {
         }
         let content = frames[0].content();
         if content.len() < RESPONSE_HEADER_SIZE + 1 {
-            return Err(HazelcastError::Serialization("Invalid response".to_string()));
+            return Err(HazelcastError::Serialization(
+                "Invalid response".to_string(),
+            ));
         }
         Ok(content[RESPONSE_HEADER_SIZE] != 0)
     }
@@ -315,7 +315,9 @@ impl<T: Deserializable> ScheduledFuture<T> {
         }
         let content = frames[0].content();
         if content.len() < RESPONSE_HEADER_SIZE + 8 {
-            return Err(HazelcastError::Serialization("Invalid response".to_string()));
+            return Err(HazelcastError::Serialization(
+                "Invalid response".to_string(),
+            ));
         }
         let bytes: [u8; 8] = content[RESPONSE_HEADER_SIZE..RESPONSE_HEADER_SIZE + 8]
             .try_into()
@@ -382,8 +384,10 @@ impl ScheduledExecutorService {
         let task_name = format!("task-{}", Uuid::new_v4());
         let delay_nanos = delay.as_nanos() as i64;
 
-        let mut message =
-            ClientMessage::create_for_encode(SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY);
+        let mut message = ClientMessage::create_for_encode(
+            SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION,
+            PARTITION_ID_ANY,
+        );
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::byte_frame(ScheduleType::SingleRun as u8));
         message.add_frame(Self::string_frame(&task_name));
@@ -455,8 +459,10 @@ impl ScheduledExecutorService {
         let delay_nanos = initial_delay.as_nanos() as i64;
         let period_nanos = period.as_nanos() as i64;
 
-        let mut message =
-            ClientMessage::create_for_encode(SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY);
+        let mut message = ClientMessage::create_for_encode(
+            SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION,
+            PARTITION_ID_ANY,
+        );
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::byte_frame(ScheduleType::AtFixedRate as u8));
         message.add_frame(Self::string_frame(&task_name));
@@ -561,8 +567,10 @@ impl ScheduledExecutorService {
         let initial_nanos = initial_delay.as_nanos() as i64;
         let delay_nanos = delay.as_nanos() as i64;
 
-        let mut message =
-            ClientMessage::create_for_encode(SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY);
+        let mut message = ClientMessage::create_for_encode(
+            SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION,
+            PARTITION_ID_ANY,
+        );
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::byte_frame(ScheduleType::WithFixedDelay as u8));
         message.add_frame(Self::string_frame(&task_name));
@@ -657,7 +665,9 @@ impl ScheduledExecutorService {
         }
         let content = frames[0].content();
         if content.len() < RESPONSE_HEADER_SIZE + 1 {
-            return Err(HazelcastError::Serialization("Invalid response".to_string()));
+            return Err(HazelcastError::Serialization(
+                "Invalid response".to_string(),
+            ));
         }
         Ok(content[RESPONSE_HEADER_SIZE] != 0)
     }
@@ -693,7 +703,10 @@ mod tests {
     fn test_schedule_type_debug() {
         assert_eq!(format!("{:?}", ScheduleType::SingleRun), "SingleRun");
         assert_eq!(format!("{:?}", ScheduleType::AtFixedRate), "AtFixedRate");
-        assert_eq!(format!("{:?}", ScheduleType::WithFixedDelay), "WithFixedDelay");
+        assert_eq!(
+            format!("{:?}", ScheduleType::WithFixedDelay),
+            "WithFixedDelay"
+        );
     }
 
     #[test]

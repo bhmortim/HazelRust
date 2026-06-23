@@ -12,10 +12,10 @@ use std::time::Duration;
 
 use bytes::BytesMut;
 use futures::Stream;
+use std::sync::Mutex;
 use tokio::spawn;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use std::sync::Mutex;
 
 use hazelcast_core::protocol::constants::{
     CACHE_ADD_ENTRY_LISTENER, CACHE_CLEAR, CACHE_CONTAINS_KEY, CACHE_EVENT_JOURNAL_READ,
@@ -1462,7 +1462,12 @@ where
     /// let policy = ExpiryPolicy::ttl(Duration::from_secs(300));
     /// cache.put_with_expiry("key".to_string(), "value".to_string(), &policy).await?;
     /// ```
-    pub async fn put_with_expiry(&self, key: K, value: V, expiry_policy: &ExpiryPolicy) -> Result<()> {
+    pub async fn put_with_expiry(
+        &self,
+        key: K,
+        value: V,
+        expiry_policy: &ExpiryPolicy,
+    ) -> Result<()> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
         let partition_id = compute_partition_hash(&key_data);
@@ -1546,11 +1551,7 @@ where
     /// let processor = IncrementProcessor { delta: 10 };
     /// let result = cache.invoke_processor(&"counter".to_string(), &processor).await?;
     /// ```
-    pub async fn invoke_processor<P>(
-        &self,
-        key: &K,
-        processor: &P,
-    ) -> Result<Option<P::Output>>
+    pub async fn invoke_processor<P>(&self, key: &K, processor: &P) -> Result<Option<P::Output>>
     where
         P: EntryProcessor,
         P::Output: Deserializable,
@@ -1621,7 +1622,8 @@ where
         K: 'static,
         V: 'static,
     {
-        let (oldest_sequence, _newest_sequence) = self.subscribe_to_event_journal(partition_id).await?;
+        let (oldest_sequence, _newest_sequence) =
+            self.subscribe_to_event_journal(partition_id).await?;
 
         let start_sequence = if config.start_sequence < 0 {
             oldest_sequence
@@ -1698,9 +1700,10 @@ where
         message.add_frame(Self::int_frame(max_size));
 
         let addresses = connection_manager.connected_addresses().await;
-        let address = addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })?;
+        let address = addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))?;
 
         connection_manager.send_to(address, message).await?;
         let response = connection_manager
@@ -1803,16 +1806,12 @@ where
             };
             frame_idx += 1;
 
-            let event_type =
-                EventJournalCacheEventType::from_value(event_type_value).unwrap_or(EventJournalCacheEventType::Created);
+            let event_type = EventJournalCacheEventType::from_value(event_type_value)
+                .unwrap_or(EventJournalCacheEventType::Created);
 
             let sequence_frame = &frames[frame_idx];
             let sequence = if sequence_frame.content.len() >= 8 {
-                i64::from_le_bytes(
-                    sequence_frame.content[..8]
-                        .try_into()
-                        .unwrap_or([0u8; 8]),
-                )
+                i64::from_le_bytes(sequence_frame.content[..8].try_into().unwrap_or([0u8; 8]))
             } else {
                 0
             };
@@ -1908,9 +1907,10 @@ where
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_nullable_response<T: Deserializable>(response: &ClientMessage) -> Result<Option<T>> {
@@ -2010,7 +2010,10 @@ where
             let mut key_input = ObjectDataInput::new(&key_frame.content);
             let mut value_input = ObjectDataInput::new(&value_frame.content);
 
-            if let (Ok(key), Ok(value)) = (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
+            if let (Ok(key), Ok(value)) = (
+                K::deserialize(&mut key_input),
+                V::deserialize(&mut value_input),
+            ) {
                 entries.insert(key, value);
             }
 
@@ -2054,7 +2057,8 @@ where
         K: 'static,
         V: 'static,
     {
-        let mut message = ClientMessage::create_for_encode(CACHE_ADD_ENTRY_LISTENER, PARTITION_ID_ANY);
+        let mut message =
+            ClientMessage::create_for_encode(CACHE_ADD_ENTRY_LISTENER, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::bool_frame(config.old_value_required));
         message.add_frame(Self::bool_frame(config.synchronous));
@@ -2130,7 +2134,8 @@ where
     ) -> Result<bool> {
         registration.deactivate();
 
-        let mut message = ClientMessage::create_for_encode(CACHE_REMOVE_ENTRY_LISTENER, PARTITION_ID_ANY);
+        let mut message =
+            ClientMessage::create_for_encode(CACHE_REMOVE_ENTRY_LISTENER, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::uuid_frame(registration.id().as_uuid()));
 
@@ -2387,8 +2392,14 @@ mod tests {
 
     #[test]
     fn test_event_journal_cache_event_type_equality() {
-        assert_eq!(EventJournalCacheEventType::Created, EventJournalCacheEventType::Created);
-        assert_ne!(EventJournalCacheEventType::Created, EventJournalCacheEventType::Removed);
+        assert_eq!(
+            EventJournalCacheEventType::Created,
+            EventJournalCacheEventType::Created
+        );
+        assert_ne!(
+            EventJournalCacheEventType::Created,
+            EventJournalCacheEventType::Removed
+        );
     }
 
     #[test]
@@ -2520,16 +2531,44 @@ mod tests {
         let expired = Arc::clone(&expired_count);
 
         let listener: FnCacheEntryListener<String, i32> = FnCacheEntryListener::builder()
-            .on_created(move |_| { created.fetch_add(1, Ordering::Relaxed); })
-            .on_updated(move |_| { updated.fetch_add(1, Ordering::Relaxed); })
-            .on_removed(move |_| { removed.fetch_add(1, Ordering::Relaxed); })
-            .on_expired(move |_| { expired.fetch_add(1, Ordering::Relaxed); })
+            .on_created(move |_| {
+                created.fetch_add(1, Ordering::Relaxed);
+            })
+            .on_updated(move |_| {
+                updated.fetch_add(1, Ordering::Relaxed);
+            })
+            .on_removed(move |_| {
+                removed.fetch_add(1, Ordering::Relaxed);
+            })
+            .on_expired(move |_| {
+                expired.fetch_add(1, Ordering::Relaxed);
+            })
             .build();
 
-        listener.on_created(CacheEntryEvent::new("k".to_string(), None, Some(1), EventJournalCacheEventType::Created));
-        listener.on_updated(CacheEntryEvent::new("k".to_string(), Some(1), Some(2), EventJournalCacheEventType::Updated));
-        listener.on_removed(CacheEntryEvent::new("k".to_string(), Some(2), None, EventJournalCacheEventType::Removed));
-        listener.on_expired(CacheEntryEvent::new("k".to_string(), Some(3), None, EventJournalCacheEventType::Expired));
+        listener.on_created(CacheEntryEvent::new(
+            "k".to_string(),
+            None,
+            Some(1),
+            EventJournalCacheEventType::Created,
+        ));
+        listener.on_updated(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(1),
+            Some(2),
+            EventJournalCacheEventType::Updated,
+        ));
+        listener.on_removed(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(2),
+            None,
+            EventJournalCacheEventType::Removed,
+        ));
+        listener.on_expired(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(3),
+            None,
+            EventJournalCacheEventType::Expired,
+        ));
 
         assert_eq!(created_count.load(Ordering::Relaxed), 1);
         assert_eq!(updated_count.load(Ordering::Relaxed), 1);
@@ -2545,12 +2584,29 @@ mod tests {
         let count_clone = Arc::clone(&count);
 
         let listener: FnCacheEntryListener<String, i32> = FnCacheEntryListener::builder()
-            .on_created(move |_| { count_clone.fetch_add(1, Ordering::Relaxed); })
+            .on_created(move |_| {
+                count_clone.fetch_add(1, Ordering::Relaxed);
+            })
             .build();
 
-        listener.on_created(CacheEntryEvent::new("k".to_string(), None, Some(1), EventJournalCacheEventType::Created));
-        listener.on_updated(CacheEntryEvent::new("k".to_string(), Some(1), Some(2), EventJournalCacheEventType::Updated));
-        listener.on_removed(CacheEntryEvent::new("k".to_string(), Some(2), None, EventJournalCacheEventType::Removed));
+        listener.on_created(CacheEntryEvent::new(
+            "k".to_string(),
+            None,
+            Some(1),
+            EventJournalCacheEventType::Created,
+        ));
+        listener.on_updated(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(1),
+            Some(2),
+            EventJournalCacheEventType::Updated,
+        ));
+        listener.on_removed(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(2),
+            None,
+            EventJournalCacheEventType::Removed,
+        ));
 
         assert_eq!(count.load(Ordering::Relaxed), 1);
     }
@@ -2616,9 +2672,7 @@ mod tests {
 
     #[test]
     fn test_cache_entry_listener_config_accepts() {
-        let config = CacheEntryListenerConfig::new()
-            .on_created()
-            .on_updated();
+        let config = CacheEntryListenerConfig::new().on_created().on_updated();
 
         assert!(config.accepts(EventJournalCacheEventType::Created));
         assert!(config.accepts(EventJournalCacheEventType::Updated));
@@ -2633,10 +2687,30 @@ mod tests {
 
         let listener = EmptyListener;
 
-        listener.on_created(CacheEntryEvent::new("k".to_string(), None, Some(1), EventJournalCacheEventType::Created));
-        listener.on_updated(CacheEntryEvent::new("k".to_string(), Some(1), Some(2), EventJournalCacheEventType::Updated));
-        listener.on_removed(CacheEntryEvent::new("k".to_string(), Some(2), None, EventJournalCacheEventType::Removed));
-        listener.on_expired(CacheEntryEvent::new("k".to_string(), Some(3), None, EventJournalCacheEventType::Expired));
+        listener.on_created(CacheEntryEvent::new(
+            "k".to_string(),
+            None,
+            Some(1),
+            EventJournalCacheEventType::Created,
+        ));
+        listener.on_updated(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(1),
+            Some(2),
+            EventJournalCacheEventType::Updated,
+        ));
+        listener.on_removed(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(2),
+            None,
+            EventJournalCacheEventType::Removed,
+        ));
+        listener.on_expired(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(3),
+            None,
+            EventJournalCacheEventType::Expired,
+        ));
     }
 
     #[test]
@@ -2661,8 +2735,15 @@ mod tests {
             }
         }
 
-        let listener = CreatedListener { count: AtomicU32::new(0) };
-        listener.on_created(CacheEntryEvent::new("k".to_string(), None, Some(1), EventJournalCacheEventType::Created));
+        let listener = CreatedListener {
+            count: AtomicU32::new(0),
+        };
+        listener.on_created(CacheEntryEvent::new(
+            "k".to_string(),
+            None,
+            Some(1),
+            EventJournalCacheEventType::Created,
+        ));
         assert_eq!(listener.count.load(Ordering::Relaxed), 1);
     }
 
@@ -2680,8 +2761,15 @@ mod tests {
             }
         }
 
-        let listener = UpdatedListener { count: AtomicU32::new(0) };
-        listener.on_updated(CacheEntryEvent::new("k".to_string(), Some(1), Some(2), EventJournalCacheEventType::Updated));
+        let listener = UpdatedListener {
+            count: AtomicU32::new(0),
+        };
+        listener.on_updated(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(1),
+            Some(2),
+            EventJournalCacheEventType::Updated,
+        ));
         assert_eq!(listener.count.load(Ordering::Relaxed), 1);
     }
 
@@ -2699,8 +2787,15 @@ mod tests {
             }
         }
 
-        let listener = RemovedListener { count: AtomicU32::new(0) };
-        listener.on_removed(CacheEntryEvent::new("k".to_string(), Some(2), None, EventJournalCacheEventType::Removed));
+        let listener = RemovedListener {
+            count: AtomicU32::new(0),
+        };
+        listener.on_removed(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(2),
+            None,
+            EventJournalCacheEventType::Removed,
+        ));
         assert_eq!(listener.count.load(Ordering::Relaxed), 1);
     }
 
@@ -2718,8 +2813,15 @@ mod tests {
             }
         }
 
-        let listener = ExpiredListener { count: AtomicU32::new(0) };
-        listener.on_expired(CacheEntryEvent::new("k".to_string(), Some(3), None, EventJournalCacheEventType::Expired));
+        let listener = ExpiredListener {
+            count: AtomicU32::new(0),
+        };
+        listener.on_expired(CacheEntryEvent::new(
+            "k".to_string(),
+            Some(3),
+            None,
+            EventJournalCacheEventType::Expired,
+        ));
         assert_eq!(listener.count.load(Ordering::Relaxed), 1);
     }
 
@@ -2773,19 +2875,39 @@ mod tests {
 
         ICache::<String, i32>::dispatch_cache_event(
             &listener,
-            CacheEntryEvent::new("k".to_string(), None, Some(1), EventJournalCacheEventType::Created),
+            CacheEntryEvent::new(
+                "k".to_string(),
+                None,
+                Some(1),
+                EventJournalCacheEventType::Created,
+            ),
         );
         ICache::<String, i32>::dispatch_cache_event(
             &listener,
-            CacheEntryEvent::new("k".to_string(), Some(1), Some(2), EventJournalCacheEventType::Updated),
+            CacheEntryEvent::new(
+                "k".to_string(),
+                Some(1),
+                Some(2),
+                EventJournalCacheEventType::Updated,
+            ),
         );
         ICache::<String, i32>::dispatch_cache_event(
             &listener,
-            CacheEntryEvent::new("k".to_string(), Some(2), None, EventJournalCacheEventType::Removed),
+            CacheEntryEvent::new(
+                "k".to_string(),
+                Some(2),
+                None,
+                EventJournalCacheEventType::Removed,
+            ),
         );
         ICache::<String, i32>::dispatch_cache_event(
             &listener,
-            CacheEntryEvent::new("k".to_string(), Some(3), None, EventJournalCacheEventType::Expired),
+            CacheEntryEvent::new(
+                "k".to_string(),
+                Some(3),
+                None,
+                EventJournalCacheEventType::Expired,
+            ),
         );
 
         assert_eq!(listener.created.load(Ordering::Relaxed), 1);
@@ -3125,8 +3247,8 @@ mod tests {
 
     #[test]
     fn test_fn_cache_loader_builder_debug() {
-        let builder: FnCacheLoaderBuilder<String, i32> = FnCacheLoaderBuilder::new()
-            .load(|_| Ok(None));
+        let builder: FnCacheLoaderBuilder<String, i32> =
+            FnCacheLoaderBuilder::new().load(|_| Ok(None));
 
         let debug_str = format!("{:?}", builder);
         assert!(debug_str.contains("FnCacheLoaderBuilder"));

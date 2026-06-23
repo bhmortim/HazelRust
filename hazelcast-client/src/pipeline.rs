@@ -162,11 +162,7 @@ mod tests {
     async fn test_pipeline_basic() {
         let pipeline = InvocationPipeline::new(3);
 
-        let ops: Vec<_> = (0..10)
-            .map(|i| {
-                move || async move { Ok(i * 2) }
-            })
-            .collect();
+        let ops: Vec<_> = (0..10).map(|i| move || async move { Ok(i * 2) }).collect();
 
         let results = pipeline.execute(ops).await;
         assert_eq!(results.len(), 10);
@@ -180,11 +176,7 @@ mod tests {
     async fn test_pipeline_ordered() {
         let pipeline = InvocationPipeline::new(2);
 
-        let ops: Vec<_> = (0..5)
-            .map(|i| {
-                move || async move { Ok(i) }
-            })
-            .collect();
+        let ops: Vec<_> = (0..5).map(|i| move || async move { Ok(i) }).collect();
 
         let results = pipeline.execute_ordered(ops).await;
         let values: Vec<i32> = results.into_iter().map(|r| r.unwrap()).collect();
@@ -200,8 +192,9 @@ mod tests {
     #[tokio::test]
     async fn test_pipeline_empty() {
         let pipeline = InvocationPipeline::new(1);
-        let ops: Vec<Box<dyn FnOnce() -> std::pin::Pin<Box<dyn Future<Output = Result<i32>> + Send>> + Send>> =
-            vec![];
+        let ops: Vec<
+            Box<dyn FnOnce() -> std::pin::Pin<Box<dyn Future<Output = Result<i32>> + Send>> + Send>,
+        > = vec![];
         let results = pipeline.execute(ops).await;
         assert!(results.is_empty());
     }

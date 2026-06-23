@@ -128,9 +128,9 @@ struct ReqwestEurekaClient {
 
 impl ReqwestEurekaClient {
     fn new() -> Result<Self> {
-        let client = reqwest::Client::builder()
-            .build()
-            .map_err(|e| HazelcastError::Connection(format!("Failed to create HTTP client: {}", e)))?;
+        let client = reqwest::Client::builder().build().map_err(|e| {
+            HazelcastError::Connection(format!("Failed to create HTTP client: {}", e))
+        })?;
         Ok(Self { client })
     }
 }
@@ -154,10 +154,9 @@ impl EurekaHttpClient for ReqwestEurekaClient {
             )));
         }
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| HazelcastError::Connection(format!("Failed to read Eureka response: {}", e)))?;
+        let body = response.text().await.map_err(|e| {
+            HazelcastError::Connection(format!("Failed to read Eureka response: {}", e))
+        })?;
 
         parse_eureka_response(&body)
     }
@@ -279,8 +278,7 @@ fn parse_instance_object(obj: &str) -> Option<EurekaInstance> {
     let hostname = extract_json_string(obj, "hostName");
 
     // Port can be in a nested object: "port": {"$": 5701, "@enabled": "true"}
-    let port = extract_json_number(obj, "$")
-        .or_else(|| extract_json_number(obj, "port"));
+    let port = extract_json_number(obj, "$").or_else(|| extract_json_number(obj, "port"));
 
     Some(EurekaInstance {
         ip_addr,
@@ -350,7 +348,10 @@ impl EurekaDiscovery {
                 .map(|(_, v)| v.clone())
                 .or_else(|| instance.ip_addr.clone())
         } else {
-            instance.ip_addr.clone().or_else(|| instance.hostname.clone())
+            instance
+                .ip_addr
+                .clone()
+                .or_else(|| instance.hostname.clone())
         }
     }
 }
@@ -462,8 +463,8 @@ mod tests {
 
     #[test]
     fn test_config_clone() {
-        let config = EurekaDiscoveryConfig::new("http://eureka:8761/eureka")
-            .with_app_name("test-app");
+        let config =
+            EurekaDiscoveryConfig::new("http://eureka:8761/eureka").with_app_name("test-app");
         let cloned = config.clone();
         assert_eq!(cloned.service_url(), "http://eureka:8761/eureka");
         assert_eq!(cloned.app_name(), "test-app");
@@ -485,8 +486,8 @@ mod tests {
 
     #[test]
     fn test_build_eureka_url() {
-        let config = EurekaDiscoveryConfig::new("http://eureka:8761/eureka")
-            .with_app_name("my-app");
+        let config =
+            EurekaDiscoveryConfig::new("http://eureka:8761/eureka").with_app_name("my-app");
         let discovery = create_mock_discovery(config, vec![]);
         let url = discovery.build_eureka_url();
         assert_eq!(url, "http://eureka:8761/eureka/apps/my-app");
@@ -494,8 +495,8 @@ mod tests {
 
     #[test]
     fn test_build_eureka_url_trailing_slash() {
-        let config = EurekaDiscoveryConfig::new("http://eureka:8761/eureka/")
-            .with_app_name("my-app");
+        let config =
+            EurekaDiscoveryConfig::new("http://eureka:8761/eureka/").with_app_name("my-app");
         let discovery = create_mock_discovery(config, vec![]);
         let url = discovery.build_eureka_url();
         assert_eq!(url, "http://eureka:8761/eureka/apps/my-app");
@@ -503,8 +504,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discovery_returns_up_instances() {
-        let config = EurekaDiscoveryConfig::new("http://eureka:8761/eureka")
-            .with_port(5701);
+        let config = EurekaDiscoveryConfig::new("http://eureka:8761/eureka").with_port(5701);
 
         let instances = vec![
             EurekaInstance {
@@ -568,8 +568,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_discovery_uses_default_port() {
-        let config = EurekaDiscoveryConfig::new("http://eureka:8761/eureka")
-            .with_port(5702);
+        let config = EurekaDiscoveryConfig::new("http://eureka:8761/eureka").with_port(5702);
 
         let instances = vec![EurekaInstance {
             ip_addr: Some("10.0.0.1".to_string()),
@@ -598,14 +597,15 @@ mod tests {
     #[tokio::test]
     async fn test_discovery_handles_api_error() {
         let config = EurekaDiscoveryConfig::new("http://eureka:8761/eureka");
-        let discovery = EurekaDiscovery::with_mock_client(
-            config,
-            Box::new(MockEurekaClient::with_error()),
-        );
+        let discovery =
+            EurekaDiscovery::with_mock_client(config, Box::new(MockEurekaClient::with_error()));
 
         let result = discovery.discover().await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Mock Eureka API error"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Mock Eureka API error"));
     }
 
     #[tokio::test]
@@ -666,8 +666,8 @@ mod tests {
 
     #[test]
     fn test_discovery_config_accessor() {
-        let config = EurekaDiscoveryConfig::new("http://eureka:8761/eureka")
-            .with_app_name("test-app");
+        let config =
+            EurekaDiscoveryConfig::new("http://eureka:8761/eureka").with_app_name("test-app");
         let discovery = create_mock_discovery(config, vec![]);
         assert_eq!(discovery.config().app_name(), "test-app");
     }

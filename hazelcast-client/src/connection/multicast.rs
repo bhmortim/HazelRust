@@ -145,13 +145,15 @@ struct TokioMulticastSocket {
 impl TokioMulticastSocket {
     async fn new(config: &MulticastDiscoveryConfig) -> Result<Self> {
         let bind_addr: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
-        let socket = UdpSocket::bind(bind_addr)
-            .await
-            .map_err(|e| HazelcastError::Connection(format!("Failed to bind multicast socket: {}", e)))?;
+        let socket = UdpSocket::bind(bind_addr).await.map_err(|e| {
+            HazelcastError::Connection(format!("Failed to bind multicast socket: {}", e))
+        })?;
 
         socket
             .join_multicast_v4(config.group, Ipv4Addr::UNSPECIFIED)
-            .map_err(|e| HazelcastError::Connection(format!("Failed to join multicast group: {}", e)))?;
+            .map_err(|e| {
+                HazelcastError::Connection(format!("Failed to join multicast group: {}", e))
+            })?;
 
         let multicast_addr = SocketAddr::new(IpAddr::V4(config.group), config.port);
 
@@ -173,9 +175,14 @@ impl MulticastSocket for TokioMulticastSocket {
         self.socket
             .send_to(discovery_message, self.multicast_addr)
             .await
-            .map_err(|e| HazelcastError::Connection(format!("Failed to send multicast request: {}", e)))?;
+            .map_err(|e| {
+                HazelcastError::Connection(format!("Failed to send multicast request: {}", e))
+            })?;
 
-        debug!("Sent multicast discovery request to {}", self.multicast_addr);
+        debug!(
+            "Sent multicast discovery request to {}",
+            self.multicast_addr
+        );
         Ok(())
     }
 
@@ -245,7 +252,10 @@ impl MulticastDiscovery {
     }
 
     #[cfg(test)]
-    fn with_mock_socket(config: MulticastDiscoveryConfig, socket: Box<dyn MulticastSocket>) -> Self {
+    fn with_mock_socket(
+        config: MulticastDiscoveryConfig,
+        socket: Box<dyn MulticastSocket>,
+    ) -> Self {
         Self {
             config,
             mock_socket: Some(socket),
@@ -349,14 +359,18 @@ mod tests {
     impl MulticastSocket for MockMulticastSocket {
         async fn send_discovery_request(&self) -> Result<()> {
             if self.should_error {
-                return Err(HazelcastError::Connection("Mock multicast send error".into()));
+                return Err(HazelcastError::Connection(
+                    "Mock multicast send error".into(),
+                ));
             }
             Ok(())
         }
 
         async fn receive_responses(&self, _timeout: Duration) -> Result<Vec<SocketAddr>> {
             if self.should_error {
-                return Err(HazelcastError::Connection("Mock multicast receive error".into()));
+                return Err(HazelcastError::Connection(
+                    "Mock multicast receive error".into(),
+                ));
             }
             Ok(self.addresses.lock().unwrap().clone())
         }
@@ -477,8 +491,8 @@ mod tests {
 
     #[test]
     fn test_trusted_interface_wildcard_match() {
-        let config = MulticastDiscoveryConfig::new()
-            .with_trusted_interfaces(vec!["10.0.0.*".to_string()]);
+        let config =
+            MulticastDiscoveryConfig::new().with_trusted_interfaces(vec!["10.0.0.*".to_string()]);
         let discovery = MulticastDiscovery::new(config);
 
         let trusted: SocketAddr = "10.0.0.5:5701".parse().unwrap();
@@ -506,8 +520,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_discovery_filters_untrusted() {
-        let config = MulticastDiscoveryConfig::new()
-            .with_trusted_interfaces(vec!["10.0.0.*".to_string()]);
+        let config =
+            MulticastDiscoveryConfig::new().with_trusted_interfaces(vec!["10.0.0.*".to_string()]);
 
         let addresses = vec![
             "10.0.0.1:5701".parse().unwrap(),
@@ -542,13 +556,15 @@ mod tests {
 
         let result = discovery.discover().await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Mock multicast send error"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Mock multicast send error"));
     }
 
     #[test]
     fn test_discovery_config_accessor() {
-        let config = MulticastDiscoveryConfig::new()
-            .with_group(Ipv4Addr::new(239, 1, 1, 1));
+        let config = MulticastDiscoveryConfig::new().with_group(Ipv4Addr::new(239, 1, 1, 1));
         let discovery = MulticastDiscovery::new(config);
 
         assert_eq!(discovery.config().group(), Ipv4Addr::new(239, 1, 1, 1));

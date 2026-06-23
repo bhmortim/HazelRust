@@ -10,19 +10,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::local_stats::{LatencyStats, LatencyTracker};
 
 use bytes::BytesMut;
-use tokio::spawn;
-use uuid::Uuid;
 use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{
     compute_partition_hash, ClientMessage, Deserializable, HazelcastError, Result, Serializable,
 };
+use tokio::spawn;
+use uuid::Uuid;
 
 use crate::connection::ConnectionManager;
 use crate::listener::{
-    dispatch_entry_event, BoxedEntryListener, EntryEvent, EntryEventType,
-    EntryListenerConfig, ListenerId, ListenerRegistration, ListenerStats,
+    dispatch_entry_event, BoxedEntryListener, EntryEvent, EntryEventType, EntryListenerConfig,
+    ListenerId, ListenerRegistration, ListenerStats,
 };
 
 static MULTIMAP_INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -601,8 +601,14 @@ where
         Frame::with_content(buf)
     }
 
-    async fn invoke_on_partition(&self, partition_id: i32, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_partition(partition_id, message).await
+    async fn invoke_on_partition(
+        &self,
+        partition_id: i32,
+        message: ClientMessage,
+    ) -> Result<ClientMessage> {
+        self.connection_manager
+            .invoke_on_partition(partition_id, message)
+            .await
     }
 
     async fn invoke_on_random(&self, message: ClientMessage) -> Result<ClientMessage> {
@@ -612,9 +618,7 @@ where
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -628,9 +632,7 @@ where
     fn decode_int_response(response: &ClientMessage) -> Result<i32> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -687,7 +689,10 @@ where
             let mut key_input = ObjectDataInput::new(&key_frame.content);
             let mut value_input = ObjectDataInput::new(&value_frame.content);
 
-            if let (Ok(key), Ok(value)) = (K::deserialize(&mut key_input), V::deserialize(&mut value_input)) {
+            if let (Ok(key), Ok(value)) = (
+                K::deserialize(&mut key_input),
+                V::deserialize(&mut value_input),
+            ) {
                 entries.push((key, value));
             }
 
@@ -754,7 +759,10 @@ where
         true
     }
 
-    fn decode_entry_event(message: &ClientMessage, include_value: bool) -> Result<EntryEvent<K, V>> {
+    fn decode_entry_event(
+        message: &ClientMessage,
+        include_value: bool,
+    ) -> Result<EntryEvent<K, V>> {
         let frames = message.frames();
         if frames.len() < 3 {
             return Err(HazelcastError::Serialization(
@@ -1036,8 +1044,10 @@ where
         K: 'static,
         V: 'static,
     {
-        let mut message =
-            ClientMessage::create_for_encode(MULTI_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, PARTITION_ID_ANY);
+        let mut message = ClientMessage::create_for_encode(
+            MULTI_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE,
+            PARTITION_ID_ANY,
+        );
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::bool_frame(config.include_value));
         message.add_frame(Self::int_frame(config.event_flags()));

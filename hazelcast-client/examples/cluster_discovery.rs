@@ -66,8 +66,7 @@ fn aws_discovery() {
     println!("--------------------");
     println!("Discovers cluster members using EC2 instance tags.\n");
 
-    let aws = AwsDiscoveryConfig::new("us-east-1")
-        .with_tag("hazelcast-cluster", "prod-cluster");
+    let aws = AwsDiscoveryConfig::new("us-east-1").with_tag("hazelcast-cluster", "prod-cluster");
 
     let _config = ClientConfig::builder()
         .cluster_name("production")

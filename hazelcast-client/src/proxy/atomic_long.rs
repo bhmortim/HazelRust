@@ -47,7 +47,9 @@ impl AtomicLong {
     }
 
     async fn check_quorum(&self, is_read: bool) -> Result<()> {
-        self.connection_manager.check_quorum(&self.name, is_read).await
+        self.connection_manager
+            .check_quorum(&self.name, is_read)
+            .await
     }
 
     /// Gets the current value.
@@ -77,7 +79,8 @@ impl AtomicLong {
     pub async fn get_and_set(&self, value: i64) -> Result<i64> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET_AND_SET);
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET_AND_SET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(value));
 
@@ -91,7 +94,8 @@ impl AtomicLong {
     pub async fn compare_and_set(&self, expected: i64, update: i64) -> Result<bool> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_COMPARE_AND_SET);
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_COMPARE_AND_SET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(expected));
         message.add_frame(Self::long_frame(update));
@@ -124,7 +128,8 @@ impl AtomicLong {
     pub async fn add_and_get(&self, delta: i64) -> Result<i64> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_ADD_AND_GET);
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_ADD_AND_GET);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(delta));
 
@@ -136,7 +141,8 @@ impl AtomicLong {
     pub async fn get_and_add(&self, delta: i64) -> Result<i64> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET_AND_ADD);
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET_AND_ADD);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::long_frame(delta));
 
@@ -162,17 +168,16 @@ impl AtomicLong {
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_long_response(response: &ClientMessage) -> Result<i64> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -196,9 +201,7 @@ impl AtomicLong {
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
         let frames = response.frames();
         if frames.is_empty() {
-            return Err(HazelcastError::Serialization(
-                "empty response".to_string(),
-            ));
+            return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
         let initial_frame = &frames[0];
@@ -231,7 +234,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_atomic_long_permission_denied_get() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 
@@ -252,7 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_atomic_long_permission_denied_set() {
-        use crate::config::{ClientConfigBuilder, Permissions, PermissionAction};
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
         use crate::connection::ConnectionManager;
         use std::sync::Arc;
 

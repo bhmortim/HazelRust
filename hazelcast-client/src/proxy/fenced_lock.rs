@@ -187,9 +187,8 @@ impl FencedLock {
     }
 
     async fn get_lock_ownership_state(&self) -> Result<LockOwnershipState> {
-        let mut message = ClientMessage::create_for_encode_any_partition(
-            CP_FENCED_LOCK_GET_LOCK_OWNERSHIP_STATE,
-        );
+        let mut message =
+            ClientMessage::create_for_encode_any_partition(CP_FENCED_LOCK_GET_LOCK_OWNERSHIP_STATE);
         message.add_frame(Self::string_frame(&self.name));
 
         let response = self.invoke(message).await?;
@@ -202,8 +201,7 @@ impl FencedLock {
     async fn ensure_session(&mut self) -> Result<()> {
         if let Some(ref sm) = self.session_manager {
             if self.session_id == NO_SESSION_ID {
-                let group_id =
-                    crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                let group_id = crate::cluster::CPGroupId::new(&self.name, 0, 0);
                 self.session_id = sm.acquire_session(&group_id).await?;
             }
         }
@@ -214,8 +212,7 @@ impl FencedLock {
     async fn release_session(&mut self) {
         if let Some(ref sm) = self.session_manager {
             if self.session_id != NO_SESSION_ID {
-                let group_id =
-                    crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                let group_id = crate::cluster::CPGroupId::new(&self.name, 0, 0);
                 sm.release_session(&group_id, self.session_id).await;
             }
         }
@@ -228,8 +225,7 @@ impl FencedLock {
                 if let HazelcastError::Server { code, .. } = error {
                     if code.value() == 76 {
                         // CpSessionNotFound
-                        let group_id =
-                            crate::cluster::CPGroupId::new(&self.name, 0, 0);
+                        let group_id = crate::cluster::CPGroupId::new(&self.name, 0, 0);
                         sm.invalidate_session(&group_id, self.session_id).await;
                         self.session_id = NO_SESSION_ID;
                     }
@@ -286,9 +282,10 @@ impl FencedLock {
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_fence_response(response: &ClientMessage) -> Result<i64> {
@@ -540,11 +537,7 @@ mod tests {
                 .unwrap(),
         ));
         let sm = Arc::new(CPSessionManager::new(Arc::clone(&cm)));
-        let lock = FencedLock::with_session_manager(
-            "test-lock".to_string(),
-            cm,
-            sm,
-        );
+        let lock = FencedLock::with_session_manager("test-lock".to_string(), cm, sm);
         assert_eq!(lock.session_id, NO_SESSION_ID);
         assert!(lock.session_manager.is_some());
     }

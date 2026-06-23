@@ -304,20 +304,24 @@ mod tests {
 
     #[test]
     fn test_read_incomplete_content() {
-        let mut buf = BytesMut::from(&[
-            0x0A, 0x00, 0x00, 0x00, // length = 10 (4+2+4 content, prefix-inclusive)
-            0x00, 0x80, // flags
-            0x01, 0x02, // only 2 bytes of content (incomplete)
-        ][..]);
+        let mut buf = BytesMut::from(
+            &[
+                0x0A, 0x00, 0x00, 0x00, // length = 10 (4+2+4 content, prefix-inclusive)
+                0x00, 0x80, // flags
+                0x01, 0x02, // only 2 bytes of content (incomplete)
+            ][..],
+        );
         assert!(Frame::read_from(&mut buf).is_none());
     }
 
     #[test]
     fn test_read_empty_frame() {
-        let mut buf = BytesMut::from(&[
-            0x06, 0x00, 0x00, 0x00, // length = 6 (4+2+0 content, prefix-inclusive)
-            0x00, 0x40, // END_FLAG
-        ][..]);
+        let mut buf = BytesMut::from(
+            &[
+                0x06, 0x00, 0x00, 0x00, // length = 6 (4+2+0 content, prefix-inclusive)
+                0x00, 0x40, // END_FLAG
+            ][..],
+        );
 
         let frame = Frame::read_from(&mut buf).unwrap();
         assert!(frame.is_end_frame());

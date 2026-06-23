@@ -428,13 +428,14 @@ mod tests {
     #[test]
     fn test_sql_value_timestamp_with_timezone() {
         let offset = FixedOffset::east_opt(3600).unwrap(); // UTC+1
-        let dt = offset
-            .with_ymd_and_hms(2024, 6, 15, 14, 30, 45)
-            .unwrap();
+        let dt = offset.with_ymd_and_hms(2024, 6, 15, 14, 30, 45).unwrap();
         let value = SqlValue::TimestampWithTimeZone(dt);
         if let SqlValue::TimestampWithTimeZone(ts) = value {
             assert_eq!(ts.offset().local_minus_utc(), 3600);
-            assert_eq!(ts.naive_local().date(), NaiveDate::from_ymd_opt(2024, 6, 15).unwrap());
+            assert_eq!(
+                ts.naive_local().date(),
+                NaiveDate::from_ymd_opt(2024, 6, 15).unwrap()
+            );
         } else {
             panic!("Expected TimestampWithTimeZone variant");
         }

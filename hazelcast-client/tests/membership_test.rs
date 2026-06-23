@@ -116,12 +116,11 @@ async fn test_multiple_member_events() {
 
     tx.send(MemberEvent::member_added(member1.clone())).unwrap();
     tx.send(MemberEvent::member_added(member2.clone())).unwrap();
-    tx.send(MemberEvent::member_removed(member1.clone())).unwrap();
+    tx.send(MemberEvent::member_removed(member1.clone()))
+        .unwrap();
     tx.send(MemberEvent::member_added(member3.clone())).unwrap();
 
-    let events: Vec<_> = (0..4)
-        .map(|_| rx.try_recv().unwrap())
-        .collect();
+    let events: Vec<_> = (0..4).map(|_| rx.try_recv().unwrap()).collect();
 
     assert_eq!(events[0].event_type, MemberEventType::Added);
     assert_eq!(events[1].event_type, MemberEventType::Added);
@@ -133,7 +132,10 @@ async fn test_multiple_member_events() {
 fn test_member_with_attributes() {
     let member = create_member_with_attrs(5701, "us-east-1");
 
-    assert_eq!(member.attributes().get("zone"), Some(&"us-east-1".to_string()));
+    assert_eq!(
+        member.attributes().get("zone"),
+        Some(&"us-east-1".to_string())
+    );
     assert!(!member.is_lite_member());
 }
 

@@ -182,9 +182,13 @@ async fn test_replicated_map_key_set() {
 
     map.clear().await.expect("Failed to clear map");
 
-    map.put("alpha".to_string(), 1).await.expect("Failed to put");
+    map.put("alpha".to_string(), 1)
+        .await
+        .expect("Failed to put");
     map.put("beta".to_string(), 2).await.expect("Failed to put");
-    map.put("gamma".to_string(), 3).await.expect("Failed to put");
+    map.put("gamma".to_string(), 3)
+        .await
+        .expect("Failed to put");
 
     let keys = map.key_set().await.expect("Failed to get key_set");
     assert_eq!(keys.len(), 3);

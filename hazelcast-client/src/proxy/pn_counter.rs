@@ -4,10 +4,10 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use bytes::BytesMut;
-use uuid::Uuid;
 use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::{ClientMessage, HazelcastError, Result};
+use uuid::Uuid;
 
 use crate::connection::ConnectionManager;
 
@@ -33,14 +33,18 @@ struct ReplicaTimestampVector {
 impl ReplicaTimestampVector {
     /// Creates a new empty timestamp vector.
     fn new() -> Self {
-        Self { timestamps: Vec::new() }
+        Self {
+            timestamps: Vec::new(),
+        }
     }
 
     /// Merges observed timestamps from a response into this vector.
     /// For each replica, keeps the maximum observed timestamp.
     fn merge(&mut self, other: &[ReplicaTimestamp]) {
         for incoming in other {
-            if let Some(existing) = self.timestamps.iter_mut()
+            if let Some(existing) = self
+                .timestamps
+                .iter_mut()
                 .find(|t| t.replica_id == incoming.replica_id)
             {
                 if incoming.timestamp > existing.timestamp {
@@ -206,9 +210,10 @@ impl PNCounter {
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
         let addresses = self.connection_manager.connected_addresses().await;
-        addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     /// Decodes a PNCounter response, extracts the value and updates observed timestamps.
@@ -232,7 +237,9 @@ impl PNCounter {
                 initial_frame.content[offset + 7],
             ])
         } else {
-            return Err(HazelcastError::Serialization("response too short".to_string()));
+            return Err(HazelcastError::Serialization(
+                "response too short".to_string(),
+            ));
         };
 
         if frames.len() > 1 {
@@ -402,7 +409,10 @@ mod tests {
     fn test_replica_timestamp_vector_merge_new_replica() {
         let mut vector = ReplicaTimestampVector::new();
         let uuid = Uuid::new_v4();
-        let incoming = vec![ReplicaTimestamp { replica_id: uuid, timestamp: 100 }];
+        let incoming = vec![ReplicaTimestamp {
+            replica_id: uuid,
+            timestamp: 100,
+        }];
 
         vector.merge(&incoming);
 
@@ -416,12 +426,21 @@ mod tests {
         let mut vector = ReplicaTimestampVector::new();
         let uuid = Uuid::new_v4();
 
-        vector.merge(&[ReplicaTimestamp { replica_id: uuid, timestamp: 100 }]);
+        vector.merge(&[ReplicaTimestamp {
+            replica_id: uuid,
+            timestamp: 100,
+        }]);
 
-        vector.merge(&[ReplicaTimestamp { replica_id: uuid, timestamp: 50 }]);
+        vector.merge(&[ReplicaTimestamp {
+            replica_id: uuid,
+            timestamp: 50,
+        }]);
         assert_eq!(vector.timestamps[0].timestamp, 100);
 
-        vector.merge(&[ReplicaTimestamp { replica_id: uuid, timestamp: 200 }]);
+        vector.merge(&[ReplicaTimestamp {
+            replica_id: uuid,
+            timestamp: 200,
+        }]);
         assert_eq!(vector.timestamps[0].timestamp, 200);
     }
 
@@ -432,8 +451,14 @@ mod tests {
         let uuid2 = Uuid::new_v4();
 
         vector.merge(&[
-            ReplicaTimestamp { replica_id: uuid1, timestamp: 100 },
-            ReplicaTimestamp { replica_id: uuid2, timestamp: 200 },
+            ReplicaTimestamp {
+                replica_id: uuid1,
+                timestamp: 100,
+            },
+            ReplicaTimestamp {
+                replica_id: uuid2,
+                timestamp: 200,
+            },
         ]);
 
         assert_eq!(vector.timestamps.len(), 2);
@@ -445,20 +470,29 @@ mod tests {
         let frame = vector.to_frame();
 
         assert_eq!(frame.content.len(), 4);
-        assert_eq!(i32::from_le_bytes(frame.content[..4].try_into().unwrap()), 0);
+        assert_eq!(
+            i32::from_le_bytes(frame.content[..4].try_into().unwrap()),
+            0
+        );
     }
 
     #[test]
     fn test_replica_timestamp_vector_to_frame_with_entries() {
         let mut vector = ReplicaTimestampVector::new();
         let uuid = Uuid::from_u64_pair(0x1234567890ABCDEF, 0xFEDCBA0987654321);
-        vector.merge(&[ReplicaTimestamp { replica_id: uuid, timestamp: 42 }]);
+        vector.merge(&[ReplicaTimestamp {
+            replica_id: uuid,
+            timestamp: 42,
+        }]);
 
         let frame = vector.to_frame();
 
         assert_eq!(frame.content.len(), 28);
 
-        assert_eq!(i32::from_le_bytes(frame.content[0..4].try_into().unwrap()), 1);
+        assert_eq!(
+            i32::from_le_bytes(frame.content[0..4].try_into().unwrap()),
+            1
+        );
 
         let most = i64::from_le_bytes(frame.content[4..12].try_into().unwrap()) as u64;
         assert_eq!(most, 0x1234567890ABCDEF);

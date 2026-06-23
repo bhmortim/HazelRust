@@ -368,8 +368,8 @@ mod tests {
     fn test_management_center_service_with_instance_name() {
         let collector = Arc::new(StatisticsCollector::new());
         let config = ManagementCenterConfig::default();
-        let service = ManagementCenterService::new(collector, config)
-            .with_instance_name("client-1");
+        let service =
+            ManagementCenterService::new(collector, config).with_instance_name("client-1");
 
         assert_eq!(service.instance_name(), Some("client-1"));
     }
@@ -567,7 +567,8 @@ mod tests {
         let collector = Arc::new(StatisticsCollector::new());
         let stats = collector.collect(0).await;
 
-        let result = publish_statistics("http://localhost:8080/stats", &stats, false, &[], None).await;
+        let result =
+            publish_statistics("http://localhost:8080/stats", &stats, false, &[], None).await;
         assert!(result.is_ok());
     }
 
@@ -576,7 +577,8 @@ mod tests {
         let collector = Arc::new(StatisticsCollector::new());
         let stats = collector.collect(0).await;
 
-        let result = publish_statistics("https://mc.example.com/stats", &stats, true, &[], None).await;
+        let result =
+            publish_statistics("https://mc.example.com/stats", &stats, true, &[], None).await;
         assert!(result.is_ok());
     }
 
@@ -592,7 +594,8 @@ mod tests {
             false,
             &labels,
             Some("test-instance"),
-        ).await;
+        )
+        .await;
         assert!(result.is_ok());
     }
 
@@ -603,7 +606,8 @@ mod tests {
         collector.record_bytes_sent(500);
 
         let stats = collector.collect(1).await;
-        let encoded = encode_statistics_message(&stats, &["test:label".to_string()], Some("test-instance"));
+        let encoded =
+            encode_statistics_message(&stats, &["test:label".to_string()], Some("test-instance"));
 
         // Should have timestamp (8 bytes) + length (4 bytes) + payload
         assert!(encoded.len() > 12);

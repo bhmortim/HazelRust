@@ -94,10 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = std::time::Instant::now();
     let result = queue.poll_timeout(Duration::from_secs(2)).await?;
     let elapsed = start.elapsed();
-    println!(
-        "  Result after {:?}: {:?}",
-        elapsed, result
-    );
+    println!("  Result after {:?}: {:?}", elapsed, result);
 
     // ========== Cleanup ==========
     println!("\n--- Cleanup ---\n");

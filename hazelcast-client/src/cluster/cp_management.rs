@@ -97,7 +97,11 @@ pub struct CPGroup {
 impl CPGroup {
     /// Creates a new CPGroup.
     pub fn new(id: CPGroupId, status: CPGroupStatus, members: Vec<CPMember>) -> Self {
-        Self { id, status, members }
+        Self {
+            id,
+            status,
+            members,
+        }
     }
 
     /// Returns the identifier of this CP group.

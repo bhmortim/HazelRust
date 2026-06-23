@@ -70,19 +70,18 @@ async fn test_tls_connection_with_custom_ca() {
         .cluster_name("dev")
         .add_address(address)
         .connection_timeout(Duration::from_secs(10))
-        .network(|n| {
-            n.tls(|t| {
-                t.enabled(true)
-                    .ca_cert_path(&ca_cert_path)
-            })
-        })
+        .network(|n| n.tls(|t| t.enabled(true).ca_cert_path(&ca_cert_path)))
         .build()
         .expect("failed to build config");
 
     let manager = ConnectionManager::from_config(config);
     let result = manager.connect_to(address).await;
 
-    assert!(result.is_ok(), "TLS connection with custom CA failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "TLS connection with custom CA failed: {:?}",
+        result.err()
+    );
     assert!(manager.is_connected(&address).await);
 
     manager.shutdown().await.expect("shutdown failed");
@@ -141,10 +140,15 @@ async fn test_tls_connection_start_lifecycle() {
     let mut lifecycle_rx = manager.subscribe_lifecycle();
 
     let start_result = manager.start().await;
-    assert!(start_result.is_ok(), "TLS start failed: {:?}", start_result.err());
+    assert!(
+        start_result.is_ok(),
+        "TLS start failed: {:?}",
+        start_result.err()
+    );
 
     let mut received_events = Vec::new();
-    while let Ok(event) = tokio::time::timeout(Duration::from_millis(100), lifecycle_rx.recv()).await
+    while let Ok(event) =
+        tokio::time::timeout(Duration::from_millis(100), lifecycle_rx.recv()).await
     {
         if let Ok(e) = event {
             received_events.push(e);
@@ -177,7 +181,10 @@ async fn test_tls_connection_events() {
     let manager = ConnectionManager::from_config(config);
     let mut events_rx = manager.subscribe();
 
-    manager.connect_to(address).await.expect("TLS connection failed");
+    manager
+        .connect_to(address)
+        .await
+        .expect("TLS connection failed");
 
     let event = tokio::time::timeout(Duration::from_secs(1), events_rx.recv())
         .await
@@ -229,12 +236,7 @@ async fn test_tls_connection_with_hostname_verification_disabled() {
         .cluster_name("dev")
         .add_address(address)
         .connection_timeout(Duration::from_secs(10))
-        .network(|n| {
-            n.tls(|t| {
-                t.enabled(true)
-                    .verify_hostname(false)
-            })
-        })
+        .network(|n| n.tls(|t| t.enabled(true).verify_hostname(false)))
         .build()
         .expect("failed to build config");
 
@@ -270,10 +272,16 @@ async fn test_tls_reconnection() {
 
     let manager = ConnectionManager::from_config(config);
 
-    manager.connect_to(address).await.expect("initial TLS connection failed");
+    manager
+        .connect_to(address)
+        .await
+        .expect("initial TLS connection failed");
     assert!(manager.is_connected(&address).await);
 
-    manager.disconnect(address).await.expect("disconnect failed");
+    manager
+        .disconnect(address)
+        .await
+        .expect("disconnect failed");
     assert!(!manager.is_connected(&address).await);
 
     let reconnect_result = manager.connect_to(address).await;
@@ -319,10 +327,7 @@ fn test_tls_config_builder_validation() {
 
 #[test]
 fn test_tls_config_has_client_auth() {
-    let config = TlsConfigBuilder::new()
-        .enabled(true)
-        .build()
-        .unwrap();
+    let config = TlsConfigBuilder::new().enabled(true).build().unwrap();
 
     assert!(!config.has_client_auth());
 

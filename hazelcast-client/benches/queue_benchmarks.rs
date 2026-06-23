@@ -1,8 +1,6 @@
 //! IQueue client-side serialization benchmarks.
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use hazelcast_core::serialization::{
     Deserializable, ObjectDataInput, ObjectDataOutput, Serializable,
 };
@@ -62,9 +60,7 @@ fn bench_queue_poll_string(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("deserialize", size),
             &serialized,
-            |b, data| {
-                b.iter(|| black_box(simulate_queue_poll_deserialization::<String>(data)))
-            },
+            |b, data| b.iter(|| black_box(simulate_queue_poll_deserialization::<String>(data))),
         );
     }
 
@@ -83,9 +79,7 @@ fn bench_queue_poll_bytes(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("deserialize", size),
             &serialized,
-            |b, data| {
-                b.iter(|| black_box(simulate_queue_poll_deserialization::<Vec<u8>>(data)))
-            },
+            |b, data| b.iter(|| black_box(simulate_queue_poll_deserialization::<Vec<u8>>(data))),
         );
     }
 

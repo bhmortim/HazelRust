@@ -22,8 +22,8 @@ mod azure;
 #[cfg(feature = "gcp")]
 mod gcp;
 
-mod multicast;
 mod auto_detect;
+mod multicast;
 
 #[cfg(feature = "eureka")]
 mod eureka;
@@ -34,10 +34,10 @@ mod websocket;
 pub use connection::{Connection, ConnectionId};
 pub use data_connection::{DataConnectionConfig, DataConnectionService};
 pub use discovery::{ClusterDiscovery, StaticAddressDiscovery};
+pub use interceptor::{SocketInterceptor, SocketOptions};
 pub use load_balancer::{
     default_load_balancer, LoadBalancer, RandomLoadBalancer, RoundRobinLoadBalancer,
 };
-pub use interceptor::{SocketInterceptor, SocketOptions};
 pub use manager::{ConnectionEvent, ConnectionManager};
 
 #[cfg(feature = "aws")]
@@ -55,8 +55,8 @@ pub use azure::{AzureDiscovery, AzureDiscoveryConfig};
 #[cfg(feature = "gcp")]
 pub use gcp::{GcpDiscovery, GcpDiscoveryConfig};
 
-pub use multicast::{MulticastDiscovery, MulticastDiscoveryConfig};
 pub use auto_detect::{AutoDetectionDiscovery, DetectedEnvironment};
+pub use multicast::{MulticastDiscovery, MulticastDiscoveryConfig};
 
 #[cfg(feature = "eureka")]
 pub use eureka::{EurekaDiscovery, EurekaDiscoveryConfig};

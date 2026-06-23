@@ -275,12 +275,10 @@ impl ClientConfig {
     /// ```
     #[cfg(feature = "config-file")]
     pub fn from_yaml<P: AsRef<std::path::Path>>(path: P) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
-            ConfigError::new(format!("failed to read YAML config file: {e}"))
-        })?;
-        let file_config: FileConfig = serde_yaml::from_str(&content).map_err(|e| {
-            ConfigError::new(format!("failed to parse YAML config: {e}"))
-        })?;
+        let content = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| ConfigError::new(format!("failed to read YAML config file: {e}")))?;
+        let file_config: FileConfig = serde_yaml::from_str(&content)
+            .map_err(|e| ConfigError::new(format!("failed to parse YAML config: {e}")))?;
         file_config.try_into()
     }
 
@@ -296,12 +294,10 @@ impl ClientConfig {
     /// ```
     #[cfg(feature = "config-file")]
     pub fn from_toml<P: AsRef<std::path::Path>>(path: P) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
-            ConfigError::new(format!("failed to read TOML config file: {e}"))
-        })?;
-        let file_config: FileConfig = toml::from_str(&content).map_err(|e| {
-            ConfigError::new(format!("failed to parse TOML config: {e}"))
-        })?;
+        let content = std::fs::read_to_string(path.as_ref())
+            .map_err(|e| ConfigError::new(format!("failed to read TOML config file: {e}")))?;
+        let file_config: FileConfig = toml::from_str(&content)
+            .map_err(|e| ConfigError::new(format!("failed to parse TOML config: {e}")))?;
         file_config.try_into()
     }
 
@@ -343,14 +339,18 @@ impl ClientConfig {
         }
 
         if let Ok(val) = std::env::var("HZ_ADDRESSES") {
-            file_config.network.get_or_insert_with(Default::default).addresses =
-                Some(val.split(',').map(|s| s.trim().to_string()).collect());
+            file_config
+                .network
+                .get_or_insert_with(Default::default)
+                .addresses = Some(val.split(',').map(|s| s.trim().to_string()).collect());
         }
 
         if let Ok(val) = std::env::var("HZ_CONNECTION_TIMEOUT_MS") {
             if let Ok(ms) = val.parse::<u64>() {
-                file_config.network.get_or_insert_with(Default::default).connection_timeout_ms =
-                    Some(ms);
+                file_config
+                    .network
+                    .get_or_insert_with(Default::default)
+                    .connection_timeout_ms = Some(ms);
             }
         }
 

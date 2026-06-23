@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use hazelcast_core::{Deserializable, Result, Serializable};
 
+use super::{OverflowPolicy, Ringbuffer};
 use crate::connection::ConnectionManager;
 use crate::listener::{ListenerId, ListenerRegistration, ListenerStats};
-use super::{OverflowPolicy, Ringbuffer};
 
 /// Configuration for reliable topic listeners.
 #[derive(Debug, Clone)]
@@ -224,11 +224,7 @@ where
     }
 
     /// Publishes a message with a specific overflow policy.
-    pub async fn publish_with_policy(
-        &self,
-        message: T,
-        policy: OverflowPolicy,
-    ) -> Result<i64> {
+    pub async fn publish_with_policy(&self, message: T, policy: OverflowPolicy) -> Result<i64> {
         let sequence = self.ringbuffer().add_with_policy(message, policy).await?;
         self.stats.record_publish();
         Ok(sequence)
@@ -257,7 +253,10 @@ where
         }
 
         let count = messages.len();
-        let sequence = self.ringbuffer().add_all(messages, OverflowPolicy::Overwrite).await?;
+        let sequence = self
+            .ringbuffer()
+            .add_all(messages, OverflowPolicy::Overwrite)
+            .await?;
 
         for _ in 0..count {
             self.stats.record_publish();

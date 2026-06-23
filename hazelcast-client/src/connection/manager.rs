@@ -16,11 +16,9 @@ use hazelcast_core::{HazelcastError, Result};
 
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
-use crate::config::{ClientConfig, ClientFailoverConfig, Permissions};
 use crate::cluster::{MigrationEvent, PartitionLostEvent};
-use crate::listener::{
-    DistributedObjectEvent, LifecycleEvent, Member, MemberEvent,
-};
+use crate::config::{ClientConfig, ClientFailoverConfig, Permissions};
+use crate::listener::{DistributedObjectEvent, LifecycleEvent, Member, MemberEvent};
 
 /// Events emitted during connection lifecycle.
 #[derive(Debug, Clone)]
@@ -115,10 +113,7 @@ fn calculate_backoff_with_jitter(
 
     let jittered_backoff = base_backoff * jitter_factor;
 
-    std::cmp::min(
-        Duration::from_secs_f64(jittered_backoff),
-        max_backoff,
-    )
+    std::cmp::min(Duration::from_secs_f64(jittered_backoff), max_backoff)
 }
 
 impl ConnectionManager {
@@ -147,7 +142,9 @@ impl ConnectionManager {
             config: Arc::new(config),
             discovery: Arc::new(discovery),
             connections: Arc::new(RwLock::new(HashMap::new())),
-            invocation: Arc::new(super::invocation::InvocationService::new(invocation_timeout)),
+            invocation: Arc::new(super::invocation::InvocationService::new(
+                invocation_timeout,
+            )),
             members: Arc::new(RwLock::new(HashMap::new())),
             partition_table: Arc::new(RwLock::new(HashMap::new())),
             partition_count: AtomicI32::new(0),
@@ -172,9 +169,8 @@ impl ConnectionManager {
 
     /// Creates a connection manager using the network config addresses for discovery.
     pub fn from_config(config: ClientConfig) -> Self {
-        let discovery = super::discovery::StaticAddressDiscovery::new(
-            config.network().addresses().to_vec(),
-        );
+        let discovery =
+            super::discovery::StaticAddressDiscovery::new(config.network().addresses().to_vec());
         Self::new(config, discovery)
     }
 
@@ -215,7 +211,9 @@ impl ConnectionManager {
             config: Arc::new(primary_config),
             discovery: Arc::new(discovery),
             connections: Arc::new(RwLock::new(HashMap::new())),
-            invocation: Arc::new(super::invocation::InvocationService::new(invocation_timeout)),
+            invocation: Arc::new(super::invocation::InvocationService::new(
+                invocation_timeout,
+            )),
             members: Arc::new(RwLock::new(HashMap::new())),
             partition_table: Arc::new(RwLock::new(HashMap::new())),
             partition_count: AtomicI32::new(0),
@@ -408,9 +406,9 @@ impl ConnectionManager {
 
         // Build and send ClientAuthentication matching exact Java wire format
         {
+            use bytes::{BufMut, BytesMut};
             use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
             use hazelcast_core::protocol::Frame;
-            use bytes::{BytesMut, BufMut};
 
             let cluster_name = self.config.cluster_name().to_string();
             let client_uuid = uuid::Uuid::new_v4();
@@ -428,9 +426,9 @@ impl ConnectionManager {
             initial_content.put_u64_le(hi);
             initial_content.put_u64_le(lo);
             initial_content.put_u8(0xA8); // serialization_version = 168 (HZ 5.x)
-            initial_content.put_u8(1);    // routing_mode = 1 (SMART, matching Java)
-            initial_content.put_u8(0);    // cp_direct_to_leader = false
-            initial_content.put_u8(0);    // padding
+            initial_content.put_u8(1); // routing_mode = 1 (SMART, matching Java)
+            initial_content.put_u8(0); // cp_direct_to_leader = false
+            initial_content.put_u8(0); // padding
             auth_msg.add_frame(Frame::new(initial_content, 0xC100));
             auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
             auth_msg.add_frame(Frame::new_null_frame());
@@ -447,16 +445,13 @@ impl ConnectionManager {
                 frame.write_to(&mut wire_buf);
             }
             connection.send_raw_bytes(&wire_buf).await.map_err(|e| {
-                HazelcastError::Connection(format!(
-                    "failed to send auth to {}: {}", address, e
-                ))
+                HazelcastError::Connection(format!("failed to send auth to {}: {}", address, e))
             })?;
 
             // Read auth response
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                connection.receive()
-            ).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), connection.receive())
+                .await
+            {
                 Ok(Ok(Some(response))) => {
                     tracing::info!(
                         address = %address,
@@ -472,10 +467,19 @@ impl ConnectionManager {
                     if initial_content.len() >= 34 {
                         // partition_count is at offset 30 (after status + uuid + ser_ver)
                         let pc_bytes = &initial_content[30..34];
-                        let pc = i32::from_le_bytes([pc_bytes[0], pc_bytes[1], pc_bytes[2], pc_bytes[3]]);
+                        let pc = i32::from_le_bytes([
+                            pc_bytes[0],
+                            pc_bytes[1],
+                            pc_bytes[2],
+                            pc_bytes[3],
+                        ]);
                         if pc > 0 && pc < 100000 {
-                            self.partition_count.store(pc, std::sync::atomic::Ordering::Release);
-                            tracing::info!(partition_count = pc, "parsed partition count from auth response");
+                            self.partition_count
+                                .store(pc, std::sync::atomic::Ordering::Release);
+                            tracing::info!(
+                                partition_count = pc,
+                                "parsed partition count from auth response"
+                            );
                         }
                     }
 
@@ -505,7 +509,8 @@ impl ConnectionManager {
             match self.create_connection(address).await {
                 Ok(mut inv_conn) => {
                     // Authenticate the invocation connection
-                    self.authenticate_connection_inline(&mut inv_conn, address).await;
+                    self.authenticate_connection_inline(&mut inv_conn, address)
+                        .await;
                     // Wait for cluster events to arrive, then drain them
                     // Only do the full drain on the first connection; subsequent ones
                     // use a shorter drain since cluster events are already consumed.
@@ -519,7 +524,9 @@ impl ConnectionManager {
                     inv_conn.drain_socket().await;
                     // Hand off to InvocationService
                     if let Some(tcp_stream) = inv_conn.into_tcp_stream() {
-                        self.invocation.register_connection(address, tcp_stream).await;
+                        self.invocation
+                            .register_connection(address, tcp_stream)
+                            .await;
                         registered += 1;
                     }
                 }
@@ -540,7 +547,9 @@ impl ConnectionManager {
             "registered invocation connection pool"
         );
 
-        let _ = self.event_sender.send(ConnectionEvent::Connected { id, address });
+        let _ = self
+            .event_sender
+            .send(ConnectionEvent::Connected { id, address });
         tracing::info!(id = %id, "connected to cluster member");
 
         Ok(id)
@@ -558,16 +567,21 @@ impl ConnectionManager {
         Connection::connect(address).await
     }
     /// Authenticates a fresh connection with the Hazelcast cluster.
-    async fn authenticate_connection(&self, connection: &mut Connection, address: SocketAddr) -> Result<()> {
+    async fn authenticate_connection(
+        &self,
+        connection: &mut Connection,
+        address: SocketAddr,
+    ) -> Result<()> {
+        use bytes::{BufMut, BytesMut};
         use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
         use hazelcast_core::protocol::Frame;
-        use bytes::{BytesMut, BufMut};
 
         let cluster_name = self.config.cluster_name().to_string();
         let client_uuid = uuid::Uuid::new_v4();
 
         let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
-            CLIENT_AUTHENTICATION, PARTITION_ID_ANY
+            CLIENT_AUTHENTICATION,
+            PARTITION_ID_ANY,
         );
 
         if let Some(initial_frame) = auth_msg.frames_mut().first_mut() {
@@ -575,10 +589,10 @@ impl ConnectionManager {
             initial_frame.content.put_u64_le(hi);
             initial_frame.content.put_u64_le(lo);
             initial_frame.content.put_u8(0xA8); // serialization_version = 168
-            initial_frame.content.put_u8(1);     // routing_mode = SMART
-            initial_frame.content.put_u8(0);     // cp_direct_to_leader = false
-            initial_frame.content.put_u8(0);     // padding
-            // Set flags to 0xC100 (BEGIN|END|0x0100)
+            initial_frame.content.put_u8(1); // routing_mode = SMART
+            initial_frame.content.put_u8(0); // cp_direct_to_leader = false
+            initial_frame.content.put_u8(0); // padding
+                                             // Set flags to 0xC100 (BEGIN|END|0x0100)
             initial_frame.flags = 0xC100;
         }
 
@@ -599,20 +613,18 @@ impl ConnectionManager {
         connection.send_raw_bytes(&buf).await?;
 
         // Read auth response
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            connection.receive()
-        ).await {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), connection.receive()).await {
             Ok(Ok(Some(response))) => {
                 tracing::info!(address = %address, msg_type = ?response.message_type(), "invocation connection authenticated");
                 Ok(())
             }
-            Ok(Ok(None)) => Err(HazelcastError::Connection("auth: connection closed".to_string())),
+            Ok(Ok(None)) => Err(HazelcastError::Connection(
+                "auth: connection closed".to_string(),
+            )),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(HazelcastError::Timeout("auth timeout".to_string())),
         }
     }
-
 
     /// Reconnects to an address with exponential backoff.
     #[instrument(
@@ -719,7 +731,10 @@ impl ConnectionManager {
         let _ = self.shutdown.send(true);
 
         let addresses: Vec<SocketAddr> = self.connections.read().await.keys().copied().collect();
-        tracing::debug!(connection_count = addresses.len(), "disconnecting all connections");
+        tracing::debug!(
+            connection_count = addresses.len(),
+            "disconnecting all connections"
+        );
 
         for address in addresses {
             if let Err(e) = self.disconnect(address).await {
@@ -727,7 +742,9 @@ impl ConnectionManager {
             }
         }
 
-        let _ = self.lifecycle_sender.send(LifecycleEvent::ClientDisconnected);
+        let _ = self
+            .lifecycle_sender
+            .send(LifecycleEvent::ClientDisconnected);
         tracing::debug!("client lifecycle: ClientDisconnected");
 
         let _ = self.lifecycle_sender.send(LifecycleEvent::Shutdown);
@@ -767,7 +784,8 @@ impl ConnectionManager {
 
     /// Returns the current cluster index (0 for primary).
     pub fn current_cluster_index(&self) -> usize {
-        self.current_cluster_index.load(std::sync::atomic::Ordering::Acquire)
+        self.current_cluster_index
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Returns the failover configuration, if any.
@@ -804,7 +822,10 @@ impl ConnectionManager {
             }
         };
 
-        let current_tries = self.current_try_count.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+        let current_tries = self
+            .current_try_count
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
         let max_tries = failover_config.try_count() as usize;
 
         tracing::debug!(
@@ -823,7 +844,9 @@ impl ConnectionManager {
         }
 
         let cluster_count = failover_config.cluster_count();
-        let current_index = self.current_cluster_index.load(std::sync::atomic::Ordering::Acquire);
+        let current_index = self
+            .current_cluster_index
+            .load(std::sync::atomic::Ordering::Acquire);
         let next_index = (current_index + 1) % cluster_count;
 
         tracing::info!(
@@ -832,8 +855,10 @@ impl ConnectionManager {
             "failing over to next cluster"
         );
 
-        self.current_try_count.store(0, std::sync::atomic::Ordering::Release);
-        self.current_cluster_index.store(next_index, std::sync::atomic::Ordering::Release);
+        self.current_try_count
+            .store(0, std::sync::atomic::Ordering::Release);
+        self.current_cluster_index
+            .store(next_index, std::sync::atomic::Ordering::Release);
 
         let new_config = failover_config
             .get_config(next_index)
@@ -863,7 +888,9 @@ impl ConnectionManager {
         }
 
         if connected {
-            let _ = self.lifecycle_sender.send(LifecycleEvent::ClientChangedCluster);
+            let _ = self
+                .lifecycle_sender
+                .send(LifecycleEvent::ClientChangedCluster);
             tracing::info!(
                 cluster_index = next_index,
                 cluster_name = %new_config.cluster_name(),
@@ -871,7 +898,10 @@ impl ConnectionManager {
             );
             Ok(())
         } else {
-            tracing::error!(cluster_index = next_index, "failed to connect to any address in failover cluster");
+            tracing::error!(
+                cluster_index = next_index,
+                "failed to connect to any address in failover cluster"
+            );
             Err(HazelcastError::Connection(
                 "failed to connect to failover cluster".to_string(),
             ))
@@ -937,7 +967,9 @@ impl ConnectionManager {
 
         tracing::info!("all connections lost, initiating automatic failover");
 
-        let _ = self.lifecycle_sender.send(LifecycleEvent::ClientDisconnected);
+        let _ = self
+            .lifecycle_sender
+            .send(LifecycleEvent::ClientDisconnected);
 
         match self.trigger_failover().await {
             Ok(()) => {
@@ -987,7 +1019,9 @@ impl ConnectionManager {
             ));
         }
 
-        let current_index = self.current_cluster_index.load(std::sync::atomic::Ordering::Acquire);
+        let current_index = self
+            .current_cluster_index
+            .load(std::sync::atomic::Ordering::Acquire);
         let next_index = (current_index + 1) % cluster_count;
 
         tracing::info!(
@@ -996,8 +1030,10 @@ impl ConnectionManager {
             "switching to alternative cluster"
         );
 
-        self.current_try_count.store(0, std::sync::atomic::Ordering::Release);
-        self.current_cluster_index.store(next_index, std::sync::atomic::Ordering::Release);
+        self.current_try_count
+            .store(0, std::sync::atomic::Ordering::Release);
+        self.current_cluster_index
+            .store(next_index, std::sync::atomic::Ordering::Release);
 
         let new_config = failover_config
             .get_config(next_index)
@@ -1027,7 +1063,9 @@ impl ConnectionManager {
         }
 
         if connected {
-            let _ = self.lifecycle_sender.send(LifecycleEvent::ClientChangedCluster);
+            let _ = self
+                .lifecycle_sender
+                .send(LifecycleEvent::ClientChangedCluster);
             tracing::info!(
                 cluster_index = next_index,
                 cluster_name = %new_config.cluster_name(),
@@ -1035,7 +1073,10 @@ impl ConnectionManager {
             );
             Ok(())
         } else {
-            tracing::error!(cluster_index = next_index, "failed to connect to any address in alternative cluster");
+            tracing::error!(
+                cluster_index = next_index,
+                "failed to connect to any address in alternative cluster"
+            );
             Err(HazelcastError::Connection(
                 "failed to connect to alternative cluster".to_string(),
             ))
@@ -1090,10 +1131,7 @@ impl ConnectionManager {
                     );
                     return Err(HazelcastError::QuorumNotPresent(format!(
                         "{} operation on '{}' requires quorum of {} members, but only {} present",
-                        op_type,
-                        name,
-                        required,
-                        member_count
+                        op_type, name, required, member_count
                     )));
                 }
             }
@@ -1113,16 +1151,23 @@ impl ConnectionManager {
 
     /// Returns the number of partitions in the cluster.
     pub fn partition_count(&self) -> i32 {
-        self.partition_count.load(std::sync::atomic::Ordering::Acquire)
+        self.partition_count
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Invoke an operation (alias for send).
-    pub async fn invoke(&self, message: hazelcast_core::ClientMessage) -> Result<hazelcast_core::ClientMessage> {
+    pub async fn invoke(
+        &self,
+        message: hazelcast_core::ClientMessage,
+    ) -> Result<hazelcast_core::ClientMessage> {
         self.send(message).await
     }
 
     /// Sends a message and returns the response (backward-compatible wrapper).
-    pub async fn send(&self, message: hazelcast_core::ClientMessage) -> Result<hazelcast_core::ClientMessage> {
+    pub async fn send(
+        &self,
+        message: hazelcast_core::ClientMessage,
+    ) -> Result<hazelcast_core::ClientMessage> {
         // Route through invocation service
         let address = match self.invocation.any_address() {
             Some(a) => a,
@@ -1136,14 +1181,14 @@ impl ConnectionManager {
         self.invocation.invoke(address, message).await
     }
 
-
     /// Updates the partition table with a new mapping of partition IDs to owner member UUIDs.
     /// Also updates the partition count.
     pub async fn update_partition_table(&self, partitions: HashMap<i32, Uuid>) {
         let count = partitions.len() as i32;
         let mut table = self.partition_table.write().await;
         *table = partitions;
-        self.partition_count.store(count, std::sync::atomic::Ordering::Release);
+        self.partition_count
+            .store(count, std::sync::atomic::Ordering::Release);
         drop(table);
         self.rebuild_partition_address_cache().await;
         tracing::debug!(partition_count = count, "updated partition table");
@@ -1155,7 +1200,8 @@ impl ConnectionManager {
         table.insert(partition_id, owner);
         let count = table.len() as i32;
         drop(table);
-        self.partition_count.store(count, std::sync::atomic::Ordering::Release);
+        self.partition_count
+            .store(count, std::sync::atomic::Ordering::Release);
         self.rebuild_partition_address_cache().await;
         tracing::trace!(partition_id = partition_id, owner = %owner, "updated partition owner");
     }
@@ -1191,7 +1237,11 @@ impl ConnectionManager {
 
     /// Returns the UUID of the member that owns the specified partition.
     pub async fn get_partition_owner(&self, partition_id: i32) -> Option<Uuid> {
-        self.partition_table.read().await.get(&partition_id).copied()
+        self.partition_table
+            .read()
+            .await
+            .get(&partition_id)
+            .copied()
     }
 
     /// Returns the socket address of the member that owns the specified partition.
@@ -1240,9 +1290,10 @@ impl ConnectionManager {
             return Ok(addresses[0]);
         }
         let old_addresses = self.connected_addresses().await;
-        old_addresses.into_iter().next().ok_or_else(|| {
-            HazelcastError::Connection("no connections available".to_string())
-        })
+        old_addresses
+            .into_iter()
+            .next()
+            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     /// Sends a message to the owner of the specified partition.
@@ -1293,9 +1344,11 @@ impl ConnectionManager {
         message: hazelcast_core::ClientMessage,
     ) -> Result<hazelcast_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
-            Some(sem) => Some(sem.acquire().await.map_err(|_| {
-                HazelcastError::Connection("shutting down".to_string())
-            })?),
+            Some(sem) => Some(
+                sem.acquire()
+                    .await
+                    .map_err(|_| HazelcastError::Connection("shutting down".to_string()))?,
+            ),
             None => None,
         };
 
@@ -1319,7 +1372,9 @@ impl ConnectionManager {
                 } else {
                     "hz:impl:mapService"
                 };
-                self.invocation.ensure_proxy(address, &obj_name, service).await?;
+                self.invocation
+                    .ensure_proxy(address, &obj_name, service)
+                    .await?;
             }
         }
 
@@ -1336,9 +1391,11 @@ impl ConnectionManager {
         message: hazelcast_core::ClientMessage,
     ) -> Result<hazelcast_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
-            Some(sem) => Some(sem.acquire().await.map_err(|_| {
-                HazelcastError::Connection("shutting down".to_string())
-            })?),
+            Some(sem) => Some(
+                sem.acquire()
+                    .await
+                    .map_err(|_| HazelcastError::Connection("shutting down".to_string()))?,
+            ),
             None => None,
         };
 
@@ -1369,7 +1426,9 @@ impl ConnectionManager {
                 } else {
                     "hz:impl:mapService"
                 };
-                self.invocation.ensure_proxy(address, &obj_name, service).await?;
+                self.invocation
+                    .ensure_proxy(address, &obj_name, service)
+                    .await?;
             }
         }
 
@@ -1394,7 +1453,11 @@ impl ConnectionManager {
         // Opt 5: avoid cloning the message on the success path (99.9% of calls).
         // First attempt uses the original message by value.
         let retryable = idempotent || self.redo_operation;
-        let max_attempts = if retryable { self.invocation_retry_count } else { 0 };
+        let max_attempts = if retryable {
+            self.invocation_retry_count
+        } else {
+            0
+        };
 
         if max_attempts == 0 {
             // No retries configured — pass message by value, zero clones
@@ -1405,7 +1468,10 @@ impl ConnectionManager {
         let mut last_err;
         let retry_pause = self.invocation_retry_pause;
 
-        match self.invoke_on_partition(partition_id, message.clone()).await {
+        match self
+            .invoke_on_partition(partition_id, message.clone())
+            .await
+        {
             Ok(resp) => return Ok(resp),
             Err(e) if !e.is_retryable() => return Err(e),
             Err(e) => last_err = e,
@@ -1414,9 +1480,14 @@ impl ConnectionManager {
         for attempt in 1..=max_attempts {
             tracing::debug!(attempt, max_attempts, "retrying partition invocation");
             tokio::time::sleep(retry_pause).await;
-            match self.invoke_on_partition(partition_id, message.clone()).await {
+            match self
+                .invoke_on_partition(partition_id, message.clone())
+                .await
+            {
                 Ok(resp) => return Ok(resp),
-                Err(e) if e.is_retryable() && attempt < max_attempts => { last_err = e; }
+                Err(e) if e.is_retryable() && attempt < max_attempts => {
+                    last_err = e;
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -1439,7 +1510,11 @@ impl ConnectionManager {
         idempotent: bool,
     ) -> Result<hazelcast_core::ClientMessage> {
         let retryable = idempotent || self.redo_operation;
-        let max_attempts = if retryable { self.invocation_retry_count } else { 0 };
+        let max_attempts = if retryable {
+            self.invocation_retry_count
+        } else {
+            0
+        };
 
         if max_attempts == 0 {
             return self.invoke_on_random(message).await;
@@ -1459,7 +1534,9 @@ impl ConnectionManager {
             tokio::time::sleep(retry_pause).await;
             match self.invoke_on_random(message.clone()).await {
                 Ok(resp) => return Ok(resp),
-                Err(e) if e.is_retryable() && attempt < max_attempts => { last_err = e; }
+                Err(e) if e.is_retryable() && attempt < max_attempts => {
+                    last_err = e;
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -1471,7 +1548,8 @@ impl ConnectionManager {
     pub async fn clear_partition_table(&self) {
         let mut table = self.partition_table.write().await;
         table.clear();
-        self.partition_count.store(0, std::sync::atomic::Ordering::Release);
+        self.partition_count
+            .store(0, std::sync::atomic::Ordering::Release);
         tracing::debug!("cleared partition table");
     }
 
@@ -1492,9 +1570,9 @@ impl ConnectionManager {
         message: hazelcast_core::ClientMessage,
     ) -> Result<()> {
         let mut connections = self.connections.write().await;
-        let connection = connections.get_mut(&address).ok_or_else(|| {
-            HazelcastError::Connection(format!("no connection to {}", address))
-        })?;
+        let connection = connections
+            .get_mut(&address)
+            .ok_or_else(|| HazelcastError::Connection(format!("no connection to {}", address)))?;
 
         connection.send(message).await
     }
@@ -1505,25 +1583,29 @@ impl ConnectionManager {
         address: SocketAddr,
     ) -> Result<Option<hazelcast_core::ClientMessage>> {
         let mut connections = self.connections.write().await;
-        let connection = connections.get_mut(&address).ok_or_else(|| {
-            HazelcastError::Connection(format!("no connection to {}", address))
-        })?;
+        let connection = connections
+            .get_mut(&address)
+            .ok_or_else(|| HazelcastError::Connection(format!("no connection to {}", address)))?;
 
         connection.receive().await
     }
 
-
     /// Authenticates a connection inline (for invocation connections).
-    async fn authenticate_connection_inline(&self, connection: &mut Connection, address: SocketAddr) {
+    async fn authenticate_connection_inline(
+        &self,
+        connection: &mut Connection,
+        address: SocketAddr,
+    ) {
+        use bytes::{BufMut, BytesMut};
         use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
         use hazelcast_core::protocol::Frame;
-        use bytes::{BytesMut, BufMut};
 
         let cluster_name = self.config.cluster_name().to_string();
         let client_uuid = uuid::Uuid::new_v4();
 
         let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
-            CLIENT_AUTHENTICATION, PARTITION_ID_ANY
+            CLIENT_AUTHENTICATION,
+            PARTITION_ID_ANY,
         );
 
         if let Some(initial_frame) = auth_msg.frames_mut().first_mut() {
@@ -1556,10 +1638,7 @@ impl ConnectionManager {
             return;
         }
 
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            connection.receive()
-        ).await {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), connection.receive()).await {
             Ok(Ok(Some(_))) => {
                 tracing::debug!(address = %address, "invocation connection authenticated");
             }
@@ -1680,10 +1759,7 @@ impl ConnectionManager {
                     attempts = attempt,
                     "reconnection failed permanently"
                 );
-                let _ = event_sender.send(ConnectionEvent::ReconnectFailed {
-                    address,
-                    error,
-                });
+                let _ = event_sender.send(ConnectionEvent::ReconnectFailed { address, error });
                 return;
             }
 
@@ -1705,7 +1781,8 @@ impl ConnectionManager {
             let connect_result = timeout(
                 config.network().connection_timeout(),
                 Self::create_connection_static(address, config),
-            ).await;
+            )
+            .await;
 
             match connect_result {
                 Ok(Ok(connection)) => {
@@ -1745,7 +1822,10 @@ impl ConnectionManager {
         }
     }
 
-    async fn create_connection_static(address: SocketAddr, _config: &ClientConfig) -> Result<Connection> {
+    async fn create_connection_static(
+        address: SocketAddr,
+        _config: &ClientConfig,
+    ) -> Result<Connection> {
         #[cfg(feature = "tls")]
         {
             let tls_config = _config.network().tls();
@@ -2099,7 +2179,7 @@ mod tests {
 
     #[test]
     fn test_effective_permissions_with_rbac() {
-        use crate::config::{Permissions, PermissionAction};
+        use crate::config::{PermissionAction, Permissions};
 
         let mut perms = Permissions::new();
         perms.grant(PermissionAction::Read);
@@ -2128,7 +2208,7 @@ mod tests {
 
     #[test]
     fn test_permissions_returns_some_when_configured() {
-        use crate::config::{Permissions, PermissionAction};
+        use crate::config::{PermissionAction, Permissions};
 
         let mut perms = Permissions::new();
         perms.grant(PermissionAction::Read);
@@ -2151,10 +2231,8 @@ mod tests {
 
         assert_eq!(manager.member_count().await, 0);
 
-        let member = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
+        let member =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
         manager.handle_member_added(member.clone()).await;
 
         assert_eq!(manager.member_count().await, 1);
@@ -2169,10 +2247,8 @@ mod tests {
         let discovery = super::super::discovery::StaticAddressDiscovery::default();
         let manager = ConnectionManager::new(config, discovery);
 
-        let member = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
+        let member =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
         let uuid = member.uuid();
 
         manager.handle_member_added(member).await;
@@ -2190,10 +2266,8 @@ mod tests {
 
         let mut rx = manager.subscribe_membership();
 
-        let member = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
+        let member =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
         let uuid = member.uuid();
 
         manager.handle_member_added(member).await;
@@ -2218,14 +2292,8 @@ mod tests {
         let manager = ConnectionManager::new(config, discovery);
 
         let members = vec![
-            crate::listener::Member::new(
-                uuid::Uuid::new_v4(),
-                "127.0.0.1:5701".parse().unwrap(),
-            ),
-            crate::listener::Member::new(
-                uuid::Uuid::new_v4(),
-                "127.0.0.1:5702".parse().unwrap(),
-            ),
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap()),
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap()),
         ];
 
         manager.set_initial_members(members).await;
@@ -2239,10 +2307,8 @@ mod tests {
         let discovery = super::super::discovery::StaticAddressDiscovery::default();
         let manager = ConnectionManager::new(config, discovery);
 
-        let member = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
+        let member =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
         let uuid = member.uuid();
 
         manager.handle_member_added(member.clone()).await;
@@ -2335,14 +2401,10 @@ mod tests {
         let discovery = super::super::discovery::StaticAddressDiscovery::default();
         let manager = ConnectionManager::new(config, discovery);
 
-        let member1 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
-        let member2 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5702".parse().unwrap(),
-        );
+        let member1 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
+        let member2 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap());
 
         manager.handle_member_added(member1).await;
         manager.handle_member_added(member2).await;
@@ -2372,14 +2434,10 @@ mod tests {
         let discovery = super::super::discovery::StaticAddressDiscovery::default();
         let manager = ConnectionManager::new(config, discovery);
 
-        let member1 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
-        let member2 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5702".parse().unwrap(),
-        );
+        let member1 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
+        let member2 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap());
 
         manager.handle_member_added(member1).await;
         manager.handle_member_added(member2).await;
@@ -2413,18 +2471,12 @@ mod tests {
         let discovery = super::super::discovery::StaticAddressDiscovery::default();
         let manager = ConnectionManager::new(config, discovery);
 
-        let member1 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
-        let member2 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5702".parse().unwrap(),
-        );
-        let member3 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5703".parse().unwrap(),
-        );
+        let member1 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
+        let member2 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap());
+        let member3 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5703".parse().unwrap());
 
         manager.handle_member_added(member1.clone()).await;
         manager.handle_member_added(member2.clone()).await;
@@ -2436,12 +2488,13 @@ mod tests {
 
         let result = manager.check_quorum("important-map", false).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), HazelcastError::QuorumNotPresent(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            HazelcastError::QuorumNotPresent(_)
+        ));
 
-        let member4 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5704".parse().unwrap(),
-        );
+        let member4 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5704".parse().unwrap());
         manager.handle_member_added(member4).await;
 
         assert!(manager.check_quorum("important-map", false).await.is_ok());
@@ -2465,10 +2518,8 @@ mod tests {
         let discovery = super::super::discovery::StaticAddressDiscovery::default();
         let manager = ConnectionManager::new(config, discovery);
 
-        let member = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
+        let member =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
         manager.handle_member_added(member).await;
 
         let read_result = manager.check_quorum("read-protected-map", true).await;
@@ -2496,10 +2547,8 @@ mod tests {
         let discovery = super::super::discovery::StaticAddressDiscovery::default();
         let manager = ConnectionManager::new(config, discovery);
 
-        let member = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
+        let member =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
         manager.handle_member_added(member).await;
 
         let read_result = manager.check_quorum("write-protected-map", true).await;
@@ -2573,24 +2622,18 @@ mod tests {
 
         assert!(manager.check_quorum("custom-map", false).await.is_err());
 
-        let member1 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
+        let member1 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
         manager.handle_member_added(member1.clone()).await;
         assert!(manager.check_quorum("custom-map", false).await.is_ok());
 
-        let member2 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5702".parse().unwrap(),
-        );
+        let member2 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap());
         manager.handle_member_added(member2).await;
         assert!(manager.check_quorum("custom-map", false).await.is_err());
 
-        let member3 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5703".parse().unwrap(),
-        );
+        let member3 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5703".parse().unwrap());
         manager.handle_member_added(member3).await;
         assert!(manager.check_quorum("custom-map", false).await.is_ok());
     }
@@ -2914,7 +2957,11 @@ mod tests {
 
         let msg = hazelcast_core::ClientMessage::create_for_encode(0x000100, 0);
         let result = manager.send_to_partition(0, msg).await;
-        assert!(result.is_ok(), "send_to_partition failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "send_to_partition failed: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
@@ -2957,22 +3004,14 @@ mod tests {
         let discovery = super::super::discovery::StaticAddressDiscovery::default();
         let manager = ConnectionManager::new(config, discovery);
 
-        let member1 = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
+        let member1 =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
         manager.handle_member_added(member1).await;
         assert_eq!(manager.member_count().await, 1);
 
         let new_members = vec![
-            crate::listener::Member::new(
-                uuid::Uuid::new_v4(),
-                "127.0.0.1:5702".parse().unwrap(),
-            ),
-            crate::listener::Member::new(
-                uuid::Uuid::new_v4(),
-                "127.0.0.1:5703".parse().unwrap(),
-            ),
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5702".parse().unwrap()),
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5703".parse().unwrap()),
         ];
 
         manager.set_initial_members(new_members).await;
@@ -3119,7 +3158,9 @@ mod tests {
         assert_eq!(manager.current_cluster_index(), 1);
 
         let mut found_event = false;
-        while let Ok(event) = tokio::time::timeout(Duration::from_millis(100), lifecycle_rx.recv()).await {
+        while let Ok(event) =
+            tokio::time::timeout(Duration::from_millis(100), lifecycle_rx.recv()).await
+        {
             if let Ok(LifecycleEvent::ClientChangedCluster) = event {
                 found_event = true;
                 break;
@@ -3138,7 +3179,10 @@ mod tests {
             .unwrap();
 
         let manager = ConnectionManager::from_config(config);
-        assert_eq!(manager.config.network().reconnect_mode(), ReconnectMode::Off);
+        assert_eq!(
+            manager.config.network().reconnect_mode(),
+            ReconnectMode::Off
+        );
     }
 
     #[tokio::test]
@@ -3160,7 +3204,10 @@ mod tests {
             .unwrap();
 
         let manager = ConnectionManager::from_config(config);
-        assert_eq!(manager.config.network().reconnect_mode(), ReconnectMode::Async);
+        assert_eq!(
+            manager.config.network().reconnect_mode(),
+            ReconnectMode::Async
+        );
     }
 
     #[tokio::test]
@@ -3405,7 +3452,9 @@ mod tests {
         manager.try_alternative_cluster().await.unwrap();
 
         let mut found_event = false;
-        while let Ok(event) = tokio::time::timeout(Duration::from_millis(100), lifecycle_rx.recv()).await {
+        while let Ok(event) =
+            tokio::time::timeout(Duration::from_millis(100), lifecycle_rx.recv()).await
+        {
             if let Ok(LifecycleEvent::ClientChangedCluster) = event {
                 found_event = true;
                 break;
@@ -3448,10 +3497,8 @@ mod tests {
         let manager = ConnectionManager::with_failover(failover);
         manager.connect_to(addr1).await.unwrap();
 
-        let member = crate::listener::Member::new(
-            uuid::Uuid::new_v4(),
-            "127.0.0.1:5701".parse().unwrap(),
-        );
+        let member =
+            crate::listener::Member::new(uuid::Uuid::new_v4(), "127.0.0.1:5701".parse().unwrap());
         manager.handle_member_added(member).await;
         manager.set_partition_owner(0, uuid::Uuid::new_v4()).await;
 

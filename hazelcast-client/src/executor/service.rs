@@ -8,15 +8,16 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use hazelcast_core::protocol::{
-    ClientMessage, Frame,
-    EXECUTOR_SHUTDOWN, EXECUTOR_IS_SHUTDOWN,
-    EXECUTOR_SUBMIT_TO_MEMBER, EXECUTOR_SUBMIT_TO_PARTITION,
-    PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    ClientMessage, Frame, EXECUTOR_IS_SHUTDOWN, EXECUTOR_SHUTDOWN, EXECUTOR_SUBMIT_TO_MEMBER,
+    EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
 
+use super::{
+    Callable, CallableTask, ExecutionCallback, ExecutionTarget, MemberSelector, Runnable,
+    RunnableTask,
+};
 use crate::listener::Member;
-use super::{Callable, CallableTask, ExecutionCallback, ExecutionTarget, MemberSelector, Runnable, RunnableTask};
 
 /// A handle to a pending executor task result.
 ///
@@ -69,7 +70,11 @@ impl super::ExecutorService {
     }
 
     /// Submits a callable task to a specific cluster member.
-    pub async fn submit_to_member<T, R>(&self, task: &T, member: &Member) -> Result<ExecutorFuture<R>>
+    pub async fn submit_to_member<T, R>(
+        &self,
+        task: &T,
+        member: &Member,
+    ) -> Result<ExecutorFuture<R>>
     where
         T: Callable<R>,
         R: Deserializable + Send + 'static,
@@ -227,8 +232,10 @@ impl super::ExecutorService {
 
         let message = match &target {
             ExecutionTarget::Any => {
-                let mut msg =
-                    ClientMessage::create_for_encode(EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY);
+                let mut msg = ClientMessage::create_for_encode(
+                    EXECUTOR_SUBMIT_TO_PARTITION,
+                    PARTITION_ID_ANY,
+                );
                 msg.add_frame(Self::string_frame(&self.name));
                 msg.add_frame(Self::uuid_frame(task_uuid));
                 msg.add_frame(Self::data_frame(runnable_task.data()));
@@ -262,11 +269,7 @@ impl super::ExecutorService {
     ///
     /// The callback's `on_response` method is called with the result on success,
     /// or `on_failure` is called with the error on failure.
-    pub async fn submit_with_callback<T, R, C>(
-        &self,
-        task: &T,
-        callback: Arc<C>,
-    ) -> Result<()>
+    pub async fn submit_with_callback<T, R, C>(&self, task: &T, callback: Arc<C>) -> Result<()>
     where
         T: Callable<R>,
         R: Deserializable + Send + 'static,
@@ -379,8 +382,10 @@ impl super::ExecutorService {
 
         let message = match &target {
             ExecutionTarget::Any => {
-                let mut msg =
-                    ClientMessage::create_for_encode(EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY);
+                let mut msg = ClientMessage::create_for_encode(
+                    EXECUTOR_SUBMIT_TO_PARTITION,
+                    PARTITION_ID_ANY,
+                );
                 msg.add_frame(Self::string_frame(&self.name));
                 msg.add_frame(Self::uuid_frame(task_uuid));
                 msg.add_frame(Self::data_frame(callable_task.data()));
@@ -422,9 +427,10 @@ impl super::ExecutorService {
 
                 connection_manager.send_to(address, message).await?;
 
-                let response = connection_manager.receive_from(address).await?.ok_or_else(|| {
-                    HazelcastError::Connection("Connection closed".to_string())
-                })?;
+                let response = connection_manager
+                    .receive_from(address)
+                    .await?
+                    .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))?;
 
                 decode_result_response::<R>(&response)
             }
@@ -483,7 +489,9 @@ impl super::ExecutorService {
         }
         let content = frames[0].content();
         if content.len() < RESPONSE_HEADER_SIZE + 1 {
-            return Err(HazelcastError::Serialization("Invalid response".to_string()));
+            return Err(HazelcastError::Serialization(
+                "Invalid response".to_string(),
+            ));
         }
         Ok(content[RESPONSE_HEADER_SIZE] != 0)
     }

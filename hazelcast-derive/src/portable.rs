@@ -36,8 +36,8 @@ pub fn derive_portable_impl(input: TokenStream) -> TokenStream {
             continue;
         }
 
-        let wire_name = parse_str_attr(&field.attrs, "field_name")
-            .unwrap_or_else(|| field_ident.to_string());
+        let wire_name =
+            parse_str_attr(&field.attrs, "field_name").unwrap_or_else(|| field_ident.to_string());
 
         let ty_str = type_to_string(field_ty);
         let write = match ty_str.as_str() {
