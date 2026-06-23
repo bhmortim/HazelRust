@@ -1048,7 +1048,10 @@ mod tests {
             .preload_keys(keys, |batch_keys| {
                 let batch_sizes = batch_sizes_clone.clone();
                 async move {
-                    batch_sizes.lock().unwrap().push(batch_keys.len());
+                    batch_sizes
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(batch_keys.len());
                     Ok(batch_keys.into_iter().map(|k| (k.clone(), k)).collect())
                 }
             })
@@ -1058,7 +1061,9 @@ mod tests {
         assert_eq!(stats.entries_loaded(), 5);
         assert_eq!(stats.batches_processed(), 3);
 
-        let sizes = batch_sizes.lock().unwrap();
+        let sizes = batch_sizes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(*sizes, vec![2, 2, 1]);
     }
 

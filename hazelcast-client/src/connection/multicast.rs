@@ -372,7 +372,11 @@ mod tests {
                     "Mock multicast receive error".into(),
                 ));
             }
-            Ok(self.addresses.lock().unwrap().clone())
+            Ok(self
+                .addresses
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone())
         }
     }
 

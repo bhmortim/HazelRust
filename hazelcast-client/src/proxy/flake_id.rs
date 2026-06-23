@@ -380,7 +380,9 @@ mod tests {
         let mutex = std::sync::Mutex::new(Some(batch));
         assert_has_mutex(&mutex);
 
-        let guard = mutex.lock().unwrap();
+        let guard = mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert!(guard.is_some());
     }
 

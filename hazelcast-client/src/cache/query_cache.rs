@@ -465,7 +465,10 @@ where
         }
 
         let key_data = Self::serialize_value(key).ok()?;
-        let cache = self.cache.read().unwrap();
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         if let Some(value_data) = cache.get(&key_data) {
             self.stats.record_hit();
@@ -486,7 +489,10 @@ where
         }
 
         if let Ok(key_data) = Self::serialize_value(key) {
-            let cache = self.cache.read().unwrap();
+            let cache = self
+                .cache
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache.contains_key(&key_data)
         } else {
             false
@@ -506,7 +512,10 @@ where
             Err(_) => return false,
         };
 
-        let cache = self.cache.read().unwrap();
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache.values().any(|v| *v == value_data)
     }
 
@@ -518,7 +527,10 @@ where
             return 0;
         }
 
-        let cache = self.cache.read().unwrap();
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache.len()
     }
 
@@ -535,7 +547,10 @@ where
             return HashMap::new();
         }
 
-        let cache = self.cache.read().unwrap();
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut result = HashMap::new();
 
         for key in keys {
@@ -563,7 +578,10 @@ where
             return Vec::new();
         }
 
-        let cache = self.cache.read().unwrap();
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache
             .values()
             .filter_map(|value_data| {
@@ -581,7 +599,10 @@ where
             return HashSet::new();
         }
 
-        let cache = self.cache.read().unwrap();
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache
             .keys()
             .filter_map(|key_data| {
@@ -599,7 +620,10 @@ where
             return Vec::new();
         }
 
-        let cache = self.cache.read().unwrap();
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache
             .iter()
             .filter_map(|(key_data, value_data)| {
@@ -636,7 +660,10 @@ where
     /// This only affects the local cache and does not modify the underlying map.
     pub fn clear(&self) {
         if !self.destroyed.load(Ordering::Acquire) {
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self
+                .cache
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache.clear();
         }
     }
@@ -647,10 +674,16 @@ where
     /// and all methods will return empty/default values.
     pub fn destroy(&self) {
         self.destroyed.store(true, Ordering::Release);
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self
+            .cache
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache.clear();
 
-        let mut reg = self.listener_registration.lock().unwrap();
+        let mut reg = self
+            .listener_registration
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(registration) = reg.take() {
             registration.deactivate();
         }
@@ -669,7 +702,10 @@ where
             Err(_) => return,
         };
 
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self
+            .cache
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         match event.event_type {
             EntryEventType::Added | EntryEventType::Updated => {
@@ -691,7 +727,10 @@ where
             return;
         }
 
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self
+            .cache
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (key, value) in entries {
             if let (Ok(key_data), Ok(value_data)) =
                 (Self::serialize_value(&key), Self::serialize_value(&value))
@@ -703,7 +742,10 @@ where
 
     /// Sets the listener registration for this cache.
     pub(crate) fn set_listener_registration(&self, registration: ListenerRegistration) {
-        let mut reg = self.listener_registration.lock().unwrap();
+        let mut reg = self
+            .listener_registration
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *reg = Some(registration);
     }
 
@@ -735,7 +777,10 @@ where
         F: Fn(&EntryEvent<K, V>) + Send + Sync + 'static,
     {
         let id = self.next_listener_id.fetch_add(1, Ordering::Relaxed);
-        let mut listeners = self.entry_listeners.lock().unwrap();
+        let mut listeners = self
+            .entry_listeners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         listeners.push((id, Box::new(listener)));
         id
     }
@@ -744,7 +789,10 @@ where
     ///
     /// Returns `true` if the listener was found and removed, `false` otherwise.
     pub fn remove_entry_listener(&self, listener_id: u64) -> bool {
-        let mut listeners = self.entry_listeners.lock().unwrap();
+        let mut listeners = self
+            .entry_listeners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let before_len = listeners.len();
         listeners.retain(|(id, _)| *id != listener_id);
         listeners.len() < before_len
@@ -763,7 +811,10 @@ where
         }
 
         // Clear the local cache so it can be repopulated
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self
+            .cache
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         cache.clear();
 
         // Reset stats for fresh start
@@ -772,7 +823,10 @@ where
 
     /// Notifies registered entry listeners of an event.
     pub(crate) fn notify_listeners(&self, event: &EntryEvent<K, V>) {
-        let listeners = self.entry_listeners.lock().unwrap();
+        let listeners = self
+            .entry_listeners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (_, listener) in listeners.iter() {
             listener(event);
         }
@@ -798,7 +852,10 @@ where
         let mut index = LocalIndex::new(index_type);
 
         // Index existing entries
-        let cache = self.cache.read().unwrap();
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (key_data, value_data) in cache.iter() {
             let mut input = ObjectDataInput::new(value_data);
             if let Ok(value) = V::deserialize(&mut input) {
@@ -808,18 +865,30 @@ where
             }
         }
 
-        let mut indexes = self.local_indexes.write().unwrap();
+        let mut indexes = self
+            .local_indexes
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         indexes.insert(attribute_name.to_string(), index);
 
-        let mut extractors = self.attribute_extractors.write().unwrap();
+        let mut extractors = self
+            .attribute_extractors
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         extractors.insert(attribute_name.to_string(), extractor);
     }
 
     /// Removes a local index by name.
     pub fn remove_index(&self, attribute_name: &str) -> bool {
-        let mut indexes = self.local_indexes.write().unwrap();
+        let mut indexes = self
+            .local_indexes
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let removed = indexes.remove(attribute_name).is_some();
-        let mut extractors = self.attribute_extractors.write().unwrap();
+        let mut extractors = self
+            .attribute_extractors
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         extractors.remove(attribute_name);
         removed
     }
@@ -830,7 +899,10 @@ where
         attribute_name: &str,
         predicate: &QueryCacheIndexPredicate,
     ) -> Vec<K> {
-        let indexes = self.local_indexes.read().unwrap();
+        let indexes = self
+            .local_indexes
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let index = match indexes.get(attribute_name) {
             Some(idx) => idx,
             None => return Vec::new(),
@@ -853,14 +925,20 @@ where
         attribute_name: &str,
         predicate: &QueryCacheIndexPredicate,
     ) -> Vec<V> {
-        let indexes = self.local_indexes.read().unwrap();
+        let indexes = self
+            .local_indexes
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let index = match indexes.get(attribute_name) {
             Some(idx) => idx,
             None => return Vec::new(),
         };
 
         let key_bytes = index.get_keys(predicate);
-        let cache = self.cache.read().unwrap();
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut result = Vec::with_capacity(key_bytes.len());
         for kb in &key_bytes {
             if let Some(vb) = cache.get(kb) {
@@ -879,14 +957,20 @@ where
         attribute_name: &str,
         predicate: &QueryCacheIndexPredicate,
     ) -> Vec<(K, V)> {
-        let indexes = self.local_indexes.read().unwrap();
+        let indexes = self
+            .local_indexes
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let index = match indexes.get(attribute_name) {
             Some(idx) => idx,
             None => return Vec::new(),
         };
 
         let key_bytes = index.get_keys(predicate);
-        let cache = self.cache.read().unwrap();
+        let cache = self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut result = Vec::with_capacity(key_bytes.len());
         for kb in &key_bytes {
             if let Some(vb) = cache.get(kb) {
@@ -902,14 +986,23 @@ where
 
     /// Returns the names of all registered local indexes.
     pub fn index_names(&self) -> Vec<String> {
-        let indexes = self.local_indexes.read().unwrap();
+        let indexes = self
+            .local_indexes
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         indexes.keys().cloned().collect()
     }
 
     /// Updates all local indexes when a value is added or updated.
     fn add_to_indexes(&self, key_data: &[u8], value: &V) {
-        let extractors = self.attribute_extractors.read().unwrap();
-        let mut indexes = self.local_indexes.write().unwrap();
+        let extractors = self
+            .attribute_extractors
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut indexes = self
+            .local_indexes
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         for (name, extractor) in extractors.iter() {
             if let Some(attr_bytes) = extractor.extract(value) {
@@ -922,8 +1015,14 @@ where
 
     /// Removes a key from all local indexes.
     fn remove_from_indexes(&self, key_data: &[u8], value_data: &[u8]) {
-        let extractors = self.attribute_extractors.read().unwrap();
-        let mut indexes = self.local_indexes.write().unwrap();
+        let extractors = self
+            .attribute_extractors
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut indexes = self
+            .local_indexes
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let mut input = ObjectDataInput::new(value_data);
         if let Ok(value) = V::deserialize(&mut input) {

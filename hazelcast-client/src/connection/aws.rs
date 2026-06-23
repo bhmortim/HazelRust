@@ -368,7 +368,11 @@ mod tests {
             if self.should_error {
                 return Err(HazelcastError::Connection("Mock EC2 API error".into()));
             }
-            Ok(self.instances.lock().unwrap().clone())
+            Ok(self
+                .instances
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone())
         }
     }
 

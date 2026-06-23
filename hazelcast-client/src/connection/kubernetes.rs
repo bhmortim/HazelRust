@@ -371,7 +371,11 @@ mod tests {
             if self.should_error {
                 return Err(HazelcastError::Connection("Mock K8s API error".into()));
             }
-            Ok(self.pods.lock().unwrap().clone())
+            Ok(self
+                .pods
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone())
         }
 
         async fn get_service_endpoints(
@@ -382,7 +386,11 @@ mod tests {
             if self.should_error {
                 return Err(HazelcastError::Connection("Mock K8s API error".into()));
             }
-            Ok(self.endpoints.lock().unwrap().clone())
+            Ok(self
+                .endpoints
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone())
         }
     }
 

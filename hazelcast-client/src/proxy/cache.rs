@@ -1164,7 +1164,9 @@ where
 
         // Check near cache first
         if let Some(ref near_cache) = self.near_cache {
-            let mut cache = near_cache.lock().unwrap();
+            let mut cache = near_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(value_data) = cache.get(&key_data) {
                 let mut input = ObjectDataInput::new(&value_data);
                 return V::deserialize(&mut input).map(Some);
@@ -1183,7 +1185,9 @@ where
         // Store in near cache on successful fetch
         if let (Some(ref near_cache), Some(ref value)) = (&self.near_cache, &result) {
             if let Ok(value_data) = Self::serialize_value(value) {
-                let mut cache = near_cache.lock().unwrap();
+                let mut cache = near_cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 cache.put(key_data, value_data);
             }
         }
@@ -1227,7 +1231,9 @@ where
 
         // Invalidate near cache
         if let Some(ref near_cache) = self.near_cache {
-            let mut cache = near_cache.lock().unwrap();
+            let mut cache = near_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache.invalidate(&key_data);
         }
 
@@ -1474,7 +1480,9 @@ where
 
         // Invalidate near cache
         if let Some(ref near_cache) = self.near_cache {
-            let mut cache = near_cache.lock().unwrap();
+            let mut cache = near_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache.invalidate(&key_data);
         }
 
@@ -1513,7 +1521,9 @@ where
 
         // Invalidate near cache
         if let Some(ref near_cache) = self.near_cache {
-            let mut cache = near_cache.lock().unwrap();
+            let mut cache = near_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache.invalidate(&key_data);
         }
 
@@ -1565,7 +1575,9 @@ where
 
         // Invalidate near cache since the processor may modify the entry
         if let Some(ref near_cache) = self.near_cache {
-            let mut cache = near_cache.lock().unwrap();
+            let mut cache = near_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache.invalidate(&key_data);
         }
 

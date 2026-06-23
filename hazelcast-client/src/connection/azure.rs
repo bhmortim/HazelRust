@@ -394,7 +394,10 @@ mod tests {
     #[async_trait]
     impl AzureHttpClient for MockHttpClient {
         async fn get_with_token(&self, _url: &str, _token: &str) -> Result<Value> {
-            let mut responses = self.responses.lock().unwrap();
+            let mut responses = self
+                .responses
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if responses.is_empty() {
                 Err(HazelcastError::Connection("No mock response".into()))
             } else {
