@@ -229,6 +229,12 @@ pub struct HazelcastClient {
     connection_listeners: RwLock<ConnectionListenerState>,
     user_context:
         Arc<RwLock<std::collections::HashMap<String, Box<dyn std::any::Any + Send + Sync>>>>,
+    near_cache_registry: RwLock<
+        std::collections::HashMap<
+            String,
+            Arc<std::sync::Mutex<crate::cache::NearCache<Vec<u8>, Vec<u8>>>>,
+        >,
+    >,
 }
 
 impl HazelcastClient {
@@ -282,6 +288,7 @@ impl HazelcastClient {
                 listeners: std::collections::HashMap::new(),
             }),
             user_context: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            near_cache_registry: RwLock::new(std::collections::HashMap::new()),
         })
     }
 
@@ -299,7 +306,35 @@ impl HazelcastClient {
         K: Serializable + Deserializable + Send + Sync,
         V: Serializable + Deserializable + Send + Sync,
     {
-        IMap::new(name.to_string(), Arc::clone(&self.connection_manager))
+        match self.config.find_near_cache(name) {
+            Some(nc) => IMap::new_with_shared_near_cache(
+                name.to_string(),
+                Arc::clone(&self.connection_manager),
+                self.shared_near_cache(name, nc),
+            ),
+            None => IMap::new(name.to_string(), Arc::clone(&self.connection_manager)),
+        }
+    }
+
+    /// Returns the per-name shared near cache, creating it on first use so that
+    /// every `get_map` handle for the same name observes the same cache state.
+    fn shared_near_cache(
+        &self,
+        name: &str,
+        config: &crate::cache::NearCacheConfig,
+    ) -> Arc<std::sync::Mutex<crate::cache::NearCache<Vec<u8>, Vec<u8>>>> {
+        if let Some(existing) = self.near_cache_registry.read().unwrap().get(name) {
+            return Arc::clone(existing);
+        }
+        let mut reg = self.near_cache_registry.write().unwrap();
+        if let Some(existing) = reg.get(name) {
+            return Arc::clone(existing);
+        }
+        let created = Arc::new(std::sync::Mutex::new(crate::cache::NearCache::new(
+            config.clone(),
+        )));
+        reg.insert(name.to_string(), Arc::clone(&created));
+        created
     }
 
     /// Returns a distributed queue proxy for the given name.

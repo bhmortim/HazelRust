@@ -609,6 +609,27 @@ impl<K, V> IMap<K, V> {
         }
     }
 
+    /// Creates a new map proxy that shares an existing near-cache instance.
+    ///
+    /// All proxies for the same map name returned by one client share a single
+    /// near cache, so hits/invalidations are visible across every handle.
+    pub(crate) fn new_with_shared_near_cache(
+        name: String,
+        connection_manager: Arc<ConnectionManager>,
+        near_cache: Arc<Mutex<NearCache<Vec<u8>, Vec<u8>>>>,
+    ) -> Self {
+        Self {
+            name,
+            connection_manager,
+            listener_stats: Arc::new(ListenerStats::new()),
+            stats_tracker: Arc::new(MapStatsTracker::new()),
+            near_cache: Some(near_cache),
+            invalidation_registration: Arc::new(Mutex::new(None)),
+            thread_id: 0,
+            _phantom: PhantomData,
+        }
+    }
+
     /// Returns the name of this map.
     pub fn name(&self) -> &str {
         &self.name
