@@ -1369,9 +1369,9 @@ impl ConnectionManager {
                     "hz:impl:setService"
                 } else if (0x0501..=0x050F).contains(&(opcode >> 8)) {
                     "hz:impl:listService"
-                } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
+                } else if (0x0301..=0x030F).contains(&(opcode >> 8)) {
                     "hz:impl:queueService"
-                } else if (0x0701..=0x070F).contains(&(opcode >> 8)) {
+                } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
                     "hz:impl:topicService"
                 } else {
                     "hz:impl:mapService"
@@ -1423,9 +1423,9 @@ impl ConnectionManager {
                     "hz:impl:setService"
                 } else if (0x0501..=0x050F).contains(&(opcode >> 8)) {
                     "hz:impl:listService"
-                } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
+                } else if (0x0301..=0x030F).contains(&(opcode >> 8)) {
                     "hz:impl:queueService"
-                } else if (0x0701..=0x070F).contains(&(opcode >> 8)) {
+                } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
                     "hz:impl:topicService"
                 } else {
                     "hz:impl:mapService"

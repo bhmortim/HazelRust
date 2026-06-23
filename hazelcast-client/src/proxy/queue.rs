@@ -71,9 +71,9 @@ where
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_OFFER);
+        Self::put_long(&mut message, 0); // timeout_millis = 0 (non-blocking)
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&item_data));
-        message.add_frame(Self::long_frame(0)); // timeout: 0 for non-blocking
 
         let response = self.invoke(message).await?;
         Self::decode_bool_response(&response)
@@ -84,8 +84,8 @@ where
         self.check_permission(PermissionAction::Remove)?;
         self.check_quorum(false).await?;
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_POLL);
+        Self::put_long(&mut message, 0); // timeout_millis = 0 (non-blocking)
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::long_frame(0)); // timeout: 0 for non-blocking
 
         let response = self.invoke(message).await?;
         Self::decode_nullable_response(&response)
@@ -101,25 +101,11 @@ where
         let timeout_ms = timeout.as_millis() as i64;
 
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_POLL);
+        Self::put_long(&mut message, timeout_ms);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::long_frame(timeout_ms));
 
-        let receive_timeout = timeout + Duration::from_secs(5);
-
-        let address = self.get_connection_address().await?;
-        self.connection_manager.send_to(address, message).await?;
-
-        match tokio::time::timeout(
-            receive_timeout,
-            self.connection_manager.receive_from(address),
-        )
-        .await
-        {
-            Ok(Ok(Some(response))) => Self::decode_nullable_response(&response),
-            Ok(Ok(None)) => Err(HazelcastError::Connection(
-                "connection closed unexpectedly".to_string(),
-            )),
-            Ok(Err(e)) => Err(e),
+        match tokio::time::timeout(timeout + Duration::from_secs(5), self.invoke(message)).await {
+            Ok(result) => Self::decode_nullable_response(&result?),
             Err(_) => Ok(None),
         }
     }
@@ -378,8 +364,8 @@ where
         self.check_quorum(false).await?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(QUEUE_DRAIN_TO_MAX_SIZE);
+        Self::put_int(&mut message, max as i32);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::int_frame(max as i32));
 
         let response = self.invoke(message).await?;
         Self::decode_list_response(&response)
@@ -437,7 +423,10 @@ where
     }
 
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
+        use hazelcast_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
+        output.write_int(0)?; // partition_hash placeholder
+        output.write_int(-11)?; // TYPE_STRING
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }
@@ -448,6 +437,18 @@ where
 
     fn data_frame(data: &[u8]) -> Frame {
         Frame::with_content(BytesMut::from(data))
+    }
+
+    fn put_long(message: &mut ClientMessage, value: i64) {
+        if let Some(initial) = message.frames_mut().first_mut() {
+            initial.content.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    fn put_int(message: &mut ClientMessage, value: i32) {
+        if let Some(initial) = message.frames_mut().first_mut() {
+            initial.content.extend_from_slice(&value.to_le_bytes());
+        }
     }
 
     fn long_frame(value: i64) -> Frame {
@@ -488,8 +489,22 @@ where
         Ok(())
     }
 
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_random(message).await
+    fn name_partition_id(&self) -> i32 {
+        let count = self.connection_manager.partition_count();
+        let count = if count > 0 { count } else { 271 };
+        match Self::serialize_value(&self.name) {
+            Ok(data) => {
+                let hash_input = if data.len() > 8 { &data[8..] } else { &data[..] };
+                hazelcast_core::compute_partition_hash(hash_input).abs() % count
+            }
+            Err(_) => 0,
+        }
+    }
+
+    async fn invoke(&self, mut message: ClientMessage) -> Result<ClientMessage> {
+        let pid = self.name_partition_id();
+        message.set_partition_id(pid);
+        self.connection_manager.invoke_on_partition(pid, message).await
     }
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
@@ -516,7 +531,9 @@ where
             return Ok(None);
         }
 
-        let mut input = ObjectDataInput::new(&data_frame.content);
+        let content = &data_frame.content;
+        let payload = if content.len() > 8 { &content[8..] } else { &content[..] };
+        let mut input = ObjectDataInput::new(payload);
         V::deserialize(&mut input).map(Some)
     }
 
@@ -592,7 +609,8 @@ where
             }
 
             let item_data = &content[offset..offset + item_len];
-            let mut input = ObjectDataInput::new(item_data);
+            let item_payload = if item_data.len() > 8 { &item_data[8..] } else { item_data };
+            let mut input = ObjectDataInput::new(item_payload);
             results.push(V::deserialize(&mut input)?);
             offset += item_len;
         }
