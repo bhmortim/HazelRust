@@ -6,12 +6,17 @@ on:
       - 'hazelcast-core/src/protocol/**'
       - 'hazelcast-core/src/serialization/**'
       - 'hazelcast-core/fuzz/**'
+  # Nightly extended fuzzing run. PR-triggered runs are a smoke test only;
+  # meaningful fuzzing is continuous and measured in CPU-hours, so the
+  # scheduled run uses a much longer per-target budget.
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       fuzz_seconds:
         description: 'Seconds to run each fuzzer'
         required: false
-        default: '60'
+        default: '900'
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-action@nightly
+        uses: dtolnay/rust-toolchain@nightly
         with:
           components: llvm-tools-preview
 
@@ -45,28 +50,28 @@ jobs:
         working-directory: hazelcast-core
         run: |
           cargo +nightly fuzz run fuzz_frame_decode -- \
-            -max_total_time=${{ inputs.fuzz_seconds || '30' }} \
+            -max_total_time=${{ inputs.fuzz_seconds || '300' }} \
             -max_len=4096
 
       - name: Run fuzz_portable_deserialize
         working-directory: hazelcast-core
         run: |
           cargo +nightly fuzz run fuzz_portable_deserialize -- \
-            -max_total_time=${{ inputs.fuzz_seconds || '30' }} \
+            -max_total_time=${{ inputs.fuzz_seconds || '300' }} \
             -max_len=8192
 
       - name: Run fuzz_compact_deserialize
         working-directory: hazelcast-core
         run: |
           cargo +nightly fuzz run fuzz_compact_deserialize -- \
-            -max_total_time=${{ inputs.fuzz_seconds || '30' }} \
+            -max_total_time=${{ inputs.fuzz_seconds || '300' }} \
             -max_len=8192
 
       - name: Run fuzz_client_message_decode
         working-directory: hazelcast-core
         run: |
           cargo +nightly fuzz run fuzz_client_message_decode -- \
-            -max_total_time=${{ inputs.fuzz_seconds || '30' }} \
+            -max_total_time=${{ inputs.fuzz_seconds || '300' }} \
             -max_len=16384
 
       - name: Upload crash artifacts

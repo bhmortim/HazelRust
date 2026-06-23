@@ -1,0 +1,116 @@
+name: CI
+
+# The real build/test/lint gate for HazelRust.
+#
+# Rollout model (see EXECUTION_PLAN.md, Layer 0):
+#   * `build` and `test` are BLOCKING — the workspace must compile on stable
+#     and the non-ignored test suite must pass on every push and PR.
+#   * `fmt`, `clippy`, `audit`, and `deny` start in OBSERVE mode
+#     (continue-on-error) so the first runs establish a clean baseline on a
+#     codebase that has never had these gates. Each one is ratcheted to
+#     BLOCKING (remove its `continue-on-error`) as the corresponding backlog
+#     is burned down. Do not let them stay non-blocking indefinitely.
+#
+# Note: integration tests that require a live Hazelcast cluster are `#[ignore]`
+# and are NOT exercised here. Enabling them against a containerized cluster is
+# Layer 5 of the execution plan and lands in a dedicated workflow.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (stable) — BLOCKING
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build --workspace --all-features
+        run: cargo build --workspace --all-features --locked
+
+  test:
+    name: Test (stable) — BLOCKING
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Runs unit + non-ignored integration tests. Cluster-dependent tests are
+      # #[ignore] and excluded by default (see Layer 5 of the plan).
+      - name: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --locked --no-fail-fast
+
+  msrv:
+    name: MSRV 1.70 build — observe
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.70"
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build (MSRV)
+        run: cargo build --workspace --all-features --locked
+
+  fmt:
+    name: Rustfmt — observe (ratchet to blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: cargo fmt --all --check
+        run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy — observe (ratchet to -D warnings)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # TODO(plan/Layer-1): change to `-- -D warnings` once the warning
+      # backlog is cleared, then drop continue-on-error on this job.
+      - name: cargo clippy --all-targets --all-features
+        run: cargo clippy --all-targets --all-features --locked
+
+  audit:
+    name: cargo-audit (advisories) — observe
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      - name: cargo audit
+        run: cargo audit
+
+  deny:
+    name: cargo-deny (licenses/bans/sources) — observe
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-deny
+      - name: cargo deny check
+        run: cargo deny check
