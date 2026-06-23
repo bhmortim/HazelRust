@@ -2731,7 +2731,7 @@ where
         // For simplicity, write 0 as partition hash (computed later by the server)
         use hazelcast_core::serialization::DataOutput;
         output.write_int(0)?; // partition_hash placeholder
-        output.write_int(-11)?; // TYPE_STRING = -11
+        output.write_int(value.type_id())?; // Hazelcast constant type id
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }

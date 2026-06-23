@@ -8,6 +8,12 @@ pub trait Serializable {
     /// Serializes this value to the given output.
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()>;
 
+    /// Hazelcast constant type id written into the Data header. Defaults to
+    /// STRING (-11); primitive impls override with their real constant type id.
+    fn type_id(&self) -> i32 {
+        -11
+    }
+
     /// Convenience method: serializes this value to a byte vector.
     fn to_bytes(&self) -> Result<Vec<u8>>
     where
@@ -35,6 +41,10 @@ impl Serializable for i8 {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_byte(*self)
     }
+
+    fn type_id(&self) -> i32 {
+        -3
+    }
 }
 
 impl Deserializable for i8 {
@@ -46,6 +56,10 @@ impl Deserializable for i8 {
 impl Serializable for i16 {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_short(*self)
+    }
+
+    fn type_id(&self) -> i32 {
+        -6
     }
 }
 
@@ -59,6 +73,10 @@ impl Serializable for i32 {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_int(*self)
     }
+
+    fn type_id(&self) -> i32 {
+        -7
+    }
 }
 
 impl Deserializable for i32 {
@@ -70,6 +88,10 @@ impl Deserializable for i32 {
 impl Serializable for i64 {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_long(*self)
+    }
+
+    fn type_id(&self) -> i32 {
+        -8
     }
 }
 
@@ -83,6 +105,10 @@ impl Serializable for f32 {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_float(*self)
     }
+
+    fn type_id(&self) -> i32 {
+        -9
+    }
 }
 
 impl Deserializable for f32 {
@@ -95,6 +121,10 @@ impl Serializable for f64 {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_double(*self)
     }
+
+    fn type_id(&self) -> i32 {
+        -10
+    }
 }
 
 impl Deserializable for f64 {
@@ -106,6 +136,10 @@ impl Deserializable for f64 {
 impl Serializable for bool {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_bool(*self)
+    }
+
+    fn type_id(&self) -> i32 {
+        -4
     }
 }
 

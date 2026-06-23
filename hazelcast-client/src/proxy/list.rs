@@ -320,7 +320,7 @@ where
         let mut output = ObjectDataOutput::new();
         // Hazelcast Data format: [partition_hash: i32 BE] [type_id: i32 BE] [payload]
         output.write_int(0)?; // partition_hash placeholder (server recomputes)
-        output.write_int(-11)?; // TYPE_STRING = -11
+        output.write_int(value.type_id())?; // Hazelcast constant type id
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }

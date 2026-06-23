@@ -220,11 +220,12 @@ where
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
 
-        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_PUT, PARTITION_ID_ANY);
+        let pid = self.key_partition(&key_data);
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_PUT, pid);
+        Self::put_long(&mut message, 0); // ttl = 0 (no expiry for ReplicatedMap)
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(-1)); // TTL: no expiry
 
         let response = self.invoke_on_random(message).await?;
         Self::decode_nullable_response(&response)
@@ -241,11 +242,11 @@ where
         let ttl_millis = ttl.as_millis() as i64;
 
         let mut message =
-            ClientMessage::create_for_encode(REPLICATED_MAP_PUT_WITH_TTL, PARTITION_ID_ANY);
+            ClientMessage::create_for_encode(REPLICATED_MAP_PUT, self.key_partition(&key_data));
+        Self::put_long(&mut message, ttl_millis);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
-        message.add_frame(Self::long_frame(ttl_millis));
 
         let response = self.invoke_on_random(message).await?;
         Self::decode_nullable_response(&response)
@@ -286,7 +287,8 @@ where
     pub async fn get(&self, key: &K) -> Result<Option<V>> {
         let key_data = Self::serialize_value(key)?;
 
-        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_GET, PARTITION_ID_ANY);
+        let pid = self.key_partition(&key_data);
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_GET, pid);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -303,7 +305,8 @@ where
         self.stats.record_remove();
         let key_data = Self::serialize_value(key)?;
 
-        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_REMOVE, PARTITION_ID_ANY);
+        let pid = self.key_partition(&key_data);
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_REMOVE, pid);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -316,7 +319,7 @@ where
         let key_data = Self::serialize_value(key)?;
 
         let mut message =
-            ClientMessage::create_for_encode(REPLICATED_MAP_CONTAINS_KEY, PARTITION_ID_ANY);
+            ClientMessage::create_for_encode(REPLICATED_MAP_CONTAINS_KEY, self.key_partition(&key_data));
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -681,9 +684,34 @@ where
     }
 
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
+        use hazelcast_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
+        output.write_int(0)?;
+        output.write_int(-11)?;
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
+    }
+
+    fn put_long(message: &mut ClientMessage, value: i64) {
+        if let Some(initial) = message.frames_mut().first_mut() {
+            initial.content.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    fn skip8(d: &[u8]) -> &[u8] {
+        if d.len() > 8 { &d[8..] } else { d }
+    }
+
+    fn key_partition(&self, key_data: &[u8]) -> i32 {
+        let count = self.connection_manager.partition_count();
+        let count = if count > 0 { count } else { 271 };
+        let h = Self::skip8(key_data);
+        hazelcast_core::compute_partition_hash(h).abs() % count
+    }
+
+    async fn invoke_on_part(&self, pid: i32, mut message: ClientMessage) -> Result<ClientMessage> {
+        message.set_partition_id(pid);
+        self.connection_manager.invoke_on_partition(pid, message).await
     }
 
     fn string_frame(s: &str) -> Frame {
@@ -712,8 +740,18 @@ where
         Frame::with_content(buf)
     }
 
-    async fn invoke_on_random(&self, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_random(message).await
+    async fn invoke_on_random(&self, mut message: ClientMessage) -> Result<ClientMessage> {
+        // Route every op for this ReplicatedMap to the partition owner of the map
+        // name so writes and reads hit the same member (replication is asynchronous,
+        // so read-your-writes requires a consistent target).
+        let count = self.connection_manager.partition_count();
+        let count = if count > 0 { count } else { 271 };
+        let pid = match Self::serialize_value(&self.name) {
+            Ok(data) => hazelcast_core::compute_partition_hash(Self::skip8(&data)).abs() % count,
+            Err(_) => 0,
+        };
+        message.set_partition_id(pid);
+        self.connection_manager.invoke_on_partition(pid, message).await
     }
 
     fn long_frame(value: i64) -> Frame {
@@ -738,7 +776,7 @@ where
             return Ok(None);
         }
 
-        let mut input = ObjectDataInput::new(&data_frame.content);
+        let mut input = ObjectDataInput::new(Self::skip8(&data_frame.content));
         T::deserialize(&mut input).map(Some)
     }
 
@@ -774,7 +812,7 @@ where
                 continue;
             }
 
-            let mut input = ObjectDataInput::new(&frame.content);
+            let mut input = ObjectDataInput::new(Self::skip8(&frame.content));
             if let Ok(value) = T::deserialize(&mut input) {
                 result.push(value);
             }
@@ -798,8 +836,8 @@ where
             let key_frame = data_frames[i];
             let value_frame = data_frames[i + 1];
 
-            let mut key_input = ObjectDataInput::new(&key_frame.content);
-            let mut value_input = ObjectDataInput::new(&value_frame.content);
+            let mut key_input = ObjectDataInput::new(Self::skip8(&key_frame.content));
+            let mut value_input = ObjectDataInput::new(Self::skip8(&value_frame.content));
 
             if let (Ok(key), Ok(value)) = (
                 K::deserialize(&mut key_input),
@@ -926,7 +964,7 @@ where
 
         let key_frame = &frames[2];
         let key = if !key_frame.content.is_empty() && key_frame.flags & IS_NULL_FLAG == 0 {
-            let mut input = ObjectDataInput::new(&key_frame.content);
+            let mut input = ObjectDataInput::new(Self::skip8(&key_frame.content));
             K::deserialize(&mut input)?
         } else {
             return Err(HazelcastError::Serialization(
@@ -939,7 +977,7 @@ where
             let old_value = if !old_value_frame.content.is_empty()
                 && old_value_frame.flags & IS_NULL_FLAG == 0
             {
-                let mut input = ObjectDataInput::new(&old_value_frame.content);
+                let mut input = ObjectDataInput::new(Self::skip8(&old_value_frame.content));
                 V::deserialize(&mut input).ok()
             } else {
                 None
@@ -949,7 +987,7 @@ where
             let new_value = if !new_value_frame.content.is_empty()
                 && new_value_frame.flags & IS_NULL_FLAG == 0
             {
-                let mut input = ObjectDataInput::new(&new_value_frame.content);
+                let mut input = ObjectDataInput::new(Self::skip8(&new_value_frame.content));
                 V::deserialize(&mut input).ok()
             } else {
                 None

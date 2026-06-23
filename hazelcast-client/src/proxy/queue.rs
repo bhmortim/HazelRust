@@ -426,7 +426,7 @@ where
         use hazelcast_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
         output.write_int(0)?; // partition_hash placeholder
-        output.write_int(-11)?; // TYPE_STRING
+        output.write_int(value.type_id())?; // Hazelcast constant type id
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }

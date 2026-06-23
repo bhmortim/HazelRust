@@ -432,49 +432,49 @@ pub const CLIENT_DESTROY_PROXY: i32 = 0x000500;
 pub const REPLICATED_MAP_PUT: i32 = 0x0D0100;
 
 /// ReplicatedMap get request.
-pub const REPLICATED_MAP_GET: i32 = 0x0D0200;
+pub const REPLICATED_MAP_GET: i32 = 0x0D0600;
 
 /// ReplicatedMap remove request.
-pub const REPLICATED_MAP_REMOVE: i32 = 0x0D0300;
+pub const REPLICATED_MAP_REMOVE: i32 = 0x0D0700;
 
 /// ReplicatedMap size request.
-pub const REPLICATED_MAP_SIZE: i32 = 0x0D0400;
+pub const REPLICATED_MAP_SIZE: i32 = 0x0D0200;
 
 /// ReplicatedMap is empty request.
-pub const REPLICATED_MAP_IS_EMPTY: i32 = 0x0D0500;
+pub const REPLICATED_MAP_IS_EMPTY: i32 = 0x0D0300;
 
 /// ReplicatedMap contains key request.
-pub const REPLICATED_MAP_CONTAINS_KEY: i32 = 0x0D0600;
+pub const REPLICATED_MAP_CONTAINS_KEY: i32 = 0x0D0400;
 
 /// ReplicatedMap contains value request.
-pub const REPLICATED_MAP_CONTAINS_VALUE: i32 = 0x0D0700;
+pub const REPLICATED_MAP_CONTAINS_VALUE: i32 = 0x0D0500;
 
 /// ReplicatedMap clear request.
-pub const REPLICATED_MAP_CLEAR: i32 = 0x0D0800;
+pub const REPLICATED_MAP_CLEAR: i32 = 0x0D0900;
 
 /// ReplicatedMap key set request.
-pub const REPLICATED_MAP_KEY_SET: i32 = 0x0D0900;
+pub const REPLICATED_MAP_KEY_SET: i32 = 0x0D0F00;
 
 /// ReplicatedMap values request.
-pub const REPLICATED_MAP_VALUES: i32 = 0x0D0A00;
+pub const REPLICATED_MAP_VALUES: i32 = 0x0D1000;
 
 /// ReplicatedMap entry set request.
-pub const REPLICATED_MAP_ENTRY_SET: i32 = 0x0D0B00;
+pub const REPLICATED_MAP_ENTRY_SET: i32 = 0x0D1100;
 
 /// ReplicatedMap add entry listener request.
-pub const REPLICATED_MAP_ADD_ENTRY_LISTENER: i32 = 0x0D0C00;
+pub const REPLICATED_MAP_ADD_ENTRY_LISTENER: i32 = 0x0D0D00;
 
 /// ReplicatedMap remove entry listener request.
-pub const REPLICATED_MAP_REMOVE_ENTRY_LISTENER: i32 = 0x0D0D00;
+pub const REPLICATED_MAP_REMOVE_ENTRY_LISTENER: i32 = 0x0D0E00;
 
 /// ReplicatedMap add entry listener with predicate request.
-pub const REPLICATED_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x0D0E00;
+pub const REPLICATED_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x0D0B00;
 
 /// ReplicatedMap put all request.
-pub const REPLICATED_MAP_PUT_ALL: i32 = 0x0D0F00;
+pub const REPLICATED_MAP_PUT_ALL: i32 = 0x0D0800;
 
 /// ReplicatedMap put with TTL request.
-pub const REPLICATED_MAP_PUT_WITH_TTL: i32 = 0x0D1000;
+pub const REPLICATED_MAP_PUT_WITH_TTL: i32 = 0x0D0100;
 
 /// Ringbuffer size request.
 pub const RINGBUFFER_SIZE: i32 = 0x190100;
