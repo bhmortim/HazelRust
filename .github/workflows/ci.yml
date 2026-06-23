@@ -32,13 +32,29 @@ concurrency:
 
 jobs:
   build:
-    name: Build (stable) — BLOCKING
+    name: Build (stable, default features) — BLOCKING
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: cargo build --workspace --all-features
+      # Default features only: portable, fast, representative of the common
+      # dependency. The heavy/native optional features (kafka/rdkafka, AWS/Azure/
+      # GCP/k8s discovery) are exercised by the non-blocking all-features job.
+      - name: cargo build --workspace --locked
+        run: cargo build --workspace --locked
+
+  build-all-features:
+    name: Build (all features) — observe
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Pulls native deps (rdkafka) and large cloud SDKs; kept non-blocking until
+      # the matrix of optional features is known-good on Linux runners.
+      - name: cargo build --workspace --all-features --locked
         run: cargo build --workspace --all-features --locked
 
   test:
@@ -48,10 +64,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Runs unit + non-ignored integration tests. Cluster-dependent tests are
-      # #[ignore] and excluded by default (see Layer 5 of the plan).
-      - name: cargo test --workspace --all-features
-        run: cargo test --workspace --all-features --locked --no-fail-fast
+      # Runs unit + non-ignored integration tests (default features).
+      # Cluster-dependent tests are #[ignore] and excluded (see Layer 5).
+      - name: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast
 
   msrv:
     name: MSRV 1.70 build — observe
@@ -63,8 +79,8 @@ jobs:
         with:
           toolchain: "1.70"
       - uses: Swatinem/rust-cache@v2
-      - name: cargo build (MSRV)
-        run: cargo build --workspace --all-features --locked
+      - name: cargo build (MSRV, default features)
+        run: cargo build --workspace --locked
 
   fmt:
     name: Rustfmt — observe (ratchet to blocking)

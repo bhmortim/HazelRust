@@ -384,14 +384,18 @@ mod tests {
     }
 
     #[test]
-    fn test_write_to_sets_end_flag() {
+    fn test_write_to_sets_final_flag() {
         let mut msg = ClientMessage::create_for_encode(MAP_GET, 0);
         msg.add_frame(Frame::with_content(BytesMut::from(&b"data"[..])));
 
         let mut buf = BytesMut::new();
         msg.write_to(&mut buf);
 
-        assert!(msg.frames().last().unwrap().is_end_frame());
+        // `write_to` marks the last frame of a message with IS_FINAL_FLAG (the
+        // protocol's end-of-message marker), which is distinct from END_FLAG
+        // (end of a nested data structure). The previous assertion checked
+        // `is_end_frame()` (END_FLAG) and so never matched what `write_to` does.
+        assert!(msg.frames().last().unwrap().is_final_frame());
     }
 
     #[test]

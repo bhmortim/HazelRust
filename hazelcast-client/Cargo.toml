@@ -105,3 +105,10 @@ harness = false
 [[bench]]
 name = "serialization_benchmarks"
 harness = false
+
+# This example uses the feature-gated Prometheus exporter, so it must only be
+# compiled when the `metrics` feature is enabled. Without this, a default-feature
+# `cargo test --workspace` (the CI gate) fails to compile the example.
+[[example]]
+name = "prometheus_metrics"
+required-features = ["metrics"]
