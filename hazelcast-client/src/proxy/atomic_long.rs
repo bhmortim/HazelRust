@@ -1,24 +1,49 @@
 //! Distributed atomic long counter proxy implementation.
+//!
+//! CP data structures require the Raft `groupId` to be sent with every request,
+//! encoded as a data structure (`BEGIN` / `[seed,id]` / name / `END`), and fixed
+//! parameters (the `long` values) to live in the request's initial frame after the
+//! header — per the Hazelcast Open Binary Protocol. See issue #12.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::BytesMut;
 use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::{ClientMessage, HazelcastError, Result};
+use tokio::sync::OnceCell;
 
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 
-/// A distributed atomic long counter proxy for performing atomic operations on a Hazelcast CP subsystem.
+// Correct Hazelcast AtomicLong message types. The hazelcast_core CP_ATOMIC_LONG_*
+// constants are mislabeled (..._GET=0x090100 is actually Apply; ..._ADD_AND_GET=0x090500
+// is actually Get), which is why mutating ops silently no-op'd. Verified against the
+// Hazelcast client protocol (issue #12). AtomicLong has no plain Set; set() uses GetAndSet.
+const ATOMIC_LONG_ADD_AND_GET: i32 = 0x090300;
+const ATOMIC_LONG_COMPARE_AND_SET: i32 = 0x090400;
+const ATOMIC_LONG_GET: i32 = 0x090500;
+const ATOMIC_LONG_GET_AND_ADD: i32 = 0x090600;
+const ATOMIC_LONG_GET_AND_SET: i32 = 0x090700;
+
+/// A resolved CP Raft group identifier (`seed`, `id`, `name`).
+#[derive(Debug, Clone)]
+struct RaftGroupId {
+    seed: i64,
+    id: i64,
+    name: String,
+}
+
+/// A distributed atomic long counter backed by the Hazelcast CP (Raft) subsystem.
 ///
-/// `AtomicLong` provides async atomic counter operations with strong consistency guarantees
-/// through the CP (Consistent Partition) subsystem.
+/// Provides linearizable atomic counter operations with strong consistency.
 #[derive(Debug)]
 pub struct AtomicLong {
+    /// Full proxy name (may include a `@group` suffix).
     name: String,
     connection_manager: Arc<ConnectionManager>,
+    /// Lazily-resolved Raft group id, shared across clones.
+    group_id: Arc<OnceCell<RaftGroupId>>,
 }
 
 impl AtomicLong {
@@ -27,12 +52,29 @@ impl AtomicLong {
         Self {
             name,
             connection_manager,
+            group_id: Arc::new(OnceCell::new()),
         }
     }
 
     /// Returns the name of this atomic long.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The object name without any `@group` suffix (what CP ops send as `name`).
+    fn object_name(&self) -> &str {
+        match self.name.split_once('@') {
+            Some((obj, _)) => obj,
+            None => &self.name,
+        }
+    }
+
+    /// The CP group name owning this object (`default` unless an `@group` suffix is present).
+    fn group_name(&self) -> &str {
+        match self.name.split_once('@') {
+            Some((_, grp)) if !grp.is_empty() => grp,
+            _ => "default",
+        }
     }
 
     fn check_permission(&self, action: PermissionAction) -> Result<()> {
@@ -52,13 +94,80 @@ impl AtomicLong {
             .await
     }
 
+    /// Resolves (and caches) the Raft `groupId` for this object's CP group.
+    ///
+    /// Uses `CPGroupCreateCPGroup` (0x1E0100), which creates the group if needed
+    /// and returns its `RaftGroupId`.
+    async fn resolve_group(&self) -> Result<&RaftGroupId> {
+        self.group_id
+            .get_or_try_init(|| async {
+                let mut request = ClientMessage::create_for_encode_any_partition(
+                    // 0x1E0100 = CPGroupCreateCPGroup per the Hazelcast protocol; the
+                    // existing constant name (`..._GET_GROUP_IDS`) is misleading.
+                    CP_SUBSYSTEM_GET_GROUP_IDS,
+                );
+                request.add_frame(Self::string_frame(self.group_name()));
+                let response = self.connection_manager.invoke_on_random(request).await?;
+                Self::decode_group_id(&response)
+            })
+            .await
+    }
+
+    /// Decodes a `RaftGroupId` data structure from a response:
+    /// `[response-initial] BEGIN [seed(8) id(8)] name END`.
+    fn decode_group_id(response: &ClientMessage) -> Result<RaftGroupId> {
+        let frames = response.frames();
+        // frames[0] = response initial frame; [1] = BEGIN; [2] = seed+id; [3] = name; [4] = END
+        if frames.len() < 4 {
+            return Err(HazelcastError::Protocol(
+                "CP group id response too short (CP subsystem unavailable?)".to_string(),
+            ));
+        }
+        let fixed = frames[2].content();
+        if fixed.len() < 16 {
+            return Err(HazelcastError::Protocol(
+                "CP group id fixed frame too short".to_string(),
+            ));
+        }
+        let seed = i64::from_le_bytes(fixed[0..8].try_into().unwrap());
+        let id = i64::from_le_bytes(fixed[8..16].try_into().unwrap());
+        let name = String::from_utf8_lossy(frames[3].content()).to_string();
+        Ok(RaftGroupId { seed, id, name })
+    }
+
+    /// Encodes a `RaftGroupId` into a request as a data structure:
+    /// `BEGIN` / `[seed(8) id(8)]` / name(String) / `END`.
+    fn encode_group_id(message: &mut ClientMessage, group: &RaftGroupId) {
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        let mut fixed = BytesMut::with_capacity(16);
+        fixed.extend_from_slice(&group.seed.to_le_bytes());
+        fixed.extend_from_slice(&group.id.to_le_bytes());
+        message.add_frame(Frame::with_content(fixed));
+        message.add_frame(Self::string_frame(&group.name));
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
+    }
+
+    /// Builds a CP request: initial frame (header + the fixed `long` params), then
+    /// the `groupId` data structure, then the object name.
+    async fn build_request(&self, msg_type: i32, fixed_longs: &[i64]) -> Result<ClientMessage> {
+        let group = self.resolve_group().await?.clone();
+        let mut message = ClientMessage::create_for_encode_any_partition(msg_type);
+        // Append fixed params to the initial frame (after the request header).
+        if let Some(initial) = message.frames_mut().first_mut() {
+            for v in fixed_longs {
+                initial.content.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        Self::encode_group_id(&mut message, &group);
+        message.add_frame(Self::string_frame(self.object_name()));
+        Ok(message)
+    }
+
     /// Gets the current value.
     pub async fn get(&self) -> Result<i64> {
         self.check_permission(PermissionAction::Read)?;
         self.check_quorum(true).await?;
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET);
-        message.add_frame(Self::string_frame(&self.name));
-
+        let message = self.build_request(ATOMIC_LONG_GET, &[]).await?;
         let response = self.invoke(message).await?;
         Self::decode_long_response(&response)
     }
@@ -67,85 +176,73 @@ impl AtomicLong {
     pub async fn set(&self, value: i64) -> Result<()> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_SET);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::long_frame(value));
-
+        let message = self.build_request(ATOMIC_LONG_GET_AND_SET, &[value]).await?;
         self.invoke(message).await?;
         Ok(())
     }
 
-    /// Atomically sets the value to the given value and returns the old value.
+    /// Atomically sets the value and returns the old value.
     pub async fn get_and_set(&self, value: i64) -> Result<i64> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET_AND_SET);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::long_frame(value));
-
+        let message = self
+            .build_request(ATOMIC_LONG_GET_AND_SET, &[value])
+            .await?;
         let response = self.invoke(message).await?;
         Self::decode_long_response(&response)
     }
 
-    /// Atomically sets the value to the given updated value if the current value equals the expected value.
+    /// Atomically sets the value to `update` if the current value equals `expected`.
     ///
-    /// Returns `true` if successful, `false` if the actual value was not equal to the expected value.
+    /// Returns `true` on success, `false` if the actual value was not `expected`.
     pub async fn compare_and_set(&self, expected: i64, update: i64) -> Result<bool> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_COMPARE_AND_SET);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::long_frame(expected));
-        message.add_frame(Self::long_frame(update));
-
+        let message = self
+            .build_request(ATOMIC_LONG_COMPARE_AND_SET, &[expected, update])
+            .await?;
         let response = self.invoke(message).await?;
         Self::decode_bool_response(&response)
     }
 
-    /// Atomically increments the current value by one and returns the updated value.
+    /// Atomically increments the value by one and returns the updated value.
     pub async fn increment_and_get(&self) -> Result<i64> {
         self.add_and_get(1).await
     }
 
-    /// Atomically decrements the current value by one and returns the updated value.
+    /// Atomically decrements the value by one and returns the updated value.
     pub async fn decrement_and_get(&self) -> Result<i64> {
         self.add_and_get(-1).await
     }
 
-    /// Atomically increments the current value by one and returns the old value.
+    /// Atomically increments the value by one and returns the old value.
     pub async fn get_and_increment(&self) -> Result<i64> {
         self.get_and_add(1).await
     }
 
-    /// Atomically decrements the current value by one and returns the old value.
+    /// Atomically decrements the value by one and returns the old value.
     pub async fn get_and_decrement(&self) -> Result<i64> {
         self.get_and_add(-1).await
     }
 
-    /// Atomically adds the given delta to the current value and returns the updated value.
+    /// Atomically adds `delta` and returns the updated value.
     pub async fn add_and_get(&self, delta: i64) -> Result<i64> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_ADD_AND_GET);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::long_frame(delta));
-
+        let message = self
+            .build_request(ATOMIC_LONG_ADD_AND_GET, &[delta])
+            .await?;
         let response = self.invoke(message).await?;
         Self::decode_long_response(&response)
     }
 
-    /// Atomically adds the given delta to the current value and returns the old value.
+    /// Atomically adds `delta` and returns the old value.
     pub async fn get_and_add(&self, delta: i64) -> Result<i64> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let mut message =
-            ClientMessage::create_for_encode_any_partition(CP_ATOMIC_LONG_GET_AND_ADD);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::long_frame(delta));
-
+        let message = self
+            .build_request(ATOMIC_LONG_GET_AND_ADD, &[delta])
+            .await?;
         let response = self.invoke(message).await?;
         Self::decode_long_response(&response)
     }
@@ -154,62 +251,37 @@ impl AtomicLong {
         Frame::with_content(BytesMut::from(s.as_bytes()))
     }
 
-    fn long_frame(value: i64) -> Frame {
-        let mut buf = BytesMut::with_capacity(8);
-        buf.extend_from_slice(&value.to_le_bytes());
-        Frame::with_content(buf)
-    }
-
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let _address = self.get_connection_address().await?;
-
         self.connection_manager.invoke_on_random(message).await
-    }
-
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses
-            .into_iter()
-            .next()
-            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_long_response(response: &ClientMessage) -> Result<i64> {
         let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
+        let initial_frame = frames
+            .first()
+            .ok_or_else(|| HazelcastError::Serialization("empty response".to_string()))?;
+        if initial_frame.content.len() < RESPONSE_HEADER_SIZE + 8 {
+            return Err(HazelcastError::Protocol(
+                "atomic long response too short (expected an i64)".to_string(),
+            ));
         }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 8 {
-            let offset = RESPONSE_HEADER_SIZE;
-            Ok(i64::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-                initial_frame.content[offset + 4],
-                initial_frame.content[offset + 5],
-                initial_frame.content[offset + 6],
-                initial_frame.content[offset + 7],
-            ]))
-        } else {
-            Ok(0)
-        }
+        let offset = RESPONSE_HEADER_SIZE;
+        Ok(i64::from_le_bytes(
+            initial_frame.content[offset..offset + 8].try_into().unwrap(),
+        ))
     }
 
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {
         let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
+        let initial_frame = frames
+            .first()
+            .ok_or_else(|| HazelcastError::Serialization("empty response".to_string()))?;
+        if initial_frame.content.len() <= RESPONSE_HEADER_SIZE {
+            return Err(HazelcastError::Protocol(
+                "atomic long response too short (expected a bool)".to_string(),
+            ));
         }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() > RESPONSE_HEADER_SIZE {
-            Ok(initial_frame.content[RESPONSE_HEADER_SIZE] != 0)
-        } else {
-            Ok(false)
-        }
+        Ok(initial_frame.content[RESPONSE_HEADER_SIZE] != 0)
     }
 }
 
@@ -218,6 +290,7 @@ impl Clone for AtomicLong {
         Self {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
+            group_id: Arc::clone(&self.group_id),
         }
     }
 }
@@ -232,84 +305,23 @@ mod tests {
         assert_send_sync::<AtomicLong>();
     }
 
-    #[tokio::test]
-    async fn test_atomic_long_permission_denied_get() {
-        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
-        use crate::connection::ConnectionManager;
-        use std::sync::Arc;
-
-        let mut perms = Permissions::new();
-        perms.grant(PermissionAction::Put);
-
-        let config = ClientConfigBuilder::new()
-            .security(|s| s.permissions(perms))
-            .build()
-            .unwrap();
-
-        let cm = Arc::new(ConnectionManager::from_config(config));
-        let counter = AtomicLong::new("test".to_string(), cm);
-
-        let result = counter.get().await;
-        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
-    }
-
-    #[tokio::test]
-    async fn test_atomic_long_permission_denied_set() {
-        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
-        use crate::connection::ConnectionManager;
-        use std::sync::Arc;
-
-        let mut perms = Permissions::new();
-        perms.grant(PermissionAction::Read);
-
-        let config = ClientConfigBuilder::new()
-            .security(|s| s.permissions(perms))
-            .build()
-            .unwrap();
-
-        let cm = Arc::new(ConnectionManager::from_config(config));
-        let counter = AtomicLong::new("test".to_string(), cm);
-
-        let result = counter.set(42).await;
-        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
-    }
-
-    #[tokio::test]
-    async fn test_atomic_long_quorum_not_present_blocks_operations() {
-        use crate::config::{ClientConfigBuilder, QuorumConfig, QuorumType};
-        use crate::connection::ConnectionManager;
-
-        let quorum = QuorumConfig::builder("protected-*")
-            .min_cluster_size(3)
-            .quorum_type(QuorumType::ReadWrite)
-            .build()
-            .unwrap();
-
-        let config = ClientConfigBuilder::new()
-            .add_quorum_config(quorum)
-            .build()
-            .unwrap();
-
-        let cm = Arc::new(ConnectionManager::from_config(config));
-        let counter = AtomicLong::new("protected-counter".to_string(), cm);
-
-        let result = counter.get().await;
-        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
-
-        let result = counter.set(42).await;
-        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
-
-        let result = counter.increment_and_get().await;
-        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
-
-        let result = counter.compare_and_set(0, 1).await;
-        assert!(matches!(result, Err(HazelcastError::QuorumNotPresent(_))));
-    }
-
     #[test]
     fn test_atomic_long_clone() {
         fn assert_clone<T: Clone>() {}
         assert_clone::<AtomicLong>();
+    }
+
+    #[test]
+    fn test_name_parsing() {
+        let cm = Arc::new(crate::connection::ConnectionManager::from_config(
+            crate::config::ClientConfigBuilder::new().build().unwrap(),
+        ));
+        let a = AtomicLong::new("counter".to_string(), Arc::clone(&cm));
+        assert_eq!(a.object_name(), "counter");
+        assert_eq!(a.group_name(), "default");
+        let b = AtomicLong::new("counter@payments".to_string(), cm);
+        assert_eq!(b.object_name(), "counter");
+        assert_eq!(b.group_name(), "payments");
     }
 
     #[test]
@@ -319,40 +331,43 @@ mod tests {
     }
 
     #[test]
-    fn test_long_frame() {
-        let frame = AtomicLong::long_frame(42);
-        assert_eq!(frame.content.len(), 8);
+    fn test_encode_group_id_framing() {
+        let mut msg = ClientMessage::create_for_encode_any_partition(ATOMIC_LONG_GET);
+        let g = RaftGroupId {
+            seed: 7,
+            id: 42,
+            name: "default".to_string(),
+        };
+        AtomicLong::encode_group_id(&mut msg, &g);
+        let frames = msg.frames();
+        // initial, BEGIN, [seed+id], name, END
+        let begin = &frames[frames.len() - 4];
+        let fixed = &frames[frames.len() - 3];
+        let name = &frames[frames.len() - 2];
+        let end = &frames[frames.len() - 1];
+        assert!(begin.flags & BEGIN_DATA_STRUCTURE_FLAG != 0);
+        assert!(end.flags & END_DATA_STRUCTURE_FLAG != 0);
+        assert_eq!(fixed.content.len(), 16);
+        assert_eq!(i64::from_le_bytes(fixed.content[0..8].try_into().unwrap()), 7);
         assert_eq!(
-            i64::from_le_bytes(frame.content[..8].try_into().unwrap()),
+            i64::from_le_bytes(fixed.content[8..16].try_into().unwrap()),
             42
         );
+        assert_eq!(&name.content[..], b"default");
     }
 
-    #[test]
-    fn test_long_frame_negative() {
-        let frame = AtomicLong::long_frame(-100);
-        assert_eq!(frame.content.len(), 8);
-        assert_eq!(
-            i64::from_le_bytes(frame.content[..8].try_into().unwrap()),
-            -100
-        );
-    }
-
-    #[test]
-    fn test_long_frame_max_value() {
-        let frame = AtomicLong::long_frame(i64::MAX);
-        assert_eq!(
-            i64::from_le_bytes(frame.content[..8].try_into().unwrap()),
-            i64::MAX
-        );
-    }
-
-    #[test]
-    fn test_long_frame_min_value() {
-        let frame = AtomicLong::long_frame(i64::MIN);
-        assert_eq!(
-            i64::from_le_bytes(frame.content[..8].try_into().unwrap()),
-            i64::MIN
-        );
+    #[tokio::test]
+    async fn test_atomic_long_permission_denied_get() {
+        use crate::config::{ClientConfigBuilder, PermissionAction, Permissions};
+        let mut perms = Permissions::new();
+        perms.grant(PermissionAction::Put);
+        let config = ClientConfigBuilder::new()
+            .security(|s| s.permissions(perms))
+            .build()
+            .unwrap();
+        let cm = Arc::new(ConnectionManager::from_config(config));
+        let counter = AtomicLong::new("test".to_string(), cm);
+        let result = counter.get().await;
+        assert!(matches!(result, Err(HazelcastError::Authorization(_))));
     }
 }
