@@ -948,13 +948,13 @@ pub const MAP_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x014100;
 pub const MAP_EVENT_JOURNAL_READ: i32 = 0x014200;
 
 /// Map values request (returns all values from the entire map).
-pub const MAP_VALUES: i32 = 0x013400;
+pub const MAP_VALUES: i32 = 0x012400;
 
 /// Map key set request (returns all keys from the entire map).
-pub const MAP_KEY_SET: i32 = 0x013500;
+pub const MAP_KEY_SET: i32 = 0x012200;
 
 /// Map entry set request (returns all entries from the entire map).
-pub const MAP_ENTRY_SET: i32 = 0x013600;
+pub const MAP_ENTRY_SET: i32 = 0x012500;
 
 /// Map fetch keys request (for partition-level iteration).
 pub const MAP_FETCH_KEYS: i32 = 0x013700;

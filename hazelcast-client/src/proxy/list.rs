@@ -358,16 +358,12 @@ where
     }
 
     fn add_data_list_frames(&self, message: &mut ClientMessage, items: &[T]) -> Result<()> {
-        let mut list_buf = BytesMut::new();
-        list_buf.extend_from_slice(&(items.len() as i32).to_le_bytes());
-
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         for item in items {
             let item_data = Self::serialize_value(item)?;
-            list_buf.extend_from_slice(&(item_data.len() as i32).to_le_bytes());
-            list_buf.extend_from_slice(&item_data);
+            message.add_frame(Frame::with_content(BytesMut::from(&item_data[..])));
         }
-
-        message.add_frame(Frame::with_content(list_buf));
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
         Ok(())
     }
 

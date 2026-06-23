@@ -476,16 +476,12 @@ where
     }
 
     fn add_data_list_frames(&self, message: &mut ClientMessage, items: &[T]) -> Result<()> {
-        let mut list_buf = BytesMut::new();
-        list_buf.extend_from_slice(&(items.len() as i32).to_le_bytes());
-
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         for item in items {
             let item_data = Self::serialize_value(item)?;
-            list_buf.extend_from_slice(&(item_data.len() as i32).to_le_bytes());
-            list_buf.extend_from_slice(&item_data);
+            message.add_frame(Frame::with_content(BytesMut::from(&item_data[..])));
         }
-
-        message.add_frame(Frame::with_content(list_buf));
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
         Ok(())
     }
 
@@ -572,49 +568,22 @@ where
     }
 
     fn decode_list_response<V: Deserializable>(response: &ClientMessage) -> Result<Vec<V>> {
-        let frames = response.frames();
-        if frames.len() < 2 {
-            return Ok(Vec::new());
-        }
-
-        let data_frame = &frames[1];
-        if data_frame.content.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let content = &data_frame.content;
-        if content.len() < 4 {
-            return Ok(Vec::new());
-        }
-
-        let count = i32::from_le_bytes([content[0], content[1], content[2], content[3]]) as usize;
-        let mut results = Vec::with_capacity(count);
-        let mut offset = 4;
-
-        for _ in 0..count {
-            if offset + 4 > content.len() {
-                break;
+        let mut results = Vec::new();
+        for frame in response.frames().iter().skip(1) {
+            if frame.flags & (BEGIN_DATA_STRUCTURE_FLAG | END_DATA_STRUCTURE_FLAG) != 0 {
+                continue;
             }
-
-            let item_len = i32::from_le_bytes([
-                content[offset],
-                content[offset + 1],
-                content[offset + 2],
-                content[offset + 3],
-            ]) as usize;
-            offset += 4;
-
-            if offset + item_len > content.len() {
-                break;
+            if frame.flags & IS_NULL_FLAG != 0 || frame.content.is_empty() {
+                continue;
             }
-
-            let item_data = &content[offset..offset + item_len];
-            let item_payload = if item_data.len() > 8 { &item_data[8..] } else { item_data };
-            let mut input = ObjectDataInput::new(item_payload);
+            let payload = if frame.content.len() > 8 {
+                &frame.content[8..]
+            } else {
+                &frame.content[..]
+            };
+            let mut input = ObjectDataInput::new(payload);
             results.push(V::deserialize(&mut input)?);
-            offset += item_len;
         }
-
         Ok(results)
     }
 
