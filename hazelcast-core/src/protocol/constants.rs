@@ -595,25 +595,25 @@ pub const SQL_FETCH: i32 = 0x210200;
 pub const SQL_CLOSE: i32 = 0x210300;
 
 /// Map values with predicate request.
-pub const MAP_VALUES_WITH_PREDICATE: i32 = 0x010E00;
+pub const MAP_VALUES_WITH_PREDICATE: i32 = 0x012700;
 
 /// Map entries with predicate request.
-pub const MAP_ENTRIES_WITH_PREDICATE: i32 = 0x010F00;
+pub const MAP_ENTRIES_WITH_PREDICATE: i32 = 0x012800;
 
 /// Map key set with predicate request.
-pub const MAP_KEYS_WITH_PREDICATE: i32 = 0x011100;
+pub const MAP_KEYS_WITH_PREDICATE: i32 = 0x012600;
 
 /// Map execute on key request.
 pub const MAP_EXECUTE_ON_KEY: i32 = 0x012E00;
 
 /// Map execute on keys request.
-pub const MAP_EXECUTE_ON_KEYS: i32 = 0x012F00;
+pub const MAP_EXECUTE_ON_KEYS: i32 = 0x013200;
 
 /// Map execute on all keys request.
 pub const MAP_EXECUTE_ON_ALL_KEYS: i32 = 0x013000;
 
 /// Map execute on entries with predicate request.
-pub const MAP_EXECUTE_WITH_PREDICATE: i32 = 0x013200;
+pub const MAP_EXECUTE_WITH_PREDICATE: i32 = 0x013100;
 
 /// Map add index request.
 pub const MAP_ADD_INDEX: i32 = 0x013100;
@@ -631,13 +631,13 @@ pub const MAP_PROJECT: i32 = 0x013B00;
 pub const MAP_PROJECT_WITH_PREDICATE: i32 = 0x013C00;
 
 /// Map values with paging predicate request.
-pub const MAP_VALUES_WITH_PAGING_PREDICATE: i32 = 0x013D00;
+pub const MAP_VALUES_WITH_PAGING_PREDICATE: i32 = 0x013500;
 
 /// Map keys with paging predicate request.
-pub const MAP_KEYS_WITH_PAGING_PREDICATE: i32 = 0x013E00;
+pub const MAP_KEYS_WITH_PAGING_PREDICATE: i32 = 0x013400;
 
 /// Map entries with paging predicate request.
-pub const MAP_ENTRIES_WITH_PAGING_PREDICATE: i32 = 0x013F00;
+pub const MAP_ENTRIES_WITH_PAGING_PREDICATE: i32 = 0x013600;
 
 /// Map try put request.
 pub const MAP_TRY_PUT: i32 = 0x010C00;
