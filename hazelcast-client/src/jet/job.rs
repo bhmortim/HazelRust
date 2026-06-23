@@ -291,8 +291,8 @@ impl Job {
     }
 }
 
-unsafe impl Send for Job {}
-unsafe impl Sync for Job {}
+// Send + Sync are auto-derived: every field (i64, Option<String>, Arc<ConnectionManager>,
+// Arc<RwLock<JobStatus>>) is already Send + Sync, so no unsafe impl is required.
 
 #[cfg(test)]
 mod tests {

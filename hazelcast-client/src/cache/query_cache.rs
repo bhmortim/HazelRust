@@ -964,8 +964,8 @@ impl<K, V> Clone for QueryCache<K, V> {
     }
 }
 
-unsafe impl<K: Send, V: Send> Send for QueryCache<K, V> {}
-unsafe impl<K: Sync, V: Sync> Sync for QueryCache<K, V> {}
+// Send + Sync are auto-derived: Predicate and AttributeExtractor are : Send + Sync, the
+// listener alias is + Send + Sync, and PhantomData<fn() -> (K, V)> is unconditionally Send + Sync.
 
 #[cfg(test)]
 mod tests {

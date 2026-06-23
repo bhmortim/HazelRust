@@ -552,8 +552,8 @@ where
     }
 }
 
-unsafe impl<K: Send, V: Send> Send for PagingPredicate<K, V> {}
-unsafe impl<K: Sync, V: Sync> Sync for PagingPredicate<K, V> {}
+// Send + Sync are auto-derived: Predicate is : Send + Sync and PhantomData<fn() -> (K, V)>
+// is unconditionally Send + Sync, so every field is already Send + Sync.
 
 /// Builder for creating `PagingPredicate` instances.
 #[derive(Debug)]
