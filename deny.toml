@@ -6,8 +6,22 @@
 [advisories]
 version = 2
 # RustSec advisory DB. Vulnerabilities and yanked crates fail by default under
-# version = 2. Add specific advisory IDs here only with a written justification.
-ignore = []
+# version = 2. Entries below are accepted only with a written justification and a
+# tracked remediation in EXECUTION_PLAN.md. Each must be revisited, not left to rot.
+ignore = [
+    # tokio-tar — PAX header file smuggling. DEV-ONLY: pulled solely by
+    # `testcontainers` (test infrastructure); never compiled into the shipped
+    # client. No fixed release exists. Remediation: drop/replace the test-only
+    # tar dependency (Layer 5 work). Tracked.
+    "RUSTSEC-2025-0111",
+    # bincode 1.x — unmaintained (not a vulnerability). Used by the optional
+    # `serde` feature. Remediation: evaluate migration to bincode 2.x. Tracked.
+    "RUSTSEC-2025-0141",
+    # rustls-pemfile — unmaintained (not a vulnerability); functionality folded
+    # into rustls-pki-types. Used by the optional `tls` feature for PEM loading.
+    # Remediation: migrate to rustls-pki-types. Tracked.
+    "RUSTSEC-2025-0134",
+]
 
 [licenses]
 version = 2

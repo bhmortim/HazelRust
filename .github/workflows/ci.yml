@@ -70,15 +70,18 @@ jobs:
         run: cargo test --workspace --locked --no-fail-fast
 
   msrv:
-    name: MSRV 1.70 build — observe
+    name: MSRV 1.85 build — observe
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.70"
+          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
+      # The previously-declared MSRV (1.70) was inaccurate — the dependency tree
+      # does not build on it. 1.85 is a provisional, CI-verified baseline; pin the
+      # exact MSRV by bisection as a follow-up (tracked in EXECUTION_PLAN.md).
       - name: cargo build (MSRV, default features)
         run: cargo build --workspace --locked
 
@@ -109,21 +112,13 @@ jobs:
       - name: cargo clippy --all-targets --all-features
         run: cargo clippy --all-targets --all-features --locked
 
-  audit:
-    name: cargo-audit (advisories) — observe
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@cargo-audit
-      - name: cargo audit
-        run: cargo audit
-
+  # Supply-chain gate (advisories + licenses + bans + sources). cargo-deny uses
+  # the same RustSec advisory DB as cargo-audit and is a strict superset, so it
+  # is the single source of truth here (no separate cargo-audit job). Accepted
+  # advisories and their justifications live in deny.toml.
   deny:
-    name: cargo-deny (licenses/bans/sources) — observe
+    name: cargo-deny (advisories/licenses/bans/sources) — BLOCKING
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
