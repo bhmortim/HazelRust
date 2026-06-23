@@ -56,6 +56,14 @@ impl ConnectionPool {
     fn size(&self) -> usize {
         self.writers.len()
     }
+
+    /// Remove a dead writer (matched by handle identity). Returns the number
+    /// of writers still in the pool. Called when a write fails so a half-open
+    /// connection is never selected again.
+    fn remove_writer(&mut self, target: &Arc<Mutex<OwnedWriteHalf>>) -> usize {
+        self.writers.retain(|w| !Arc::ptr_eq(w, target));
+        self.writers.len()
+    }
 }
 
 impl std::fmt::Debug for ConnectionPool {
@@ -241,21 +249,59 @@ impl InvocationService {
         address: SocketAddr,
         message: &mut ClientMessage,
     ) -> Result<()> {
-        let pool_ref = self.pools.get(&address).ok_or_else(|| {
-            HazelcastError::Connection(format!("no connection to {}", address))
-        })?;
-
-        let writer = pool_ref.select().clone();
-        drop(pool_ref); // Release DashMap shard lock before awaiting
-
+        // Serialize once, then try each pooled writer. A write failure means
+        // the socket is dead (Broken pipe / connection reset / member reaped
+        // the idle connection): remove that writer from the pool so it is never
+        // selected again, and fail over to a surviving connection. Without this
+        // a half-open member connection fails every write forever and "never
+        // recovers" until the proxy is restarted.
         let mut buf = BytesMut::with_capacity(256);
         message.write_to(&mut buf);
 
-        let mut w = writer.lock().await;
-        w.write_all(&buf).await.map_err(|e| {
-            HazelcastError::Connection(format!("failed to write to {}: {}", address, e))
-        })?;
-        Ok(())
+        let max_attempts = self
+            .pools
+            .get(&address)
+            .map(|p| p.size())
+            .unwrap_or(0)
+            .max(1);
+
+        let mut last_err: Option<HazelcastError> = None;
+        for _ in 0..max_attempts {
+            let writer = match self.pools.get(&address) {
+                Some(p) if p.size() > 0 => p.select().clone(),
+                _ => {
+                    return Err(HazelcastError::Connection(format!(
+                        "no live connection to {}",
+                        address
+                    )))
+                }
+            }; // DashMap shard guard dropped here, before any await
+
+            let mut w = writer.lock().await;
+            match w.write_all(&buf).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    drop(w);
+                    let remaining = self
+                        .pools
+                        .get_mut(&address)
+                        .map(|mut p| p.remove_writer(&writer))
+                        .unwrap_or(0);
+                    tracing::warn!(
+                        address = %address, error = %e, remaining,
+                        "write failed; dropped dead connection from pool, failing over"
+                    );
+                    last_err = Some(HazelcastError::Connection(format!(
+                        "failed to write to {}: {}",
+                        address, e
+                    )));
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| {
+            HazelcastError::Connection(format!("no live connection to {}", address))
+        }))
     }
 
     /// Ensure CreateProxy has been sent for a map name.
