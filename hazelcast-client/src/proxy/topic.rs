@@ -392,71 +392,37 @@ where
     {
         self.check_permission(PermissionAction::Listen)?;
         let mut msg = ClientMessage::create_for_encode_any_partition(TOPIC_ADD_MESSAGE_LISTENER);
+        // local_only(bool) in the initial frame, then the topic name.
+        if let Some(initial) = msg.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial.content.put_u8(0u8);
+        }
         msg.add_frame(Self::string_frame(&self.name));
-        msg.add_frame(Self::bool_frame(false)); // local_only = false
 
-        let response = self.invoke(msg).await?;
-        let listener_id = Self::decode_uuid_response(&response)?;
-
-        let registration = ListenerRegistration::new(listener_id);
-        let active_flag = registration.active_flag();
-        let shutdown_rx = registration.shutdown_receiver();
         let stats = Arc::clone(&self.stats);
         let local_stats = Arc::clone(&self.local_stats);
-        let connection_manager = Arc::clone(&self.connection_manager);
-        let topic_name = self.name.clone();
-
-        tokio::spawn(async move {
-            let mut shutdown = shutdown_rx;
-            loop {
-                if !active_flag.load(Ordering::Acquire) {
-                    break;
-                }
-
-                if let Some(ref mut rx) = shutdown {
-                    if *rx.borrow() {
-                        break;
+        let handler = Arc::new(handler);
+        let cb = Arc::clone(&handler);
+        let event_handler: Arc<dyn Fn(ClientMessage) + Send + Sync> = Arc::new(move |event_msg| {
+            match Self::decode_topic_event(&event_msg) {
+                Ok(mut topic_msg) => {
+                    let seq = local_stats.record_receive();
+                    topic_msg.sequence = seq;
+                    if initial_sequence < 0 || seq >= initial_sequence {
+                        stats.record_message();
+                        cb(topic_msg);
                     }
                 }
-
-                let addresses = connection_manager.connected_addresses().await;
-                if let Some(address) = addresses.first() {
-                    match connection_manager.receive_from(*address).await {
-                        Ok(Some(event_msg)) => {
-                            if Self::is_topic_event(&event_msg) {
-                                if let Ok(mut topic_msg) = Self::decode_topic_event(&event_msg) {
-                                    let seq = local_stats.record_receive();
-                                    topic_msg.sequence = seq;
-
-                                    if initial_sequence < 0 || seq >= initial_sequence {
-                                        stats.record_message();
-                                        handler(topic_msg);
-                                    }
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                        }
-                        Err(e) => {
-                            stats.record_error();
-                            tracing::warn!(
-                                topic = %topic_name,
-                                error = %e,
-                                "error receiving topic event"
-                            );
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                        }
-                    }
-                } else {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                }
+                Err(_) => stats.record_error(),
             }
-
-            tracing::debug!(topic = %topic_name, "topic listener stopped");
         });
 
-        Ok(registration)
+        let response = self
+            .connection_manager
+            .invoke_listener(msg, event_handler)
+            .await?;
+        let listener_id = Self::decode_uuid_response(&response)?;
+        Ok(ListenerRegistration::new(listener_id))
     }
 
     fn is_topic_event(message: &ClientMessage) -> bool {
@@ -476,7 +442,9 @@ where
         }
 
         let data_frame = &frames[1];
-        let mut input = ObjectDataInput::new(&data_frame.content);
+        let content = &data_frame.content;
+        let payload_bytes = if content.len() > 8 { &content[8..] } else { &content[..] };
+        let mut input = ObjectDataInput::new(payload_bytes);
         let payload = T::deserialize(&mut input)?;
 
         let publish_time = SystemTime::now()
@@ -488,7 +456,10 @@ where
     }
 
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
+        use hazelcast_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
+        output.write_int(0)?;
+        output.write_int(value.type_id())?;
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }
