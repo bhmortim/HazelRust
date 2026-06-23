@@ -5,6 +5,7 @@ mod atomic_reference;
 mod cache;
 mod cardinality_estimator;
 mod collection_stats;
+mod cp_group;
 mod countdown_latch;
 mod cp_map;
 mod distributed_iterator;

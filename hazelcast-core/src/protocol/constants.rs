@@ -546,13 +546,14 @@ pub const CP_SEMAPHORE_AVAILABLE_PERMITS: i32 = 0x0C0600;
 pub const CP_COUNTDOWN_LATCH_TRY_SET_COUNT: i32 = 0x0B0100;
 
 /// CP CountDownLatch count down request.
-pub const CP_COUNTDOWN_LATCH_COUNT_DOWN: i32 = 0x0B0200;
+pub const CP_COUNTDOWN_LATCH_COUNT_DOWN: i32 = 0x0B0300;
 
 /// CP CountDownLatch await request.
-pub const CP_COUNTDOWN_LATCH_AWAIT: i32 = 0x0B0300;
+pub const CP_COUNTDOWN_LATCH_AWAIT: i32 = 0x0B0200;
 
 /// CP CountDownLatch get count request.
 pub const CP_COUNTDOWN_LATCH_GET_COUNT: i32 = 0x0B0400;
+pub const CP_COUNTDOWN_LATCH_GET_ROUND: i32 = 0x0B0500;
 
 /// CP Session create session request.
 pub const CP_SESSION_CREATE_SESSION: i32 = 0x1F0100;
