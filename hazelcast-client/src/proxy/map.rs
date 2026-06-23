@@ -3158,73 +3158,34 @@ where
         self.check_permission(PermissionAction::Listen)?;
         let mut message =
             ClientMessage::create_for_encode(MAP_ADD_ENTRY_LISTENER, PARTITION_ID_ANY);
+        // Fixed params in the initial frame: includeValue(bool), listenerFlags(int),
+        // localOnly(bool); then the map name.
+        if let Some(initial) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial.content.put_u8(u8::from(config.include_value));
+            initial.content.put_i32_le(config.event_flags());
+            initial.content.put_u8(0u8); // local_only = false
+        }
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::bool_frame(config.include_value));
-        message.add_frame(Self::int_frame(config.event_flags()));
-        message.add_frame(Self::bool_frame(false)); // local only = false
 
-        let response = self.invoke_on_random(message).await?;
-        let listener_uuid = Self::decode_uuid_response(&response)?;
-
-        let registration = ListenerRegistration::new(ListenerId::from_uuid(listener_uuid));
-        let active_flag = registration.active_flag();
-        let shutdown_rx = registration.shutdown_receiver();
-
-        let connection_manager = Arc::clone(&self.connection_manager);
+        let include_value = config.include_value;
         let listener_stats = Arc::clone(&self.listener_stats);
         let handler = Arc::new(handler);
-        let map_name = self.name.clone();
-        let include_value = config.include_value;
-
-        spawn(async move {
-            let mut shutdown_rx = match shutdown_rx {
-                Some(rx) => rx,
-                None => return,
-            };
-
-            loop {
-                if !active_flag.load(Ordering::Acquire) {
-                    break;
-                }
-
-                tokio::select! {
-                    _ = shutdown_rx.changed() => {
-                        if *shutdown_rx.borrow() {
-                            break;
-                        }
-                    }
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                        let addresses = connection_manager.connected_addresses().await;
-                        for address in addresses {
-                            if !active_flag.load(Ordering::Acquire) {
-                                break;
-                            }
-
-                            match connection_manager.receive_from(address).await {
-                                Ok(Some(msg)) => {
-                                    if Self::is_entry_event(&msg, &map_name) {
-                                        listener_stats.record_message();
-                                        if let Ok(event) =
-                                            Self::decode_entry_event(&msg, include_value)
-                                        {
-                                            handler(event);
-                                        } else {
-                                            listener_stats.record_error();
-                                        }
-                                    }
-                                }
-                                Ok(None) => {}
-                                Err(_) => {
-                                    listener_stats.record_error();
-                                }
-                            }
-                        }
-                    }
-                }
+        let cb = Arc::clone(&handler);
+        let event_handler: Arc<dyn Fn(ClientMessage) + Send + Sync> = Arc::new(move |msg| {
+            listener_stats.record_message();
+            match Self::decode_entry_event(&msg, include_value) {
+                Ok(event) => cb(event),
+                Err(_) => listener_stats.record_error(),
             }
         });
 
-        Ok(registration)
+        let response = self
+            .connection_manager
+            .invoke_listener(message, event_handler)
+            .await?;
+        let listener_uuid = Self::decode_uuid_response(&response)?;
+        Ok(ListenerRegistration::new(ListenerId::from_uuid(listener_uuid)))
     }
 
     /// Removes an entry listener from this map.

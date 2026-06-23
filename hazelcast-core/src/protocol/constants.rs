@@ -19,7 +19,7 @@ pub const END_FLAG: u16 = 1 << 14;
 pub const IS_FINAL_FLAG: u16 = 1 << 13;
 
 /// Event flag - indicates this is an event message.
-pub const IS_EVENT_FLAG: u16 = 1 << 12;
+pub const IS_EVENT_FLAG: u16 = 1 << 9;
 
 /// Backup event flag.
 pub const BACKUP_EVENT_FLAG: u16 = 1 << 11;

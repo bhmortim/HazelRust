@@ -82,6 +82,8 @@ pub struct InvocationService {
     pools: DashMap<SocketAddr, ConnectionPool>,
     /// Pending operation waiters keyed by correlation_id.
     pending_ops: Arc<DashMap<i64, oneshot::Sender<ClientMessage>>>,
+    /// Long-lived event handlers keyed by the listener registration correlation_id.
+    event_handlers: Arc<DashMap<i64, Arc<dyn Fn(ClientMessage) + Send + Sync>>>,
     /// Set of map names for which CreateProxy has been sent.
     created_proxies: RwLock<HashSet<String>>,
     /// Invocation timeout.
@@ -104,6 +106,7 @@ impl InvocationService {
         Self {
             pools: DashMap::new(),
             pending_ops: Arc::new(DashMap::new()),
+            event_handlers: Arc::new(DashMap::new()),
             created_proxies: RwLock::new(HashSet::new()),
             timeout,
             _readers: RwLock::new(Vec::new()),
@@ -137,8 +140,9 @@ impl InvocationService {
 
         // Spawn background reader
         let pending = Arc::clone(&self.pending_ops);
+        let events = Arc::clone(&self.event_handlers);
         let handle = tokio::spawn(async move {
-            Self::reader_loop(address, read_half, pending).await;
+            Self::reader_loop(address, read_half, pending, events).await;
         });
         self._readers.write().await.push(handle);
     }
@@ -148,6 +152,7 @@ impl InvocationService {
         address: SocketAddr,
         mut read: OwnedReadHalf,
         pending_ops: Arc<DashMap<i64, oneshot::Sender<ClientMessage>>>,
+        event_handlers: Arc<DashMap<i64, Arc<dyn Fn(ClientMessage) + Send + Sync>>>,
     ) {
         let mut codec = ClientMessageCodec::new();
         let mut read_buffer = BytesMut::with_capacity(16384);
@@ -156,12 +161,21 @@ impl InvocationService {
             // Try to decode from existing buffer
             match codec.decode(&mut read_buffer) {
                 Ok(Some(msg)) => {
-                    if let Some(corr_id) = msg.correlation_id() {
+                    if msg.is_event() {
+                        // Listener event: route to the registered handler (which
+                        // stays registered for the lifetime of the listener).
+                        if let Some(corr_id) = msg.correlation_id() {
+                            if let Some(h) = event_handlers.get(&corr_id) {
+                                let handler = Arc::clone(h.value());
+                                drop(h);
+                                handler(msg);
+                            }
+                        }
+                    } else if let Some(corr_id) = msg.correlation_id() {
                         if let Some((_, tx)) = pending_ops.remove(&corr_id) {
                             let _ = tx.send(msg);
                         }
-                        // Unmatched responses are silently discarded
-                        // (cluster events, heartbeat acks, etc.)
+                        // Unmatched non-event responses are discarded.
                     }
                     continue; // Try to decode more from buffer
                 }
@@ -187,6 +201,42 @@ impl InvocationService {
                     tracing::warn!(address = %address, error = %e, "reader I/O error");
                     break;
                 }
+            }
+        }
+    }
+
+    /// Registers a long-lived event handler for a listener registration's
+    /// correlation id. Events with this correlation id are routed to `handler`
+    /// (in addition to the registration response completing the invocation).
+    pub fn register_event_handler(
+        &self,
+        correlation_id: i64,
+        handler: Arc<dyn Fn(ClientMessage) + Send + Sync>,
+    ) {
+        self.event_handlers.insert(correlation_id, handler);
+    }
+
+    /// Removes a previously registered event handler.
+    pub fn deregister_event_handler(&self, correlation_id: i64) {
+        self.event_handlers.remove(&correlation_id);
+    }
+
+    /// Registers an event handler for the message's correlation id, then invokes
+    /// it and returns the (registration) response. Subsequent server events with
+    /// the same correlation id are delivered to `handler`.
+    pub async fn invoke_listener(
+        &self,
+        address: SocketAddr,
+        message: ClientMessage,
+        handler: Arc<dyn Fn(ClientMessage) + Send + Sync>,
+    ) -> Result<ClientMessage> {
+        let corr_id = message.correlation_id().unwrap_or(0);
+        self.register_event_handler(corr_id, handler);
+        match self.invoke(address, message).await {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                self.deregister_event_handler(corr_id);
+                Err(e)
             }
         }
     }

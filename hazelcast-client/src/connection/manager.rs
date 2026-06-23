@@ -1185,6 +1185,31 @@ impl ConnectionManager {
         self.invocation.invoke(address, message).await
     }
 
+    /// Registers a listener: picks a connection, registers the event handler for
+    /// the message's correlation id, sends the registration, and returns the
+    /// response. Subsequent server events are delivered to `handler`.
+    pub async fn invoke_listener(
+        &self,
+        message: hazelcast_core::ClientMessage,
+        handler: std::sync::Arc<dyn Fn(hazelcast_core::ClientMessage) + Send + Sync>,
+    ) -> Result<hazelcast_core::ClientMessage> {
+        let address = match self.invocation.any_address() {
+            Some(a) => a,
+            None => self
+                .connected_addresses()
+                .await
+                .into_iter()
+                .next()
+                .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))?,
+        };
+        self.invocation.invoke_listener(address, message, handler).await
+    }
+
+    /// Removes a previously registered listener event handler.
+    pub fn deregister_event_handler(&self, correlation_id: i64) {
+        self.invocation.deregister_event_handler(correlation_id);
+    }
+
     /// Updates the partition table with a new mapping of partition IDs to owner member UUIDs.
     /// Also updates the partition count.
     pub async fn update_partition_table(&self, partitions: HashMap<i32, Uuid>) {
