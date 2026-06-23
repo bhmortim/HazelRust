@@ -1,10 +1,16 @@
 //! Distributed ringbuffer implementation.
+//!
+//! Ringbuffer is partition-routed by name. Fixed params (overflow policy,
+//! sequence, read counts) live in the request initial frame; values are
+//! Hazelcast `Data` (8-byte header + payload).
 
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use bytes::BytesMut;
 use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::{ClientMessage, Frame};
+use hazelcast_core::serialization::{DataOutput, ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{Deserializable, HazelcastError, Result, Serializable};
 
 use crate::connection::ConnectionManager;
@@ -18,33 +24,17 @@ pub enum OverflowPolicy {
     Fail = 1,
 }
 
-/// A filter function for ringbuffer read operations.
-///
-/// Filters are executed on the server side to reduce network traffic.
-/// They must be serializable using the IdentifiedDataSerializable format.
-///
-/// # Example
-///
-/// ```ignore
-/// use hazelcast_client::proxy::{Ringbuffer, TrueFilter};
-///
-/// let (items, next_seq, read_count) = rb.read_many_with_filter(0, 1, 100, TrueFilter).await?;
-/// ```
+/// A filter function for ringbuffer read operations (server-side).
 pub trait RingbufferFilter<T>: Send + Sync {
     /// Returns the factory ID for serialization.
     fn factory_id(&self) -> i32;
-
     /// Returns the class ID for serialization.
     fn class_id(&self) -> i32;
-
     /// Writes the filter data to the output buffer.
     fn write_data(&self, output: &mut Vec<u8>) -> Result<()>;
 }
 
 /// A filter that accepts all items.
-///
-/// This is useful for testing or when you want to use other read_many_with_filter
-/// features without actually filtering.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TrueFilter;
 
@@ -52,19 +42,15 @@ impl<T> RingbufferFilter<T> for TrueFilter {
     fn factory_id(&self) -> i32 {
         -32
     }
-
     fn class_id(&self) -> i32 {
         7
     }
-
     fn write_data(&self, _output: &mut Vec<u8>) -> Result<()> {
         Ok(())
     }
 }
 
 /// A filter that rejects all items.
-///
-/// This is useful for testing filter behavior.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FalseFilter;
 
@@ -72,31 +58,15 @@ impl<T> RingbufferFilter<T> for FalseFilter {
     fn factory_id(&self) -> i32 {
         -32
     }
-
     fn class_id(&self) -> i32 {
         6
     }
-
     fn write_data(&self, _output: &mut Vec<u8>) -> Result<()> {
         Ok(())
     }
 }
 
 /// A distributed ringbuffer that stores a fixed-capacity sequence of items.
-///
-/// The ringbuffer provides a circular buffer with sequence-based access.
-/// Each item has an associated sequence number for reading. When the
-/// ringbuffer is full, the oldest items are overwritten (depending on
-/// the overflow policy).
-///
-/// # Example
-///
-/// ```ignore
-/// let rb = client.get_ringbuffer::<String>("my-ringbuffer");
-///
-/// let seq = rb.add("first".to_string()).await?;
-/// let item = rb.read_one(seq).await?;
-/// ```
 #[derive(Debug)]
 pub struct Ringbuffer<T> {
     name: String,
@@ -121,360 +91,202 @@ where
         &self.name
     }
 
-    /// Serializes a filter to the IdentifiedDataSerializable format.
-    fn serialize_filter<F: RingbufferFilter<T>>(&self, filter: &F) -> Result<Vec<u8>> {
-        let mut data = Vec::new();
-        data.extend_from_slice(&filter.factory_id().to_be_bytes());
-        data.extend_from_slice(&filter.class_id().to_be_bytes());
-        filter.write_data(&mut data)?;
-        Ok(data)
+    // ── framing helpers ──────────────────────────────────────────────
+
+    fn name_partition(&self) -> i32 {
+        let count = self.connection_manager.partition_count();
+        let count = if count > 0 { count } else { 271 };
+        match Self::value_data(&self.name) {
+            Ok(d) => {
+                let h = if d.len() > 8 { &d[8..] } else { &d[..] };
+                hazelcast_core::compute_partition_hash(h).abs() % count
+            }
+            Err(_) => 0,
+        }
     }
 
-    /// Adds an item to the tail of the ringbuffer.
-    ///
-    /// Returns the sequence number of the added item.
-    /// If the ringbuffer is full, the oldest item is overwritten.
+    /// Serializes a value into Hazelcast `Data`: [partition_hash:4][type_id:4][payload].
+    fn value_data<V: Serializable>(value: &V) -> Result<Vec<u8>> {
+        let mut out = ObjectDataOutput::new();
+        out.write_int(0)?;
+        out.write_int(value.type_id())?;
+        value.serialize(&mut out)?;
+        Ok(out.into_bytes())
+    }
+
+    fn string_frame(s: &str) -> Frame {
+        Frame::with_content(BytesMut::from(s.as_bytes()))
+    }
+
+    fn data_frame(d: &[u8]) -> Frame {
+        Frame::with_content(BytesMut::from(d))
+    }
+
+    fn put_int(m: &mut ClientMessage, v: i32) {
+        if let Some(f) = m.frames_mut().first_mut() {
+            f.content.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+
+    fn put_long(m: &mut ClientMessage, v: i64) {
+        if let Some(f) = m.frames_mut().first_mut() {
+            f.content.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+
+    async fn invoke(&self, mut m: ClientMessage) -> Result<ClientMessage> {
+        let pid = self.name_partition();
+        m.set_partition_id(pid);
+        self.connection_manager.invoke_on_partition(pid, m).await
+    }
+
+    fn decode_i64(r: &ClientMessage) -> Result<i64> {
+        let f = r
+            .frames()
+            .first()
+            .ok_or_else(|| HazelcastError::Protocol("empty response".to_string()))?;
+        if f.content.len() < RESPONSE_HEADER_SIZE + 8 {
+            return Err(HazelcastError::Protocol("ringbuffer i64 too short".to_string()));
+        }
+        Ok(i64::from_le_bytes(
+            f.content[RESPONSE_HEADER_SIZE..RESPONSE_HEADER_SIZE + 8]
+                .try_into()
+                .unwrap(),
+        ))
+    }
+
+    fn decode_value_at(content: &[u8]) -> Result<T> {
+        // content is a Data: skip the 8-byte header.
+        let payload = if content.len() > 8 { &content[8..] } else { content };
+        let mut input = ObjectDataInput::new(payload);
+        T::deserialize(&mut input)
+    }
+
+    // ── operations ───────────────────────────────────────────────────
+
+    /// Adds an item to the tail; returns the assigned sequence.
     pub async fn add(&self, item: T) -> Result<i64> {
         self.add_with_policy(item, OverflowPolicy::Overwrite).await
     }
 
-    /// Adds an item to the tail with the specified overflow policy.
-    ///
-    /// Returns the sequence number of the added item, or -1 if the operation
-    /// failed due to the overflow policy being `Fail` and the buffer being full.
-    fn name_partition(&self) -> i32 {
-        use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
-        let count = self.connection_manager.partition_count();
-        let count = if count > 0 { count } else { 271 };
-        let mut out = ObjectDataOutput::new();
-        let _ = out.write_int(0);
-        let _ = out.write_int(-11);
-        let _ = out.write_string(&self.name);
-        let data = out.into_bytes();
-        let h = if data.len() > 8 { &data[8..] } else { &data[..] };
-        hazelcast_core::compute_partition_hash(h).abs() % count
-    }
-
+    /// Adds an item with the given overflow policy; returns the sequence (-1 on fail).
     pub async fn add_with_policy(&self, item: T, overflow_policy: OverflowPolicy) -> Result<i64> {
-        let item_data = item.to_bytes()?;
-
-        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 8);
-        request.set_message_type(RINGBUFFER_ADD);
-        request.set_partition_id(self.name_partition());
-
-        request.add_frame(Frame::new_string_frame(&self.name));
-
-        let mut policy_frame = Frame::with_initial_capacity(4);
-        policy_frame.append_i32(overflow_policy as i32);
-        request.add_frame(policy_frame);
-
-        request.add_frame(Frame::new_data_frame(&item_data));
-        request.finalize();
-
-        let response = self.connection_manager.send(request).await?;
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Protocol("empty response".into()));
-        }
-
-        let initial_frame = &frames[0];
-        let sequence = initial_frame.read_i64(RESPONSE_HEADER_SIZE);
-        Ok(sequence)
+        let data = Self::value_data(&item)?;
+        let mut m = ClientMessage::create_for_encode_any_partition(RINGBUFFER_ADD);
+        Self::put_int(&mut m, overflow_policy as i32);
+        m.add_frame(Self::string_frame(&self.name));
+        m.add_frame(Self::data_frame(&data));
+        let r = self.invoke(m).await?;
+        Self::decode_i64(&r)
     }
 
-    /// Adds all items to the tail of the ringbuffer.
-    ///
-    /// Returns the sequence number of the last added item.
+    /// Adds all items; returns the sequence of the last item.
     pub async fn add_all(&self, items: Vec<T>, overflow_policy: OverflowPolicy) -> Result<i64> {
         if items.is_empty() {
             return self.tail_sequence().await;
         }
-
-        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 8);
-        request.set_message_type(RINGBUFFER_ADD_ALL);
-        request.set_partition_id(self.name_partition());
-
-        request.add_frame(Frame::new_string_frame(&self.name));
-
-        request.add_frame(Frame::new_begin_frame_empty());
-        for item in items {
-            let item_data = item.to_bytes()?;
-            request.add_frame(Frame::new_data_frame(&item_data));
+        let mut m = ClientMessage::create_for_encode_any_partition(RINGBUFFER_ADD_ALL);
+        Self::put_int(&mut m, overflow_policy as i32);
+        m.add_frame(Self::string_frame(&self.name));
+        m.add_frame(Frame::new_begin_frame_empty());
+        for item in &items {
+            m.add_frame(Self::data_frame(&Self::value_data(item)?));
         }
-        request.add_frame(Frame::new_end_frame());
-
-        let mut policy_frame = Frame::with_initial_capacity(4);
-        policy_frame.append_i32(overflow_policy as i32);
-        request.add_frame(policy_frame);
-
-        request.finalize();
-
-        let response = self.connection_manager.send(request).await?;
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Protocol("empty response".into()));
-        }
-
-        let initial_frame = &frames[0];
-        let sequence = initial_frame.read_i64(RESPONSE_HEADER_SIZE);
-        Ok(sequence)
+        m.add_frame(Frame::new_end_frame());
+        let r = self.invoke(m).await?;
+        Self::decode_i64(&r)
     }
 
-    /// Reads a single item from the ringbuffer at the given sequence.
-    ///
-    /// Returns `None` if the sequence is stale (already overwritten) or
-    /// if the sequence has not been written yet.
+    /// Reads a single item at the given sequence, or `None` if unavailable.
     pub async fn read_one(&self, sequence: i64) -> Result<Option<T>> {
-        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 8);
-        request.set_message_type(RINGBUFFER_READ_ONE);
-        request.set_partition_id(self.name_partition());
-
-        request.add_frame(Frame::new_string_frame(&self.name));
-
-        let mut seq_frame = Frame::with_initial_capacity(8);
-        seq_frame.append_i64(sequence);
-        request.add_frame(seq_frame);
-        request.finalize();
-
-        let response = self.connection_manager.send(request).await?;
-        let frames = response.frames();
-        if frames.len() < 2 {
-            return Ok(None);
+        let mut m = ClientMessage::create_for_encode_any_partition(RINGBUFFER_READ_ONE);
+        Self::put_long(&mut m, sequence);
+        m.add_frame(Self::string_frame(&self.name));
+        let r = self.invoke(m).await?;
+        let frames = r.frames();
+        match frames.get(1) {
+            Some(f) if f.flags & IS_NULL_FLAG == 0 && !f.content.is_empty() => {
+                Ok(Some(Self::decode_value_at(&f.content)?))
+            }
+            _ => Ok(None),
         }
-
-        let data_frame = &frames[1];
-        if data_frame.is_null() {
-            return Ok(None);
-        }
-
-        let item = T::from_bytes(data_frame.content())?;
-        Ok(Some(item))
     }
 
-    /// Reads multiple items from the ringbuffer starting at the given sequence.
-    ///
-    /// - `start_sequence`: The sequence to start reading from
-    /// - `min_count`: Minimum number of items to read (blocks until available)
-    /// - `max_count`: Maximum number of items to read
-    ///
-    /// Returns a tuple of (items, next_sequence_to_read).
+    /// Reads up to `max_count` items starting at `start_sequence`.
+    /// Returns the items and the next sequence to read from.
     pub async fn read_many(
         &self,
         start_sequence: i64,
         min_count: i32,
         max_count: i32,
     ) -> Result<(Vec<T>, i64)> {
-        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 24);
-        request.set_message_type(RINGBUFFER_READ_MANY);
-        request.set_partition_id(self.name_partition());
-
-        request.add_frame(Frame::new_string_frame(&self.name));
-
-        let mut params_frame = Frame::with_initial_capacity(20);
-        params_frame.append_i64(start_sequence);
-        params_frame.append_i32(min_count);
-        params_frame.append_i32(max_count);
-        request.add_frame(params_frame);
-
-        request.add_frame(Frame::new_null_frame());
-        request.finalize();
-
-        let response = self.connection_manager.send(request).await?;
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Protocol("empty response".into()));
-        }
-
-        let initial_frame = &frames[0];
-        let read_count = initial_frame.read_i32(RESPONSE_HEADER_SIZE);
-        let next_seq = initial_frame.read_i64(RESPONSE_HEADER_SIZE + 4);
-
-        let mut items = Vec::with_capacity(read_count as usize);
-        let mut i = 1;
-        while i < frames.len() {
-            let frame = &frames[i];
-            if frame.is_end() {
-                break;
+        let mut m = ClientMessage::create_for_encode_any_partition(RINGBUFFER_READ_MANY);
+        Self::put_long(&mut m, start_sequence);
+        Self::put_int(&mut m, min_count);
+        Self::put_int(&mut m, max_count);
+        m.add_frame(Self::string_frame(&self.name));
+        m.add_frame(Frame::new_null_frame()); // filter = null
+        let r = self.invoke(m).await?;
+        let frames = r.frames();
+        // initial frame: readCount(int) @ HDR, nextSeq(long) @ HDR+4 (+ readCount field layout)
+        let init = &frames[0];
+        let next_seq = if init.content.len() >= RESPONSE_HEADER_SIZE + 12 {
+            i64::from_le_bytes(
+                init.content[RESPONSE_HEADER_SIZE + 4..RESPONSE_HEADER_SIZE + 12]
+                    .try_into()
+                    .unwrap(),
+            )
+        } else {
+            start_sequence
+        };
+        let mut items = Vec::new();
+        for f in frames.iter().skip(1) {
+            if f.flags & (BEGIN_DATA_STRUCTURE_FLAG | END_DATA_STRUCTURE_FLAG) != 0 {
+                continue;
             }
-            if !frame.is_begin() && !frame.is_null() {
-                let item = T::from_bytes(frame.content())?;
-                items.push(item);
+            if f.flags & IS_NULL_FLAG != 0 || f.content.is_empty() {
+                continue;
             }
-            i += 1;
+            if let Ok(v) = Self::decode_value_at(&f.content) {
+                items.push(v);
+            }
         }
-
         Ok((items, next_seq))
     }
 
-    /// Reads multiple items from the ringbuffer with server-side filtering.
-    ///
-    /// This is similar to `read_many` but applies a filter on the server side,
-    /// which can significantly reduce network traffic when only a subset of
-    /// items are needed.
-    ///
-    /// - `start_sequence`: The sequence to start reading from
-    /// - `min_count`: Minimum number of items to read (blocks until available)
-    /// - `max_count`: Maximum number of items to read
-    /// - `filter`: A filter to apply on the server side
-    ///
-    /// Returns a tuple of (filtered_items, next_sequence_to_read, read_count).
-    /// The `read_count` indicates how many items were scanned (before filtering).
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use hazelcast_client::proxy::TrueFilter;
-    ///
-    /// let (items, next_seq, read_count) = rb.read_many_with_filter(0, 1, 100, TrueFilter).await?;
-    /// ```
-    pub async fn read_many_with_filter<F: RingbufferFilter<T>>(
-        &self,
-        start_sequence: i64,
-        min_count: i32,
-        max_count: i32,
-        filter: F,
-    ) -> Result<(Vec<T>, i64, i32)> {
-        let filter_data = self.serialize_filter(&filter)?;
-
-        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 24);
-        request.set_message_type(RINGBUFFER_READ_MANY);
-        request.set_partition_id(self.name_partition());
-
-        request.add_frame(Frame::new_string_frame(&self.name));
-
-        let mut params_frame = Frame::with_initial_capacity(20);
-        params_frame.append_i64(start_sequence);
-        params_frame.append_i32(min_count);
-        params_frame.append_i32(max_count);
-        request.add_frame(params_frame);
-
-        request.add_frame(Frame::new_data_frame(&filter_data));
-        request.finalize();
-
-        let response = self.connection_manager.send(request).await?;
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Protocol("empty response".into()));
-        }
-
-        let initial_frame = &frames[0];
-        let read_count = initial_frame.read_i32(RESPONSE_HEADER_SIZE);
-        let next_seq = initial_frame.read_i64(RESPONSE_HEADER_SIZE + 4);
-
-        let mut items = Vec::with_capacity(read_count as usize);
-        let mut i = 1;
-        while i < frames.len() {
-            let frame = &frames[i];
-            if frame.is_end() {
-                break;
-            }
-            if !frame.is_begin() && !frame.is_null() {
-                let item = T::from_bytes(frame.content())?;
-                items.push(item);
-            }
-            i += 1;
-        }
-
-        Ok((items, next_seq, read_count))
-    }
-
-    /// Returns the capacity of this ringbuffer.
-    pub async fn capacity(&self) -> Result<i64> {
-        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
-        request.set_message_type(RINGBUFFER_CAPACITY);
-        request.set_partition_id(self.name_partition());
-        request.add_frame(Frame::new_string_frame(&self.name));
-        request.finalize();
-
-        let response = self.connection_manager.send(request).await?;
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Protocol("empty response".into()));
-        }
-
-        let initial_frame = &frames[0];
-        Ok(initial_frame.read_i64(RESPONSE_HEADER_SIZE))
-    }
-
-    /// Returns the number of items in this ringbuffer.
+    /// Returns the number of items in the ringbuffer.
     pub async fn size(&self) -> Result<i64> {
-        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
-        request.set_message_type(RINGBUFFER_SIZE);
-        request.set_partition_id(self.name_partition());
-        request.add_frame(Frame::new_string_frame(&self.name));
-        request.finalize();
+        let mut m = ClientMessage::create_for_encode_any_partition(RINGBUFFER_SIZE);
+        m.add_frame(Self::string_frame(&self.name));
+        Self::decode_i64(&self.invoke(m).await?)
+    }
 
-        let response = self.connection_manager.send(request).await?;
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Protocol("empty response".into()));
-        }
-
-        let initial_frame = &frames[0];
-        Ok(initial_frame.read_i64(RESPONSE_HEADER_SIZE))
+    /// Returns the capacity of the ringbuffer.
+    pub async fn capacity(&self) -> Result<i64> {
+        let mut m = ClientMessage::create_for_encode_any_partition(RINGBUFFER_CAPACITY);
+        m.add_frame(Self::string_frame(&self.name));
+        Self::decode_i64(&self.invoke(m).await?)
     }
 
     /// Returns the sequence of the head (oldest item).
-    ///
-    /// The head is the first item that can be read. If the ringbuffer is empty,
-    /// returns the sequence of the next item to be added.
     pub async fn head_sequence(&self) -> Result<i64> {
-        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
-        request.set_message_type(RINGBUFFER_HEAD_SEQUENCE);
-        request.set_partition_id(self.name_partition());
-        request.add_frame(Frame::new_string_frame(&self.name));
-        request.finalize();
-
-        let response = self.connection_manager.send(request).await?;
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Protocol("empty response".into()));
-        }
-
-        let initial_frame = &frames[0];
-        Ok(initial_frame.read_i64(RESPONSE_HEADER_SIZE))
+        let mut m = ClientMessage::create_for_encode_any_partition(RINGBUFFER_HEAD_SEQUENCE);
+        m.add_frame(Self::string_frame(&self.name));
+        Self::decode_i64(&self.invoke(m).await?)
     }
 
-    /// Returns the sequence of the tail (newest item).
-    ///
-    /// The tail is the last item that was added. If the ringbuffer is empty,
-    /// returns -1.
+    /// Returns the sequence of the tail (newest item), or -1 if empty.
     pub async fn tail_sequence(&self) -> Result<i64> {
-        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
-        request.set_message_type(RINGBUFFER_TAIL_SEQUENCE);
-        request.set_partition_id(self.name_partition());
-        request.add_frame(Frame::new_string_frame(&self.name));
-        request.finalize();
-
-        let response = self.connection_manager.send(request).await?;
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Protocol("empty response".into()));
-        }
-
-        let initial_frame = &frames[0];
-        Ok(initial_frame.read_i64(RESPONSE_HEADER_SIZE))
+        let mut m = ClientMessage::create_for_encode_any_partition(RINGBUFFER_TAIL_SEQUENCE);
+        m.add_frame(Self::string_frame(&self.name));
+        Self::decode_i64(&self.invoke(m).await?)
     }
 
-    /// Returns the remaining capacity of this ringbuffer.
-    ///
-    /// This is the number of items that can be added before the oldest items
-    /// start being overwritten.
+    /// Returns the remaining capacity of the ringbuffer.
     pub async fn remaining_capacity(&self) -> Result<i64> {
-        let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
-        request.set_message_type(RINGBUFFER_REMAINING_CAPACITY);
-        request.set_partition_id(self.name_partition());
-        request.add_frame(Frame::new_string_frame(&self.name));
-        request.finalize();
-
-        let response = self.connection_manager.send(request).await?;
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Protocol("empty response".into()));
-        }
-
-        let initial_frame = &frames[0];
-        Ok(initial_frame.read_i64(RESPONSE_HEADER_SIZE))
+        let mut m = ClientMessage::create_for_encode_any_partition(RINGBUFFER_REMAINING_CAPACITY);
+        m.add_frame(Self::string_frame(&self.name));
+        Self::decode_i64(&self.invoke(m).await?)
     }
 }
 
@@ -501,37 +313,6 @@ mod tests {
             <TrueFilter as RingbufferFilter<String>>::factory_id(&filter),
             -32
         );
-        assert_eq!(
-            <TrueFilter as RingbufferFilter<String>>::class_id(&filter),
-            7
-        );
-
-        let mut output = Vec::new();
-        <TrueFilter as RingbufferFilter<String>>::write_data(&filter, &mut output).unwrap();
-        assert!(output.is_empty());
-    }
-
-    #[test]
-    fn test_false_filter_serialization() {
-        let filter = FalseFilter;
-        assert_eq!(
-            <FalseFilter as RingbufferFilter<String>>::factory_id(&filter),
-            -32
-        );
-        assert_eq!(
-            <FalseFilter as RingbufferFilter<String>>::class_id(&filter),
-            6
-        );
-
-        let mut output = Vec::new();
-        <FalseFilter as RingbufferFilter<String>>::write_data(&filter, &mut output).unwrap();
-        assert!(output.is_empty());
-    }
-
-    #[test]
-    fn test_filters_are_send_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<TrueFilter>();
-        assert_send_sync::<FalseFilter>();
+        assert_eq!(<TrueFilter as RingbufferFilter<String>>::class_id(&filter), 7);
     }
 }
