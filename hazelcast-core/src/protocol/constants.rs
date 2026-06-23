@@ -114,73 +114,73 @@ pub const MAP_REMOVE_ALL: i32 = 0x013E00;
 pub const QUEUE_OFFER: i32 = 0x030100;
 
 /// Queue poll request.
-pub const QUEUE_POLL: i32 = 0x030200;
+pub const QUEUE_POLL: i32 = 0x030500;
 
 /// Queue size request.
 pub const QUEUE_SIZE: i32 = 0x030300;
 
 /// Queue peek request.
-pub const QUEUE_PEEK: i32 = 0x030400;
+pub const QUEUE_PEEK: i32 = 0x030700;
 
 /// Queue put request (blocking).
-pub const QUEUE_PUT: i32 = 0x030500;
+pub const QUEUE_PUT: i32 = 0x030200;
 
 /// Queue take request (blocking).
 pub const QUEUE_TAKE: i32 = 0x030600;
 
 /// Queue remove request.
-pub const QUEUE_REMOVE: i32 = 0x030700;
+pub const QUEUE_REMOVE: i32 = 0x030400;
 
 /// Queue contains request.
-pub const QUEUE_CONTAINS: i32 = 0x030800;
+pub const QUEUE_CONTAINS: i32 = 0x030B00;
 
 /// Queue add all request.
-pub const QUEUE_ADD_ALL: i32 = 0x030900;
+pub const QUEUE_ADD_ALL: i32 = 0x031000;
 
 /// Queue compare and remove all request.
-pub const QUEUE_COMPARE_AND_REMOVE_ALL: i32 = 0x030A00;
+pub const QUEUE_COMPARE_AND_REMOVE_ALL: i32 = 0x030D00;
 
 /// Queue drain to max size request.
-pub const QUEUE_DRAIN_TO_MAX_SIZE: i32 = 0x030C00;
+pub const QUEUE_DRAIN_TO_MAX_SIZE: i32 = 0x030A00;
 
 /// Queue contains all request.
-pub const QUEUE_CONTAINS_ALL: i32 = 0x030D00;
+pub const QUEUE_CONTAINS_ALL: i32 = 0x030C00;
 
 /// Queue add item listener request.
-pub const QUEUE_ADD_LISTENER: i32 = 0x030E00;
+pub const QUEUE_ADD_LISTENER: i32 = 0x031100;
 
 /// Queue remove item listener request.
-pub const QUEUE_REMOVE_LISTENER: i32 = 0x030F00;
+pub const QUEUE_REMOVE_LISTENER: i32 = 0x031200;
 
 /// Queue remaining capacity request.
-pub const QUEUE_REMAINING_CAPACITY: i32 = 0x031000;
+pub const QUEUE_REMAINING_CAPACITY: i32 = 0x031300;
 
 /// Queue is empty request.
-pub const QUEUE_IS_EMPTY: i32 = 0x031100;
+pub const QUEUE_IS_EMPTY: i32 = 0x031400;
 
 /// Queue iterator (get all) request.
-pub const QUEUE_ITERATOR: i32 = 0x031200;
+pub const QUEUE_ITERATOR: i32 = 0x030800;
 
 /// Queue clear request.
-pub const QUEUE_CLEAR: i32 = 0x031300;
+pub const QUEUE_CLEAR: i32 = 0x030F00;
 
 /// Queue drain to (without max size) request.
-pub const QUEUE_DRAIN_TO: i32 = 0x030B00;
+pub const QUEUE_DRAIN_TO: i32 = 0x030900;
 
 /// Set add request.
-pub const SET_ADD: i32 = 0x060100;
+pub const SET_ADD: i32 = 0x060400;
 
 /// Set remove request.
-pub const SET_REMOVE: i32 = 0x060200;
+pub const SET_REMOVE: i32 = 0x060500;
 
 /// Set contains request.
-pub const SET_CONTAINS: i32 = 0x060400;
+pub const SET_CONTAINS: i32 = 0x060200;
 
 /// Set clear request.
-pub const SET_CLEAR: i32 = 0x060500;
+pub const SET_CLEAR: i32 = 0x060900;
 
 /// Set size request.
-pub const SET_SIZE: i32 = 0x060800;
+pub const SET_SIZE: i32 = 0x060100;
 
 /// Set contains all request.
 pub const SET_CONTAINS_ALL: i32 = 0x060300;
@@ -192,16 +192,16 @@ pub const SET_ADD_ALL: i32 = 0x060600;
 pub const SET_REMOVE_ALL: i32 = 0x060700;
 
 /// Set retain all request.
-pub const SET_RETAIN_ALL: i32 = 0x060900;
+pub const SET_RETAIN_ALL: i32 = 0x060800;
 
 /// Set add item listener request.
-pub const SET_ADD_LISTENER: i32 = 0x060A00;
+pub const SET_ADD_LISTENER: i32 = 0x060B00;
 
 /// Set remove item listener request.
-pub const SET_REMOVE_LISTENER: i32 = 0x060B00;
+pub const SET_REMOVE_LISTENER: i32 = 0x060C00;
 
 /// Set get all items request.
-pub const SET_GET_ALL: i32 = 0x060C00;
+pub const SET_GET_ALL: i32 = 0x060A00;
 
 /// List size request.
 pub const LIST_SIZE: i32 = 0x050100;
@@ -210,52 +210,52 @@ pub const LIST_SIZE: i32 = 0x050100;
 pub const LIST_CONTAINS: i32 = 0x050200;
 
 /// List add request.
-pub const LIST_ADD: i32 = 0x050500;
+pub const LIST_ADD: i32 = 0x050400;
 
 /// List add at index request.
-pub const LIST_ADD_AT: i32 = 0x050600;
+pub const LIST_ADD_AT: i32 = 0x051100;
 
 /// List set request.
-pub const LIST_SET: i32 = 0x050700;
+pub const LIST_SET: i32 = 0x051000;
 
 /// List get request.
-pub const LIST_GET: i32 = 0x050800;
+pub const LIST_GET: i32 = 0x050F00;
 
 /// List remove by value request.
-pub const LIST_REMOVE: i32 = 0x051200;
+pub const LIST_REMOVE: i32 = 0x050500;
 
 /// List remove at index request.
-pub const LIST_REMOVE_AT: i32 = 0x050900;
+pub const LIST_REMOVE_AT: i32 = 0x051200;
 
 /// List clear request.
-pub const LIST_CLEAR: i32 = 0x050A00;
+pub const LIST_CLEAR: i32 = 0x050900;
 
 /// List contains all request.
 pub const LIST_CONTAINS_ALL: i32 = 0x050300;
 
 /// List add all request.
-pub const LIST_ADD_ALL: i32 = 0x050400;
+pub const LIST_ADD_ALL: i32 = 0x050600;
 
 /// List add all at index request.
-pub const LIST_ADD_ALL_AT: i32 = 0x050B00;
+pub const LIST_ADD_ALL_AT: i32 = 0x050E00;
 
 /// List remove all request.
-pub const LIST_REMOVE_ALL: i32 = 0x050C00;
+pub const LIST_REMOVE_ALL: i32 = 0x050700;
 
 /// List retain all request.
-pub const LIST_RETAIN_ALL: i32 = 0x050D00;
+pub const LIST_RETAIN_ALL: i32 = 0x050800;
 
 /// List index of request.
-pub const LIST_INDEX_OF: i32 = 0x050E00;
+pub const LIST_INDEX_OF: i32 = 0x051400;
 
 /// List last index of request.
-pub const LIST_LAST_INDEX_OF: i32 = 0x050F00;
+pub const LIST_LAST_INDEX_OF: i32 = 0x051300;
 
 /// List add item listener request.
-pub const LIST_ADD_LISTENER: i32 = 0x051000;
+pub const LIST_ADD_LISTENER: i32 = 0x050B00;
 
 /// List remove item listener request.
-pub const LIST_REMOVE_LISTENER: i32 = 0x051100;
+pub const LIST_REMOVE_LISTENER: i32 = 0x050C00;
 
 /// MultiMap put request.
 pub const MULTI_MAP_PUT: i32 = 0x020100;

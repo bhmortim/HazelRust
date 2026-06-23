@@ -75,8 +75,8 @@ where
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_ADD_AT);
+        Self::put_int(&mut message, index as i32);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::int_frame(index as i32));
         message.add_frame(Self::data_frame(&item_data));
 
         self.invoke(message).await?;
@@ -89,8 +89,8 @@ where
     pub async fn get(&self, index: usize) -> Result<Option<T>> {
         self.check_permission(PermissionAction::Read)?;
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_GET);
+        Self::put_int(&mut message, index as i32);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::int_frame(index as i32));
 
         let response = self.invoke(message).await?;
         Self::decode_nullable_response(&response)
@@ -102,8 +102,8 @@ where
     pub async fn remove_at(&self, index: usize) -> Result<Option<T>> {
         self.check_permission(PermissionAction::Remove)?;
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_REMOVE_AT);
+        Self::put_int(&mut message, index as i32);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::int_frame(index as i32));
 
         let response = self.invoke(message).await?;
         Self::decode_nullable_response(&response)
@@ -117,8 +117,8 @@ where
         let item_data = Self::serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(LIST_SET);
+        Self::put_int(&mut message, index as i32);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::int_frame(index as i32));
         message.add_frame(Self::data_frame(&item_data));
 
         let response = self.invoke(message).await?;
@@ -316,7 +316,11 @@ where
     }
 
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
+        use hazelcast_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
+        // Hazelcast Data format: [partition_hash: i32 BE] [type_id: i32 BE] [payload]
+        output.write_int(0)?; // partition_hash placeholder (server recomputes)
+        output.write_int(-11)?; // TYPE_STRING = -11
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }
@@ -327,6 +331,12 @@ where
 
     fn data_frame(data: &[u8]) -> Frame {
         Frame::with_content(BytesMut::from(data))
+    }
+
+    fn put_int(message: &mut ClientMessage, value: i32) {
+        if let Some(initial) = message.frames_mut().first_mut() {
+            initial.content.extend_from_slice(&value.to_le_bytes());
+        }
     }
 
     fn int_frame(value: i32) -> Frame {
@@ -361,8 +371,24 @@ where
         Ok(())
     }
 
-    async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        self.connection_manager.invoke_on_random(message).await
+    /// Partition id derived from the list name (the partition key for a named
+    /// collection), matching Hazelcast: `partitionId(toData(name))`.
+    fn name_partition_id(&self) -> i32 {
+        let count = self.connection_manager.partition_count();
+        let count = if count > 0 { count } else { 271 };
+        match Self::serialize_value(&self.name) {
+            Ok(data) => {
+                let hash_input = if data.len() > 8 { &data[8..] } else { &data[..] };
+                hazelcast_core::compute_partition_hash(hash_input).abs() % count
+            }
+            Err(_) => 0,
+        }
+    }
+
+    async fn invoke(&self, mut message: ClientMessage) -> Result<ClientMessage> {
+        let pid = self.name_partition_id();
+        message.set_partition_id(pid);
+        self.connection_manager.invoke_on_partition(pid, message).await
     }
 
     fn decode_nullable_response<V: Deserializable>(response: &ClientMessage) -> Result<Option<V>> {
@@ -381,7 +407,10 @@ where
             return Ok(None);
         }
 
-        let mut input = ObjectDataInput::new(&data_frame.content);
+        // Skip the 8-byte Hazelcast Data header [partition_hash:4][type_id:4].
+        let content = &data_frame.content;
+        let payload = if content.len() > 8 { &content[8..] } else { &content[..] };
+        let mut input = ObjectDataInput::new(payload);
         V::deserialize(&mut input).map(Some)
     }
 
