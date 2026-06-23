@@ -48,11 +48,11 @@ pub use xa::*;
 /// The type of transaction to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TransactionType {
-    /// Single-phase transaction (faster, less durable).
+    /// Two-phase transaction (slower, more durable). Hazelcast wire value 1.
+    TwoPhase = 1,
+    /// Single-phase transaction (faster, less durable). Hazelcast wire value 2.
     #[default]
-    OnePhase = 1,
-    /// Two-phase transaction (slower, more durable).
-    TwoPhase = 2,
+    OnePhase = 2,
 }
 
 impl TransactionType {
@@ -64,8 +64,8 @@ impl TransactionType {
     /// Creates a TransactionType from its wire protocol value.
     pub fn from_value(value: i32) -> Option<Self> {
         match value {
-            1 => Some(TransactionType::OnePhase),
-            2 => Some(TransactionType::TwoPhase),
+            1 => Some(TransactionType::TwoPhase),
+            2 => Some(TransactionType::OnePhase),
             _ => None,
         }
     }
@@ -162,6 +162,7 @@ pub struct TransactionContext {
     thread_id: i64,
     state: TransactionState,
     start_time: Option<std::time::Instant>,
+    connection_address: Option<SocketAddr>,
 }
 
 impl TransactionContext {
@@ -179,6 +180,7 @@ impl TransactionContext {
             thread_id: THREAD_ID_COUNTER.fetch_add(1, Ordering::Relaxed) as i64,
             state: TransactionState::NotStarted,
             start_time: None,
+            connection_address: None,
         }
     }
 
@@ -210,15 +212,17 @@ impl TransactionContext {
         }
 
         let timeout_ms = self.options.timeout.as_millis() as i64;
+        let address = txn_get_connection_address(&self.connection_manager).await?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_CREATE);
-        message.add_frame(txn_long_frame(timeout_ms));
-        message.add_frame(txn_int_frame(self.options.durability));
-        message.add_frame(txn_int_frame(self.options.transaction_type.value()));
-        message.add_frame(txn_long_frame(self.thread_id));
+        put_long_initial(&mut message, timeout_ms);
+        put_int_initial(&mut message, self.options.durability);
+        put_int_initial(&mut message, self.options.transaction_type.value());
+        put_long_initial(&mut message, self.thread_id);
 
-        let _response = txn_invoke(&self.connection_manager, message).await?;
-
+        let response = txn_invoke_at(&self.connection_manager, address, message).await?;
+        self.txn_id = decode_uuid_initial(&response)?;
+        self.connection_address = Some(address);
         self.state = TransactionState::Active;
         self.start_time = Some(std::time::Instant::now());
 
@@ -237,11 +241,14 @@ impl TransactionContext {
             ));
         }
 
+        let address = self.connection_address.ok_or_else(|| {
+            HazelcastError::Protocol("transaction has no pinned connection".to_string())
+        })?;
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_COMMIT);
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
 
-        let _response = txn_invoke(&self.connection_manager, message).await?;
+        let _response = txn_invoke_at(&self.connection_manager, address, message).await?;
 
         self.state = TransactionState::Committed;
         Ok(())
@@ -259,11 +266,14 @@ impl TransactionContext {
             ));
         }
 
+        let address = self.connection_address.ok_or_else(|| {
+            HazelcastError::Protocol("transaction has no pinned connection".to_string())
+        })?;
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_ROLLBACK);
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
 
-        let _response = txn_invoke(&self.connection_manager, message).await?;
+        let _response = txn_invoke_at(&self.connection_manager, address, message).await?;
 
         self.state = TransactionState::RolledBack;
         Ok(())
@@ -280,11 +290,15 @@ impl TransactionContext {
         V: Serializable + Deserializable + Send + Sync,
     {
         self.ensure_active("get_map")?;
+        let address = self.connection_address.ok_or_else(|| {
+            HazelcastError::Protocol("transaction is not active".to_string())
+        })?;
         Ok(TransactionalMap::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
             self.txn_id,
             self.thread_id,
+            address,
         ))
     }
 
@@ -298,11 +312,15 @@ impl TransactionContext {
         T: Serializable + Deserializable + Send + Sync,
     {
         self.ensure_active("get_queue")?;
+        let address = self.connection_address.ok_or_else(|| {
+            HazelcastError::Protocol("transaction is not active".to_string())
+        })?;
         Ok(TransactionalQueue::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
             self.txn_id,
             self.thread_id,
+            address,
         ))
     }
 
@@ -316,11 +334,15 @@ impl TransactionContext {
         T: Serializable + Deserializable + Send + Sync,
     {
         self.ensure_active("get_set")?;
+        let address = self.connection_address.ok_or_else(|| {
+            HazelcastError::Protocol("transaction is not active".to_string())
+        })?;
         Ok(TransactionalSet::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
             self.txn_id,
             self.thread_id,
+            address,
         ))
     }
 
@@ -334,11 +356,15 @@ impl TransactionContext {
         T: Serializable + Deserializable + Send + Sync,
     {
         self.ensure_active("get_list")?;
+        let address = self.connection_address.ok_or_else(|| {
+            HazelcastError::Protocol("transaction is not active".to_string())
+        })?;
         Ok(TransactionalList::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
             self.txn_id,
             self.thread_id,
+            address,
         ))
     }
 
@@ -353,11 +379,15 @@ impl TransactionContext {
         V: Serializable + Deserializable + Send + Sync,
     {
         self.ensure_active("get_multimap")?;
+        let address = self.connection_address.ok_or_else(|| {
+            HazelcastError::Protocol("transaction is not active".to_string())
+        })?;
         Ok(TransactionalMultiMap::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
             self.txn_id,
             self.thread_id,
+            address,
         ))
     }
 
@@ -400,7 +430,10 @@ impl TransactionContext {
 
 /// Serializes a value into a byte vector using the Hazelcast data format.
 fn txn_serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
+    use hazelcast_core::serialization::DataOutput;
     let mut output = ObjectDataOutput::new();
+    output.write_int(0)?;
+    output.write_int(value.type_id())?;
     value.serialize(&mut output)?;
     Ok(output.into_bytes())
 }
@@ -434,6 +467,74 @@ fn txn_uuid_frame(uuid: Uuid) -> Frame {
     let mut buf = BytesMut::with_capacity(16);
     buf.extend_from_slice(uuid.as_bytes());
     Frame::with_content(buf)
+}
+
+/// Appends a fixed little-endian i64 to the request's initial frame.
+fn put_long_initial(message: &mut ClientMessage, value: i64) {
+    if let Some(initial) = message.frames_mut().first_mut() {
+        initial.content.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
+/// Appends a fixed little-endian i32 to the request's initial frame.
+fn put_int_initial(message: &mut ClientMessage, value: i32) {
+    if let Some(initial) = message.frames_mut().first_mut() {
+        initial.content.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
+/// Splits a UUID into Hazelcast (msb, lsb) i64 halves.
+fn uuid_parts(uuid: Uuid) -> (i64, i64) {
+    let b = uuid.as_bytes();
+    let msb = i64::from_be_bytes(b[0..8].try_into().unwrap());
+    let lsb = i64::from_be_bytes(b[8..16].try_into().unwrap());
+    (msb, lsb)
+}
+
+/// Rebuilds a UUID from Hazelcast (msb, lsb) i64 halves.
+fn uuid_from_parts(msb: i64, lsb: i64) -> Uuid {
+    let mut b = [0u8; 16];
+    b[0..8].copy_from_slice(&msb.to_be_bytes());
+    b[8..16].copy_from_slice(&lsb.to_be_bytes());
+    Uuid::from_bytes(b)
+}
+
+/// Appends a fixed Hazelcast UUID ([not-null:1=0][msb:8 LE][lsb:8 LE], 17 bytes)
+/// to the request's initial frame.
+fn put_uuid_initial(message: &mut ClientMessage, uuid: Uuid) {
+    let (msb, lsb) = uuid_parts(uuid);
+    if let Some(initial) = message.frames_mut().first_mut() {
+        initial.content.extend_from_slice(&[0u8]);
+        initial.content.extend_from_slice(&msb.to_le_bytes());
+        initial.content.extend_from_slice(&lsb.to_le_bytes());
+    }
+}
+
+/// Decodes a fixed UUID from the response initial frame (transaction id).
+fn decode_uuid_initial(response: &ClientMessage) -> Result<Uuid> {
+    let f = response
+        .frames()
+        .first()
+        .ok_or_else(|| HazelcastError::Serialization("empty response".to_string()))?;
+    let off = RESPONSE_HEADER_SIZE;
+    if f.content.len() < off + 17 {
+        return Err(HazelcastError::Serialization(
+            "response too short for UUID field".to_string(),
+        ));
+    }
+    let msb = i64::from_le_bytes(f.content[off + 1..off + 9].try_into().unwrap());
+    let lsb = i64::from_le_bytes(f.content[off + 9..off + 17].try_into().unwrap());
+    Ok(uuid_from_parts(msb, lsb))
+}
+
+/// Sends a message on a specific (pinned) connection via the correlation-matched
+/// invocation service and returns the response.
+async fn txn_invoke_at(
+    connection_manager: &ConnectionManager,
+    address: SocketAddr,
+    message: ClientMessage,
+) -> Result<ClientMessage> {
+    connection_manager.invocation.invoke(address, message).await
 }
 
 /// Sends a message and waits for the response on an available connection.
@@ -470,7 +571,9 @@ fn txn_decode_nullable_response<T: Deserializable>(response: &ClientMessage) -> 
         return Ok(None);
     }
 
-    let mut input = ObjectDataInput::new(&data_frame.content);
+    let content = &data_frame.content;
+    let payload = if content.len() > 8 { &content[8..] } else { &content[..] };
+    let mut input = ObjectDataInput::new(payload);
     T::deserialize(&mut input).map(Some)
 }
 
@@ -542,6 +645,7 @@ pub struct TransactionalMap<K, V> {
     connection_manager: Arc<ConnectionManager>,
     txn_id: Uuid,
     thread_id: i64,
+    address: SocketAddr,
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
@@ -551,12 +655,14 @@ impl<K, V> TransactionalMap<K, V> {
         connection_manager: Arc<ConnectionManager>,
         txn_id: Uuid,
         thread_id: i64,
+        address: SocketAddr,
     ) -> Self {
         Self {
             name,
             connection_manager,
             txn_id,
             thread_id,
+            address,
             _phantom: PhantomData,
         }
     }
@@ -577,12 +683,12 @@ where
         let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_GET);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_nullable_response(&response)
     }
 
@@ -592,14 +698,14 @@ where
         let value_data = txn_serialize_value(&value)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_PUT);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
         message.add_frame(txn_data_frame(&value_data));
-        message.add_frame(txn_long_frame(-1)); // TTL
+        put_long_initial(&mut message, -1);
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_nullable_response(&response)
     }
 
@@ -609,13 +715,13 @@ where
         let value_data = txn_serialize_value(&value)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_SET);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
         message.add_frame(txn_data_frame(&value_data));
 
-        txn_invoke(&self.connection_manager, message).await?;
+        txn_invoke_at(&self.connection_manager, self.address, message).await?;
         Ok(())
     }
 
@@ -625,13 +731,13 @@ where
         let value_data = txn_serialize_value(&value)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_PUT_IF_ABSENT);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
         message.add_frame(txn_data_frame(&value_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_nullable_response(&response)
     }
 
@@ -641,13 +747,13 @@ where
         let value_data = txn_serialize_value(&value)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_REPLACE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
         message.add_frame(txn_data_frame(&value_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_nullable_response(&response)
     }
 
@@ -656,12 +762,12 @@ where
         let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_REMOVE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_nullable_response(&response)
     }
 
@@ -670,12 +776,12 @@ where
         let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_DELETE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
 
-        txn_invoke(&self.connection_manager, message).await?;
+        txn_invoke_at(&self.connection_manager, self.address, message).await?;
         Ok(())
     }
 
@@ -684,23 +790,23 @@ where
         let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_CONTAINS_KEY);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_bool_response(&response)
     }
 
     /// Returns the number of entries in this map.
     pub async fn size(&self) -> Result<usize> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MAP_SIZE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_int_response(&response).map(|v| v as usize)
     }
 }
@@ -716,6 +822,7 @@ pub struct TransactionalQueue<T> {
     connection_manager: Arc<ConnectionManager>,
     txn_id: Uuid,
     thread_id: i64,
+    address: SocketAddr,
     _phantom: PhantomData<fn() -> T>,
 }
 
@@ -725,12 +832,14 @@ impl<T> TransactionalQueue<T> {
         connection_manager: Arc<ConnectionManager>,
         txn_id: Uuid,
         thread_id: i64,
+        address: SocketAddr,
     ) -> Self {
         Self {
             name,
             connection_manager,
             txn_id,
             thread_id,
+            address,
             _phantom: PhantomData,
         }
     }
@@ -750,36 +859,36 @@ where
         let item_data = txn_serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_QUEUE_OFFER);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&item_data));
-        message.add_frame(txn_long_frame(0)); // timeout
+        put_long_initial(&mut message, 0);
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_bool_response(&response)
     }
 
     /// Retrieves and removes the head of this queue.
     pub async fn poll(&self) -> Result<Option<T>> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_QUEUE_POLL);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
-        message.add_frame(txn_long_frame(0)); // timeout
+        put_long_initial(&mut message, 0);
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_nullable_response(&response)
     }
 
     /// Returns the number of elements in this queue.
     pub async fn size(&self) -> Result<usize> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_QUEUE_SIZE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_int_response(&response).map(|v| v as usize)
     }
 }
@@ -795,6 +904,7 @@ pub struct TransactionalSet<T> {
     connection_manager: Arc<ConnectionManager>,
     txn_id: Uuid,
     thread_id: i64,
+    address: SocketAddr,
     _phantom: PhantomData<fn() -> T>,
 }
 
@@ -804,12 +914,14 @@ impl<T> TransactionalSet<T> {
         connection_manager: Arc<ConnectionManager>,
         txn_id: Uuid,
         thread_id: i64,
+        address: SocketAddr,
     ) -> Self {
         Self {
             name,
             connection_manager,
             txn_id,
             thread_id,
+            address,
             _phantom: PhantomData,
         }
     }
@@ -829,12 +941,12 @@ where
         let item_data = txn_serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_SET_ADD);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&item_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_bool_response(&response)
     }
 
@@ -843,23 +955,23 @@ where
         let item_data = txn_serialize_value(item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_SET_REMOVE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&item_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_bool_response(&response)
     }
 
     /// Returns the number of elements in this set.
     pub async fn size(&self) -> Result<usize> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_SET_SIZE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_int_response(&response).map(|v| v as usize)
     }
 }
@@ -875,6 +987,7 @@ pub struct TransactionalList<T> {
     connection_manager: Arc<ConnectionManager>,
     txn_id: Uuid,
     thread_id: i64,
+    address: SocketAddr,
     _phantom: PhantomData<fn() -> T>,
 }
 
@@ -884,12 +997,14 @@ impl<T> TransactionalList<T> {
         connection_manager: Arc<ConnectionManager>,
         txn_id: Uuid,
         thread_id: i64,
+        address: SocketAddr,
     ) -> Self {
         Self {
             name,
             connection_manager,
             txn_id,
             thread_id,
+            address,
             _phantom: PhantomData,
         }
     }
@@ -909,12 +1024,12 @@ where
         let item_data = txn_serialize_value(&item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_LIST_ADD);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&item_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_bool_response(&response)
     }
 
@@ -923,23 +1038,23 @@ where
         let item_data = txn_serialize_value(item)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_LIST_REMOVE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&item_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_bool_response(&response)
     }
 
     /// Returns the number of elements in this list.
     pub async fn size(&self) -> Result<usize> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_LIST_SIZE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_int_response(&response).map(|v| v as usize)
     }
 }
@@ -957,6 +1072,7 @@ pub struct TransactionalMultiMap<K, V> {
     connection_manager: Arc<ConnectionManager>,
     txn_id: Uuid,
     thread_id: i64,
+    address: SocketAddr,
     _phantom: PhantomData<fn() -> (K, V)>,
 }
 
@@ -970,12 +1086,14 @@ where
         connection_manager: Arc<ConnectionManager>,
         txn_id: Uuid,
         thread_id: i64,
+        address: SocketAddr,
     ) -> Self {
         Self {
             name,
             connection_manager,
             txn_id,
             thread_id,
+            address,
             _phantom: PhantomData,
         }
     }
@@ -989,13 +1107,13 @@ where
         let value_data = txn_serialize_value(&value)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_PUT);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
         message.add_frame(txn_data_frame(&value_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_bool_response(&response)
     }
 
@@ -1004,12 +1122,12 @@ where
         let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_GET);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_collection_response(&response)
     }
 
@@ -1020,12 +1138,12 @@ where
         let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_REMOVE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_collection_response(&response)
     }
 
@@ -1037,13 +1155,13 @@ where
         let value_data = txn_serialize_value(value)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_REMOVE_ENTRY);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
         message.add_frame(txn_data_frame(&value_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_bool_response(&response)
     }
 
@@ -1052,23 +1170,23 @@ where
         let key_data = txn_serialize_value(key)?;
 
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_VALUE_COUNT);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
         message.add_frame(txn_data_frame(&key_data));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_int_response(&response)
     }
 
     /// Returns the total number of key-value pairs in the multimap.
     pub async fn size(&self) -> Result<i32> {
         let mut message = ClientMessage::create_for_encode_any_partition(TXN_MULTIMAP_SIZE);
+        put_uuid_initial(&mut message, self.txn_id);
+        put_long_initial(&mut message, self.thread_id);
         message.add_frame(txn_string_frame(&self.name));
-        message.add_frame(txn_uuid_frame(self.txn_id));
-        message.add_frame(txn_long_frame(self.thread_id));
 
-        let response = txn_invoke(&self.connection_manager, message).await?;
+        let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_int_response(&response)
     }
 }

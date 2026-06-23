@@ -721,10 +721,10 @@ pub const SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION: i32 = 0x1A0C00;
 pub const SCHEDULED_EXECUTOR_IS_SHUTDOWN: i32 = 0x1A0E00;
 
 /// Transaction create request.
-pub const TXN_CREATE: i32 = 0x150100;
+pub const TXN_CREATE: i32 = 0x150200;
 
 /// Transaction commit request.
-pub const TXN_COMMIT: i32 = 0x150200;
+pub const TXN_COMMIT: i32 = 0x150100;
 
 /// Transaction rollback request.
 pub const TXN_ROLLBACK: i32 = 0x150300;
