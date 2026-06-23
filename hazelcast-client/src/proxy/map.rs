@@ -585,7 +585,7 @@ impl<K, V> IMap<K, V> {
             stats_tracker: Arc::new(MapStatsTracker::new()),
             near_cache: None,
             invalidation_registration: Arc::new(Mutex::new(None)),
-            thread_id: std::process::id() as i64,
+            thread_id: 0, // all client ops use logical thread 0 (consistent with put/get)
             _phantom: PhantomData,
         }
     }
@@ -604,7 +604,7 @@ impl<K, V> IMap<K, V> {
             stats_tracker: Arc::new(MapStatsTracker::new()),
             near_cache: Some(Arc::new(Mutex::new(NearCache::new(config)))),
             invalidation_registration: Arc::new(Mutex::new(None)),
-            thread_id: std::process::id() as i64,
+            thread_id: 0, // all client ops use logical thread 0 (consistent with put/get)
             _phantom: PhantomData,
         }
     }
