@@ -142,12 +142,25 @@ where
     ///
     /// Returns the sequence number of the added item, or -1 if the operation
     /// failed due to the overflow policy being `Fail` and the buffer being full.
+    fn name_partition(&self) -> i32 {
+        use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
+        let count = self.connection_manager.partition_count();
+        let count = if count > 0 { count } else { 271 };
+        let mut out = ObjectDataOutput::new();
+        let _ = out.write_int(0);
+        let _ = out.write_int(-11);
+        let _ = out.write_string(&self.name);
+        let data = out.into_bytes();
+        let h = if data.len() > 8 { &data[8..] } else { &data[..] };
+        hazelcast_core::compute_partition_hash(h).abs() % count
+    }
+
     pub async fn add_with_policy(&self, item: T, overflow_policy: OverflowPolicy) -> Result<i64> {
         let item_data = item.to_bytes()?;
 
         let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 8);
         request.set_message_type(RINGBUFFER_ADD);
-        request.set_partition_id(PARTITION_ID_ANY);
+        request.set_partition_id(self.name_partition());
 
         request.add_frame(Frame::new_string_frame(&self.name));
 
@@ -179,7 +192,7 @@ where
 
         let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 8);
         request.set_message_type(RINGBUFFER_ADD_ALL);
-        request.set_partition_id(PARTITION_ID_ANY);
+        request.set_partition_id(self.name_partition());
 
         request.add_frame(Frame::new_string_frame(&self.name));
 
@@ -214,7 +227,7 @@ where
     pub async fn read_one(&self, sequence: i64) -> Result<Option<T>> {
         let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 8);
         request.set_message_type(RINGBUFFER_READ_ONE);
-        request.set_partition_id(PARTITION_ID_ANY);
+        request.set_partition_id(self.name_partition());
 
         request.add_frame(Frame::new_string_frame(&self.name));
 
@@ -253,7 +266,7 @@ where
     ) -> Result<(Vec<T>, i64)> {
         let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 24);
         request.set_message_type(RINGBUFFER_READ_MANY);
-        request.set_partition_id(PARTITION_ID_ANY);
+        request.set_partition_id(self.name_partition());
 
         request.add_frame(Frame::new_string_frame(&self.name));
 
@@ -325,7 +338,7 @@ where
 
         let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE + 24);
         request.set_message_type(RINGBUFFER_READ_MANY);
-        request.set_partition_id(PARTITION_ID_ANY);
+        request.set_partition_id(self.name_partition());
 
         request.add_frame(Frame::new_string_frame(&self.name));
 
@@ -369,7 +382,7 @@ where
     pub async fn capacity(&self) -> Result<i64> {
         let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
         request.set_message_type(RINGBUFFER_CAPACITY);
-        request.set_partition_id(PARTITION_ID_ANY);
+        request.set_partition_id(self.name_partition());
         request.add_frame(Frame::new_string_frame(&self.name));
         request.finalize();
 
@@ -387,7 +400,7 @@ where
     pub async fn size(&self) -> Result<i64> {
         let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
         request.set_message_type(RINGBUFFER_SIZE);
-        request.set_partition_id(PARTITION_ID_ANY);
+        request.set_partition_id(self.name_partition());
         request.add_frame(Frame::new_string_frame(&self.name));
         request.finalize();
 
@@ -408,7 +421,7 @@ where
     pub async fn head_sequence(&self) -> Result<i64> {
         let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
         request.set_message_type(RINGBUFFER_HEAD_SEQUENCE);
-        request.set_partition_id(PARTITION_ID_ANY);
+        request.set_partition_id(self.name_partition());
         request.add_frame(Frame::new_string_frame(&self.name));
         request.finalize();
 
@@ -429,7 +442,7 @@ where
     pub async fn tail_sequence(&self) -> Result<i64> {
         let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
         request.set_message_type(RINGBUFFER_TAIL_SEQUENCE);
-        request.set_partition_id(PARTITION_ID_ANY);
+        request.set_partition_id(self.name_partition());
         request.add_frame(Frame::new_string_frame(&self.name));
         request.finalize();
 
@@ -450,7 +463,7 @@ where
     pub async fn remaining_capacity(&self) -> Result<i64> {
         let mut request = ClientMessage::create_for_encode_with_capacity(REQUEST_HEADER_SIZE);
         request.set_message_type(RINGBUFFER_REMAINING_CAPACITY);
-        request.set_partition_id(PARTITION_ID_ANY);
+        request.set_partition_id(self.name_partition());
         request.add_frame(Frame::new_string_frame(&self.name));
         request.finalize();
 

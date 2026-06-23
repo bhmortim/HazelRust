@@ -477,31 +477,31 @@ pub const REPLICATED_MAP_PUT_ALL: i32 = 0x0D0800;
 pub const REPLICATED_MAP_PUT_WITH_TTL: i32 = 0x0D0100;
 
 /// Ringbuffer size request.
-pub const RINGBUFFER_SIZE: i32 = 0x190100;
+pub const RINGBUFFER_SIZE: i32 = 0x170100;
 
 /// Ringbuffer tail sequence request.
-pub const RINGBUFFER_TAIL_SEQUENCE: i32 = 0x190200;
+pub const RINGBUFFER_TAIL_SEQUENCE: i32 = 0x170200;
 
 /// Ringbuffer head sequence request.
-pub const RINGBUFFER_HEAD_SEQUENCE: i32 = 0x190300;
+pub const RINGBUFFER_HEAD_SEQUENCE: i32 = 0x170300;
 
 /// Ringbuffer capacity request.
-pub const RINGBUFFER_CAPACITY: i32 = 0x190400;
+pub const RINGBUFFER_CAPACITY: i32 = 0x170400;
 
 /// Ringbuffer remaining capacity request.
-pub const RINGBUFFER_REMAINING_CAPACITY: i32 = 0x190500;
+pub const RINGBUFFER_REMAINING_CAPACITY: i32 = 0x170500;
 
 /// Ringbuffer add request.
-pub const RINGBUFFER_ADD: i32 = 0x190600;
+pub const RINGBUFFER_ADD: i32 = 0x170600;
 
 /// Ringbuffer read one request.
-pub const RINGBUFFER_READ_ONE: i32 = 0x190700;
+pub const RINGBUFFER_READ_ONE: i32 = 0x170700;
 
 /// Ringbuffer add all request.
-pub const RINGBUFFER_ADD_ALL: i32 = 0x190800;
+pub const RINGBUFFER_ADD_ALL: i32 = 0x170800;
 
 /// Ringbuffer read many request.
-pub const RINGBUFFER_READ_MANY: i32 = 0x190900;
+pub const RINGBUFFER_READ_MANY: i32 = 0x170900;
 
 /// PN Counter get request.
 pub const PN_COUNTER_GET: i32 = 0x200100;
