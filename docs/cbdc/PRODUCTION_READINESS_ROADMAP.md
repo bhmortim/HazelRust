@@ -8,11 +8,13 @@ Forward-looking work list to take the client from its current state (independent
 
 ## P0 — Money-path correctness (deploy-blocking; must finish what remediation started)
 
+> **Category-A update (pass 4, see `REMEDIATION_RESULTS.md`):** the four technically-completable client items are now **done & verified live** — A1 (XA, 12/12 + data-effect), A6 (auth-failure surfacing / reader-loop in-flight fail), B1 (mTLS data ops), and the 9 infra-blocked `java_parity` tests (now 161/1 ignored, only the non-defect `try_lock_with_timeout`). The overall verdict is **unchanged (NO-GO)** pending the external P3 items.
+
 ### A1. Fix XA two-phase-commit request framing — *M*
 - **What:** the XA `create/prepare/commit/rollback` request encoders are mis-framed; the server throws `ArrayIndexOutOfBoundsException`/`NullPointerException` during decode. The false-success bug is fixed (errors now surface), but XA is **non-functional**. Re-derive the XA codec framing against the Hazelcast 5.x `XATransaction` codec; verify each op decodes server-side.
 - **Why:** atomic multi-resource ledger postings (RR-1/RR-2). Until fixed, XA cannot be used at all.
 - **Exit:** the 8 `xa_transaction_test` cases pass **and assert the data effect** (committed writes are visible via a separate client; rollback leaves none; a server-rejected commit returns `Err`, never `Ok`).
-- **STATUS (remediation pass 2 — mostly done):** re-framed against the upstream codec (timeout fixed-in-initial-frame; xid as a BEGIN/END group; server-issued transactionId UUID captured and reused). **7/10 XA cases now pass live** (create, one-phase commit, prepare, recover, rollback-from-active, suspend/resume, timeout, auto-xid, via-context). **Remaining:** the two-phase commit-*after-prepare* path (3 cases) still hits a server AIOOBE in the prepared-transaction state — needs a differential byte-capture vs the Java client to settle the residual Xid/2PC detail. Data-effect assertions still to be added.
+- **STATUS (pass 4 — DONE):** XA is **12/12 live**. The residual failure was `multiple_xa_transactions` — a *response-misrouting race* on the shared metadata connection (a stock Java client ran the identical sequence fine, and the commit frame was byte-identical between passing/failing runs), not a framing bug. Fixed by routing XA through the correlation-matched `invoke_pinned` and pinning each branch to one member endpoint. Added `XATransaction::get_map` + two **data-effect** tests: a committed XA write is visible via a separate client; a rolled-back (post-prepare) write is not. (Commit `4ebde9e`.)
 
 ### A2. Fix CPMap request framing — *M*
 - **What:** CPMap `put`/`get` requests are mis-framed (server `NullPointerException` on a missing frame). The value Data-header fix (R6) is in place but unverifiable until the request frames are correct.
