@@ -1050,10 +1050,10 @@ pub const TXN_MULTIMAP_REMOVE: i32 = 0x0F0300;
 pub const TXN_MULTIMAP_REMOVE_ENTRY: i32 = 0x0F0400;
 
 /// Transactional MultiMap size request.
-pub const TXN_MULTIMAP_SIZE: i32 = 0x0F0500;
+pub const TXN_MULTIMAP_SIZE: i32 = 0x0F0600;
 
 /// Transactional MultiMap value count request.
-pub const TXN_MULTIMAP_VALUE_COUNT: i32 = 0x0F0600;
+pub const TXN_MULTIMAP_VALUE_COUNT: i32 = 0x0F0500;
 
 // Continuous Query Cache operations
 
