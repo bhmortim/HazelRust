@@ -17,12 +17,21 @@ use std::time::Duration;
 
 use hazelcast_client::config::{ClientConfigBuilder, NetworkConfigBuilder, TlsConfigBuilder};
 use hazelcast_client::connection::ConnectionManager;
+use hazelcast_client::HazelcastClient;
 
 fn get_tls_address() -> SocketAddr {
     env::var("HZ_TLS_ADDRESS")
         .unwrap_or_else(|_| "127.0.0.1:5701".to_string())
         .parse()
         .expect("Invalid HZ_TLS_ADDRESS")
+}
+
+fn get_tls_cluster() -> String {
+    env::var("HZ_TLS_CLUSTER").unwrap_or_else(|_| "dev".to_string())
+}
+
+fn get_tls_sni() -> Option<String> {
+    env::var("HZ_TLS_SNI").ok()
 }
 
 fn get_ca_cert_path() -> Option<String> {
@@ -120,6 +129,80 @@ async fn test_mutual_tls_connection() {
     assert!(manager.is_connected(&address).await);
 
     manager.shutdown().await.expect("shutdown failed");
+}
+
+/// Regression test for mTLS DATA OPERATIONS (CBDC item A-1).
+///
+/// The mTLS *security* gate (handshake, client-cert auth, chain + hostname
+/// validation) was already verified, but data ops over TLS failed: the auth
+/// connection authenticated yet the invocation pool was never populated for a
+/// TLS member (`Connection::into_tcp_stream()` returned `None` for the TLS
+/// variant, so every pooled TLS connection was silently dropped). A `put` then
+/// failed with `Connection("no connection to <addr>")`. This test exercises the
+/// full high-level client path (`HazelcastClient` → `IMap::put`/`get`) over mTLS
+/// and asserts the round-trip — it FAILS before the `into_split_halves` fix and
+/// PASSES after.
+///
+/// Run live, e.g.:
+/// ```text
+/// HZ_TLS_ADDRESS=127.0.0.1:5801 HZ_TLS_CLUSTER=tls HZ_TLS_SNI=hzcp.test \
+/// HZ_TLS_CA_CERT=~/certs/ca.crt HZ_TLS_CLIENT_CERT=~/certs/client.crt \
+/// HZ_TLS_CLIENT_KEY=~/certs/client.key \
+/// cargo test --features tls --test tls_integration_test \
+///   test_mtls_data_operation_round_trip -- --ignored --nocapture
+/// ```
+#[tokio::test]
+#[ignore = "requires a mutual-TLS Hazelcast cluster (set HZ_TLS_* env vars)"]
+async fn test_mtls_data_operation_round_trip() {
+    let address = get_tls_address();
+    let cluster = get_tls_cluster();
+    let ca = get_ca_cert_path();
+    let client_cert = get_client_cert_path();
+    let client_key = get_client_key_path();
+    let sni = get_tls_sni();
+
+    let config = ClientConfigBuilder::new()
+        .cluster_name(&cluster)
+        .add_address(address)
+        .connection_timeout(Duration::from_secs(10))
+        .network(move |n| {
+            n.tls(move |mut t| {
+                t = t.enabled(true);
+                if let (Some(cert), Some(key)) = (&client_cert, &client_key) {
+                    t = t.client_auth(cert, key);
+                }
+                if let Some(ca) = &ca {
+                    t = t.ca_cert_path(ca);
+                }
+                if let Some(sni) = &sni {
+                    t = t.sni_hostname(sni);
+                }
+                t
+            })
+        })
+        .build()
+        .expect("failed to build mTLS config");
+
+    let client = HazelcastClient::new(config)
+        .await
+        .expect("mTLS client connect should succeed");
+
+    // The crux of A-1: a data op must complete over the TLS invocation pool.
+    let map = client.get_map::<String, String>("cbdc-mtls-ops-regression");
+    map.put("ledger-key".to_string(), "ledger-value".to_string())
+        .await
+        .expect("put over mTLS should succeed (invocation pool populated)");
+    let got = map
+        .get(&"ledger-key".to_string())
+        .await
+        .expect("get over mTLS should succeed");
+    assert_eq!(
+        got,
+        Some("ledger-value".to_string()),
+        "mTLS put/get round-trip must return the written value"
+    );
+
+    let _ = client.shutdown().await;
 }
 
 #[tokio::test]

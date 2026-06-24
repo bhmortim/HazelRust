@@ -15,8 +15,7 @@ use std::time::Duration;
 
 use bytes::BytesMut;
 use dashmap::DashMap;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{oneshot, Mutex, RwLock};
 
 use hazelcast_core::protocol::constants::*;
@@ -24,17 +23,24 @@ use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
 use hazelcast_core::{HazelcastError, Result};
 use tokio_util::codec::Decoder;
 
+/// Boxed write half of a pooled connection. Boxed (rather than a concrete
+/// `OwnedWriteHalf`) so the same pool can hold both plaintext TCP halves and
+/// `tokio_rustls` TLS halves — this is what lets data operations run over mTLS.
+type BoxedWrite = Box<dyn AsyncWrite + Send + Unpin>;
+/// Boxed read half of a pooled connection (see [`BoxedWrite`]).
+type BoxedRead = Box<dyn AsyncRead + Send + Unpin>;
+
 /// A pool of write connections to a single cluster member.
 struct ConnectionPool {
     /// Write halves of the pooled connections.
-    writers: Vec<Arc<Mutex<OwnedWriteHalf>>>,
+    writers: Vec<Arc<Mutex<BoxedWrite>>>,
     /// Round-robin counter for selecting the next connection.
     next: AtomicUsize,
 }
 
 impl ConnectionPool {
     /// Create a pool with a single connection.
-    fn new(writer: Arc<Mutex<OwnedWriteHalf>>) -> Self {
+    fn new(writer: Arc<Mutex<BoxedWrite>>) -> Self {
         Self {
             writers: vec![writer],
             next: AtomicUsize::new(0),
@@ -42,19 +48,19 @@ impl ConnectionPool {
     }
 
     /// Add a connection to the pool.
-    fn add(&mut self, writer: Arc<Mutex<OwnedWriteHalf>>) {
+    fn add(&mut self, writer: Arc<Mutex<BoxedWrite>>) {
         self.writers.push(writer);
     }
 
     /// Select the next writer via round-robin.
-    fn select(&self) -> &Arc<Mutex<OwnedWriteHalf>> {
+    fn select(&self) -> &Arc<Mutex<BoxedWrite>> {
         let idx = self.next.fetch_add(1, Ordering::Relaxed) % self.writers.len();
         &self.writers[idx]
     }
 
     /// Returns the first (stable) writer in the pool. Used to pin a sequence of
     /// requests (e.g. a transaction) to a single server connection/endpoint.
-    fn first(&self) -> &Arc<Mutex<OwnedWriteHalf>> {
+    fn first(&self) -> &Arc<Mutex<BoxedWrite>> {
         &self.writers[0]
     }
 
@@ -124,8 +130,12 @@ impl InvocationService {
     ///
     /// If a pool already exists for this address, the connection is added to
     /// the existing pool. Otherwise a new pool is created.
-    pub async fn register_connection(&self, address: SocketAddr, stream: tokio::net::TcpStream) {
-        let (read_half, write_half) = stream.into_split();
+    pub async fn register_connection(
+        &self,
+        address: SocketAddr,
+        read_half: BoxedRead,
+        write_half: BoxedWrite,
+    ) {
         let write = Arc::new(Mutex::new(write_half));
 
         // Add writer to pool (create pool if first connection for this address)
@@ -156,7 +166,7 @@ impl InvocationService {
     /// Background reader loop that decodes messages and routes to pending ops.
     async fn reader_loop(
         address: SocketAddr,
-        mut read: OwnedReadHalf,
+        mut read: BoxedRead,
         pending_ops: Arc<DashMap<i64, oneshot::Sender<ClientMessage>>>,
         event_handlers: Arc<DashMap<i64, Arc<dyn Fn(ClientMessage) + Send + Sync>>>,
     ) {

@@ -524,13 +524,16 @@ impl ConnectionManager {
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                     inv_conn.drain_socket().await;
-                    // Hand off to InvocationService
-                    if let Some(tcp_stream) = inv_conn.into_tcp_stream() {
-                        self.invocation
-                            .register_connection(address, tcp_stream)
-                            .await;
-                        registered += 1;
-                    }
+                    // Hand off to InvocationService. Works for both plaintext and
+                    // TLS connections: previously this used `into_tcp_stream()`, which
+                    // returned `None` for TLS, so a TLS member's invocation pool was
+                    // never populated (data ops then failed with "no connection") and
+                    // the authenticated TLS sockets were dropped → server saw RST.
+                    let (read_half, write_half) = inv_conn.into_split_halves();
+                    self.invocation
+                        .register_connection(address, read_half, write_half)
+                        .await;
+                    registered += 1;
                 }
                 Err(e) => {
                     tracing::warn!(

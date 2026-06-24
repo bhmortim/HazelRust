@@ -7,7 +7,7 @@ use std::time::Instant;
 use bytes::BytesMut;
 use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec};
 use hazelcast_core::{HazelcastError, Result};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -134,6 +134,37 @@ impl Connection {
             ConnectionStream::Plain(stream) => Some(stream),
             #[cfg(feature = "tls")]
             ConnectionStream::Tls(_) => None, // Can't extract from TLS
+        }
+    }
+
+    /// Consumes the connection, splitting the underlying stream into boxed
+    /// read/write halves for the [`InvocationService`] pool.
+    ///
+    /// Works for BOTH plaintext and TLS connections — this is what lets data
+    /// operations run over mTLS. The plaintext path uses `TcpStream::into_split`
+    /// (lock-free owned halves), while the TLS path uses `tokio::io::split`
+    /// (a `BiLock`-backed split, the only way to split a `tokio_rustls` stream).
+    /// The trade-off (a vtable indirection per write, and a `BiLock` only on the
+    /// TLS hot path) is negligible next to network latency, and it removes the
+    /// fallible `into_tcp_stream()` branch that silently dropped TLS connections.
+    ///
+    /// [`InvocationService`]: crate::connection::invocation::InvocationService
+    pub fn into_split_halves(
+        self,
+    ) -> (
+        Box<dyn AsyncRead + Send + Unpin>,
+        Box<dyn AsyncWrite + Send + Unpin>,
+    ) {
+        match self.stream {
+            ConnectionStream::Plain(stream) => {
+                let (r, w) = stream.into_split();
+                (Box::new(r), Box::new(w))
+            }
+            #[cfg(feature = "tls")]
+            ConnectionStream::Tls(stream) => {
+                let (r, w) = tokio::io::split(stream);
+                (Box::new(r), Box::new(w))
+            }
         }
     }
 
@@ -336,8 +367,8 @@ impl Connection {
             use std::sync::Once;
             static CRYPTO_INIT: Once = Once::new();
             CRYPTO_INIT.call_once(|| {
-                let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
-                    .install_default();
+                let _ =
+                    tokio_rustls::rustls::crypto::aws_lc_rs::default_provider().install_default();
             });
         }
 
