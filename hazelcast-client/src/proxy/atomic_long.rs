@@ -101,11 +101,8 @@ impl AtomicLong {
     async fn resolve_group(&self) -> Result<&RaftGroupId> {
         self.group_id
             .get_or_try_init(|| async {
-                let mut request = ClientMessage::create_for_encode_any_partition(
-                    // 0x1E0100 = CPGroupCreateCPGroup per the Hazelcast protocol; the
-                    // existing constant name (`..._GET_GROUP_IDS`) is misleading.
-                    CP_SUBSYSTEM_GET_GROUP_IDS,
-                );
+                let mut request =
+                    ClientMessage::create_for_encode_any_partition(CP_GROUP_CREATE_CP_GROUP);
                 request.add_frame(Self::string_frame(self.group_name()));
                 let response = self.connection_manager.invoke_on_random(request).await?;
                 Self::decode_group_id(&response)

@@ -985,14 +985,15 @@ pub const CLIENT_STATISTICS: i32 = 0x000C00;
 // CP Subsystem Management operations
 
 /// CP Subsystem get group IDs request.
-// NOTE: this value (0x1E0100) is actually CPGroup.createCPGroup, and the CP proxies
-// (AtomicLong/AtomicReference/etc.) deliberately use this constant to create/resolve
-// their Raft group — so the VALUE is load-bearing despite the misleading NAME.
-// The real CPSubsystem.getCPGroupIds is 0x220500 (service 0x22). Renumbering this
-// constant breaks live CP group resolution; the correct fix is to introduce a
-// dedicated CP_GROUP_CREATE_CP_GROUP=0x1E0100 constant and repoint the proxies, then
-// give this its true 0x220500. Tracked in CBDC_REMEDIATION_PLAN.md (R1 follow-up).
-pub const CP_SUBSYSTEM_GET_GROUP_IDS: i32 = 0x1E0100;
+/// CPGroup.createCPGroup (0x1E0100) — creates the named CP group if it does not exist
+/// and returns its `RaftGroupId`. CP object proxies (AtomicLong/AtomicReference/CPMap/
+/// FencedLock/etc.) use this to resolve the Raft group that owns the object.
+pub const CP_GROUP_CREATE_CP_GROUP: i32 = 0x1E0100;
+
+/// CPSubsystem.getCPGroupIds (0x220500, service 0x22) — lists the active CP group ids.
+/// Used by CP management. (Previously this constant held 0x1E0100 and was misused as
+/// createCPGroup by the proxies; that role now belongs to CP_GROUP_CREATE_CP_GROUP.)
+pub const CP_SUBSYSTEM_GET_GROUP_IDS: i32 = 0x220500;
 
 /// CP Subsystem get group request.
 pub const CP_SUBSYSTEM_GET_GROUP: i32 = 0x1E0200;

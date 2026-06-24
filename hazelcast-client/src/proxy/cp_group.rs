@@ -7,7 +7,7 @@
 
 use bytes::BytesMut;
 use hazelcast_core::protocol::constants::{
-    BEGIN_DATA_STRUCTURE_FLAG, CP_SUBSYSTEM_GET_GROUP_IDS, END_DATA_STRUCTURE_FLAG,
+    BEGIN_DATA_STRUCTURE_FLAG, CP_GROUP_CREATE_CP_GROUP, END_DATA_STRUCTURE_FLAG,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::{ClientMessage, HazelcastError, Result};
@@ -45,7 +45,7 @@ pub fn string_frame(s: &str) -> Frame {
 /// Resolves the Raft `groupId` for `proxy`'s CP group via `CPGroupCreateCPGroup`
 /// (`0x1E0100`), which creates the group if needed.
 pub async fn resolve_group(cm: &ConnectionManager, proxy: &str) -> Result<RaftGroupId> {
-    let mut request = ClientMessage::create_for_encode_any_partition(CP_SUBSYSTEM_GET_GROUP_IDS);
+    let mut request = ClientMessage::create_for_encode_any_partition(CP_GROUP_CREATE_CP_GROUP);
     request.add_frame(string_frame(group_name(proxy)));
     let response = cm.invoke_on_random(request).await?;
     decode_group_id(&response)

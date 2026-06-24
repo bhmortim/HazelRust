@@ -84,7 +84,7 @@ where
             .group_id
             .get_or_try_init(|| async {
                 let mut request =
-                    ClientMessage::create_for_encode_any_partition(CP_SUBSYSTEM_GET_GROUP_IDS);
+                    ClientMessage::create_for_encode_any_partition(CP_GROUP_CREATE_CP_GROUP);
                 request.add_frame(Self::string_frame(self.group_name()));
                 let response = self.connection_manager.invoke_on_random(request).await?;
                 Self::decode_group_id(&response)
