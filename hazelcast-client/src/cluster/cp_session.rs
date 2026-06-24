@@ -305,8 +305,7 @@ impl CPSessionManager {
     ///
     /// Returns `(session_id, ttl_ms, heartbeat_interval_ms)`.
     async fn create_session(&self, group_id: &CPGroupId) -> Result<(i64, i64, i64)> {
-        let mut request =
-            ClientMessage::create_for_encode_any_partition(CP_SESSION_CREATE_SESSION);
+        let mut request = ClientMessage::create_for_encode_any_partition(CP_SESSION_CREATE_SESSION);
         // Encode: groupId data structure, then endpoint name.
         Self::encode_group_id(&mut request, group_id);
 
@@ -432,7 +431,9 @@ impl CPSessionManager {
         fixed.extend_from_slice(&group_id.seed().to_le_bytes());
         fixed.extend_from_slice(&group_id.id().to_le_bytes());
         message.add_frame(Frame::with_content(fixed));
-        message.add_frame(Frame::with_content(BytesMut::from(group_id.name().as_bytes())));
+        message.add_frame(Frame::with_content(BytesMut::from(
+            group_id.name().as_bytes(),
+        )));
         message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
     }
 
@@ -865,25 +866,29 @@ mod tests {
         CPSessionManager::encode_group_id(&mut message, &group_id);
 
         let frames = message.frames();
-        // Initial frame + 3 data frames (name, seed, id)
-        assert!(frames.len() >= 4);
+        // RaftGroupId data structure (verified against Hazelcast 5.7):
+        // initial frame + BEGIN / [seed(8 LE) id(8 LE)] / name(String) / END.
+        assert!(frames.len() >= 5);
 
-        // Verify name frame
-        assert_eq!(&frames[1].content[..], b"my-group");
+        // BEGIN_DATA_STRUCTURE marker frame.
+        assert_ne!(frames[1].flags & BEGIN_DATA_STRUCTURE_FLAG, 0);
 
-        // Verify seed frame
-        assert_eq!(frames[2].content.len(), 8);
+        // Fixed frame: seed then id, both little-endian i64.
+        assert_eq!(frames[2].content.len(), 16);
         assert_eq!(
             i64::from_le_bytes(frames[2].content[..8].try_into().unwrap()),
             10i64
         );
-
-        // Verify id frame
-        assert_eq!(frames[3].content.len(), 8);
         assert_eq!(
-            i64::from_le_bytes(frames[3].content[..8].try_into().unwrap()),
+            i64::from_le_bytes(frames[2].content[8..16].try_into().unwrap()),
             20i64
         );
+
+        // Name frame.
+        assert_eq!(&frames[3].content[..], b"my-group");
+
+        // END_DATA_STRUCTURE marker frame.
+        assert_ne!(frames[4].flags & END_DATA_STRUCTURE_FLAG, 0);
     }
 
     #[tokio::test]

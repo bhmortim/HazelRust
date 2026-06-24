@@ -69,6 +69,9 @@ async fn test_queue_size_and_is_empty() {
     };
 
     let queue: IQueue<i32> = client.get_queue("test-size");
+    // Ensure isolation: the cluster is long-lived and this fixed-name queue may
+    // retain items from a prior run, so start from a known-empty state.
+    queue.clear().await.unwrap();
 
     assert!(queue.is_empty().await.unwrap());
     assert_eq!(queue.size().await.unwrap(), 0);

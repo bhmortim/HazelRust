@@ -101,7 +101,8 @@ impl Semaphore {
 
     /// Tries to acquire `permits` within `timeout`. Returns whether acquired.
     pub async fn try_acquire(&mut self, permits: i32, timeout: Duration) -> Result<bool> {
-        self.acquire_inner(permits, timeout.as_millis() as i64).await
+        self.acquire_inner(permits, timeout.as_millis() as i64)
+            .await
     }
 
     async fn acquire_inner(&mut self, permits: i32, timeout_ms: i64) -> Result<bool> {

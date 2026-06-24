@@ -3212,7 +3212,9 @@ where
             .invoke_listener(message, event_handler)
             .await?;
         let listener_uuid = Self::decode_uuid_response(&response)?;
-        Ok(ListenerRegistration::new(ListenerId::from_uuid(listener_uuid)))
+        Ok(ListenerRegistration::new(ListenerId::from_uuid(
+            listener_uuid,
+        )))
     }
 
     /// Removes an entry listener from this map.
@@ -4067,7 +4069,10 @@ where
         // bitmapIndexOptions (always present; default uniqueKey=__key, transformation=0)
         message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         let (unique_key, transformation) = match config.bitmap_options {
-            Some(ref b) => (b.unique_key().to_string(), b.unique_key_transformation().as_i32()),
+            Some(ref b) => (
+                b.unique_key().to_string(),
+                b.unique_key_transformation().as_i32(),
+            ),
             None => ("__key".to_string(), 0),
         };
         let mut tr_buf = BytesMut::new();
@@ -4079,7 +4084,6 @@ where
         message.add_frame(Frame::new_null_frame());
         message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
-        
         Ok(())
     }
 
@@ -4614,7 +4618,11 @@ where
 
         // The aggregate result is a Hazelcast Data: skip the 8-byte header.
         let content = &data_frame.content;
-        let payload = if content.len() > 8 { &content[8..] } else { &content[..] };
+        let payload = if content.len() > 8 {
+            &content[8..]
+        } else {
+            &content[..]
+        };
         let mut input = ObjectDataInput::new(payload);
         T::deserialize(&mut input)
     }
@@ -5467,8 +5475,11 @@ where
         }
 
         let mut message = ClientMessage::create_for_encode(MAP_LOAD_ALL, PARTITION_ID_ANY);
+        if let Some(initial) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial.content.put_u8(u8::from(replace_existing));
+        }
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::bool_frame(replace_existing));
 
         self.invoke_on_random_mutating(message).await?;
         Ok(())
@@ -5817,14 +5828,17 @@ where
         }
 
         let mut message = ClientMessage::create_for_encode(MAP_LOAD_GIVEN_KEYS, PARTITION_ID_ANY);
+        if let Some(initial) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial.content.put_u8(u8::from(replace_existing));
+        }
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::bool_frame(replace_existing));
-        message.add_frame(Self::int_frame(keys.len() as i32));
-
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         for key in keys {
             let key_data = Self::serialize_value(key)?;
             message.add_frame(Self::data_frame(&key_data));
         }
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         self.invoke_on_random_mutating(message).await?;
         Ok(())

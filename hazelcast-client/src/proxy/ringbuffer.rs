@@ -146,7 +146,9 @@ where
             .first()
             .ok_or_else(|| HazelcastError::Protocol("empty response".to_string()))?;
         if f.content.len() < RESPONSE_HEADER_SIZE + 8 {
-            return Err(HazelcastError::Protocol("ringbuffer i64 too short".to_string()));
+            return Err(HazelcastError::Protocol(
+                "ringbuffer i64 too short".to_string(),
+            ));
         }
         Ok(i64::from_le_bytes(
             f.content[RESPONSE_HEADER_SIZE..RESPONSE_HEADER_SIZE + 8]
@@ -157,7 +159,11 @@ where
 
     fn decode_value_at(content: &[u8]) -> Result<T> {
         // content is a Data: skip the 8-byte header.
-        let payload = if content.len() > 8 { &content[8..] } else { content };
+        let payload = if content.len() > 8 {
+            &content[8..]
+        } else {
+            content
+        };
         let mut input = ObjectDataInput::new(payload);
         T::deserialize(&mut input)
     }
@@ -313,6 +319,9 @@ mod tests {
             <TrueFilter as RingbufferFilter<String>>::factory_id(&filter),
             -32
         );
-        assert_eq!(<TrueFilter as RingbufferFilter<String>>::class_id(&filter), 7);
+        assert_eq!(
+            <TrueFilter as RingbufferFilter<String>>::class_id(&filter),
+            7
+        );
     }
 }

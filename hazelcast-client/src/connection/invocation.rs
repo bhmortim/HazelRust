@@ -267,7 +267,7 @@ impl InvocationService {
 
         // Wait for response with timeout
         match tokio::time::timeout(self.timeout, rx).await {
-            Ok(Ok(response)) => Ok(response),
+            Ok(Ok(response)) => check_response(response),
             Ok(Err(_)) => {
                 self.pending_ops.remove(&corr_id);
                 Err(HazelcastError::Connection(
@@ -323,7 +323,7 @@ impl InvocationService {
             return Err(e);
         }
         match tokio::time::timeout(self.timeout, rx).await {
-            Ok(Ok(response)) => Ok(response),
+            Ok(Ok(response)) => check_response(response),
             Ok(Err(_)) => {
                 self.pending_ops.remove(&corr_id);
                 Err(HazelcastError::Connection(
@@ -415,3 +415,49 @@ impl InvocationService {
     }
 }
 
+/// If the response is a server error (message type 0), decode it into a
+/// `HazelcastError`; otherwise pass the response through unchanged.
+fn check_response(response: ClientMessage) -> Result<ClientMessage> {
+    if response.message_type() == Some(0) {
+        return Err(decode_error_response(&response));
+    }
+    Ok(response)
+}
+
+/// Decodes a Hazelcast error response (a list of `ErrorHolder`) into the first
+/// error's code, Java class name, and message.
+fn decode_error_response(response: &ClientMessage) -> HazelcastError {
+    let mut code: i32 = -1;
+    let mut strings: Vec<String> = Vec::new();
+    for frame in response.frames().iter().skip(1) {
+        if frame.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
+            if code < 0 && frame.content.len() >= 4 {
+                code = i32::from_le_bytes([
+                    frame.content[0],
+                    frame.content[1],
+                    frame.content[2],
+                    frame.content[3],
+                ]);
+            }
+            continue;
+        }
+        if frame.flags & (END_DATA_STRUCTURE_FLAG | IS_NULL_FLAG) != 0 || frame.content.is_empty() {
+            continue;
+        }
+        if let Ok(text) = std::str::from_utf8(&frame.content) {
+            if text.chars().all(|c| c == ' ' || !c.is_control()) {
+                strings.push(text.to_string());
+                if strings.len() >= 2 {
+                    break;
+                }
+            }
+        }
+    }
+    let class_name = strings.first().cloned();
+    let message = strings
+        .get(1)
+        .cloned()
+        .or_else(|| strings.first().cloned())
+        .unwrap_or_else(|| "server exception".to_string());
+    HazelcastError::from_server(code, message, class_name)
+}

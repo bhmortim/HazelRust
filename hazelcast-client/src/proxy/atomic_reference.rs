@@ -339,7 +339,10 @@ mod tests {
         assert!(begin.flags & BEGIN_DATA_STRUCTURE_FLAG != 0);
         assert!(end.flags & END_DATA_STRUCTURE_FLAG != 0);
         assert_eq!(fixed.content.len(), 16);
-        assert_eq!(i64::from_le_bytes(fixed.content[0..8].try_into().unwrap()), 9);
+        assert_eq!(
+            i64::from_le_bytes(fixed.content[0..8].try_into().unwrap()),
+            9
+        );
         assert_eq!(
             i64::from_le_bytes(fixed.content[8..16].try_into().unwrap()),
             73

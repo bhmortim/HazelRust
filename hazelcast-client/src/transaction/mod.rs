@@ -290,9 +290,9 @@ impl TransactionContext {
         V: Serializable + Deserializable + Send + Sync,
     {
         self.ensure_active("get_map")?;
-        let address = self.connection_address.ok_or_else(|| {
-            HazelcastError::Protocol("transaction is not active".to_string())
-        })?;
+        let address = self
+            .connection_address
+            .ok_or_else(|| HazelcastError::Protocol("transaction is not active".to_string()))?;
         Ok(TransactionalMap::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
@@ -312,9 +312,9 @@ impl TransactionContext {
         T: Serializable + Deserializable + Send + Sync,
     {
         self.ensure_active("get_queue")?;
-        let address = self.connection_address.ok_or_else(|| {
-            HazelcastError::Protocol("transaction is not active".to_string())
-        })?;
+        let address = self
+            .connection_address
+            .ok_or_else(|| HazelcastError::Protocol("transaction is not active".to_string()))?;
         Ok(TransactionalQueue::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
@@ -334,9 +334,9 @@ impl TransactionContext {
         T: Serializable + Deserializable + Send + Sync,
     {
         self.ensure_active("get_set")?;
-        let address = self.connection_address.ok_or_else(|| {
-            HazelcastError::Protocol("transaction is not active".to_string())
-        })?;
+        let address = self
+            .connection_address
+            .ok_or_else(|| HazelcastError::Protocol("transaction is not active".to_string()))?;
         Ok(TransactionalSet::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
@@ -356,9 +356,9 @@ impl TransactionContext {
         T: Serializable + Deserializable + Send + Sync,
     {
         self.ensure_active("get_list")?;
-        let address = self.connection_address.ok_or_else(|| {
-            HazelcastError::Protocol("transaction is not active".to_string())
-        })?;
+        let address = self
+            .connection_address
+            .ok_or_else(|| HazelcastError::Protocol("transaction is not active".to_string()))?;
         Ok(TransactionalList::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
@@ -379,9 +379,9 @@ impl TransactionContext {
         V: Serializable + Deserializable + Send + Sync,
     {
         self.ensure_active("get_multimap")?;
-        let address = self.connection_address.ok_or_else(|| {
-            HazelcastError::Protocol("transaction is not active".to_string())
-        })?;
+        let address = self
+            .connection_address
+            .ok_or_else(|| HazelcastError::Protocol("transaction is not active".to_string()))?;
         Ok(TransactionalMultiMap::new(
             name.to_string(),
             Arc::clone(&self.connection_manager),
@@ -572,7 +572,11 @@ fn txn_decode_nullable_response<T: Deserializable>(response: &ClientMessage) -> 
     }
 
     let content = &data_frame.content;
-    let payload = if content.len() > 8 { &content[8..] } else { &content[..] };
+    let payload = if content.len() > 8 {
+        &content[8..]
+    } else {
+        &content[..]
+    };
     let mut input = ObjectDataInput::new(payload);
     T::deserialize(&mut input).map(Some)
 }
@@ -1201,19 +1205,21 @@ mod tests {
 
     #[test]
     fn test_transaction_type_values() {
-        assert_eq!(TransactionType::OnePhase.value(), 1);
-        assert_eq!(TransactionType::TwoPhase.value(), 2);
+        // Verified against Hazelcast 5.7 wire protocol: TwoPhase=1, OnePhase=2.
+        assert_eq!(TransactionType::TwoPhase.value(), 1);
+        assert_eq!(TransactionType::OnePhase.value(), 2);
     }
 
     #[test]
     fn test_transaction_type_from_value() {
+        // Verified against Hazelcast 5.7 wire protocol: 1=TwoPhase, 2=OnePhase.
         assert_eq!(
             TransactionType::from_value(1),
-            Some(TransactionType::OnePhase)
+            Some(TransactionType::TwoPhase)
         );
         assert_eq!(
             TransactionType::from_value(2),
-            Some(TransactionType::TwoPhase)
+            Some(TransactionType::OnePhase)
         );
         assert_eq!(TransactionType::from_value(3), None);
     }

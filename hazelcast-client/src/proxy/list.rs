@@ -92,7 +92,17 @@ where
         Self::put_int(&mut message, index as i32);
         message.add_frame(Self::string_frame(&self.name));
 
-        let response = self.invoke(message).await?;
+        let response = match self.invoke(message).await {
+            Ok(r) => r,
+            Err(HazelcastError::Server { ref class_name, .. })
+                if class_name
+                    .as_deref()
+                    .map_or(false, |c| c.contains("IndexOutOfBounds")) =>
+            {
+                return Ok(None)
+            }
+            Err(e) => return Err(e),
+        };
         Self::decode_nullable_response(&response)
     }
 
@@ -374,7 +384,11 @@ where
         let count = if count > 0 { count } else { 271 };
         match Self::serialize_value(&self.name) {
             Ok(data) => {
-                let hash_input = if data.len() > 8 { &data[8..] } else { &data[..] };
+                let hash_input = if data.len() > 8 {
+                    &data[8..]
+                } else {
+                    &data[..]
+                };
                 hazelcast_core::compute_partition_hash(hash_input).abs() % count
             }
             Err(_) => 0,
@@ -384,7 +398,9 @@ where
     async fn invoke(&self, mut message: ClientMessage) -> Result<ClientMessage> {
         let pid = self.name_partition_id();
         message.set_partition_id(pid);
-        self.connection_manager.invoke_on_partition(pid, message).await
+        self.connection_manager
+            .invoke_on_partition(pid, message)
+            .await
     }
 
     fn decode_nullable_response<V: Deserializable>(response: &ClientMessage) -> Result<Option<V>> {
@@ -405,7 +421,11 @@ where
 
         // Skip the 8-byte Hazelcast Data header [partition_hash:4][type_id:4].
         let content = &data_frame.content;
-        let payload = if content.len() > 8 { &content[8..] } else { &content[..] };
+        let payload = if content.len() > 8 {
+            &content[8..]
+        } else {
+            &content[..]
+        };
         let mut input = ObjectDataInput::new(payload);
         V::deserialize(&mut input).map(Some)
     }

@@ -158,9 +158,8 @@ impl FencedLock {
 
     async fn ownership(&self) -> Result<LockOwnershipState> {
         let g = self.group().await?;
-        let mut m = ClientMessage::create_for_encode_any_partition(
-            CP_FENCED_LOCK_GET_LOCK_OWNERSHIP_STATE,
-        );
+        let mut m =
+            ClientMessage::create_for_encode_any_partition(CP_FENCED_LOCK_GET_LOCK_OWNERSHIP_STATE);
         cp_group::encode_group_id(&mut m, &g);
         m.add_frame(cp_group::string_frame(cp_group::object_name(&self.name)));
         let r = self.connection_manager.invoke_on_random(m).await?;
@@ -173,7 +172,9 @@ impl FencedLock {
             .ok_or_else(|| HazelcastError::Serialization("empty response".to_string()))?;
         let o = RESPONSE_HEADER_SIZE;
         if f.content.len() < o + 28 {
-            return Err(HazelcastError::Protocol("lock ownership state too short".to_string()));
+            return Err(HazelcastError::Protocol(
+                "lock ownership state too short".to_string(),
+            ));
         }
         let fence = i64::from_le_bytes(f.content[o..o + 8].try_into().unwrap());
         let lock_count = i32::from_le_bytes(f.content[o + 8..o + 12].try_into().unwrap());

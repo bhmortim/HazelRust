@@ -821,11 +821,16 @@ mod tests {
         let agg = CountAggregator::new();
         let data = agg.to_aggregator_data().unwrap();
 
-        assert!(data.len() >= 8);
-        let factory_id = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        // IdentifiedDataSerializable wire form (verified against Hazelcast 5.7):
+        // [partitionHash i32=0][typeId i32=-2][isIdentified u8=1][factoryId i32][classId i32][data]
+        assert!(data.len() >= 17);
+        assert_eq!(i32::from_be_bytes([data[0], data[1], data[2], data[3]]), 0);
+        assert_eq!(i32::from_be_bytes([data[4], data[5], data[6], data[7]]), -2);
+        assert_eq!(data[8], 1);
+        let factory_id = i32::from_be_bytes([data[9], data[10], data[11], data[12]]);
         assert_eq!(factory_id, AGGREGATOR_FACTORY_ID);
 
-        let class_id = i32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+        let class_id = i32::from_be_bytes([data[13], data[14], data[15], data[16]]);
         assert_eq!(class_id, class_ids::COUNT);
     }
 
@@ -834,13 +839,18 @@ mod tests {
         let agg = IntegerSumAggregator::new("value");
         let data = agg.to_aggregator_data().unwrap();
 
-        assert!(data.len() > 8);
-        let factory_id = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        // [partitionHash][typeId -2][isIdentified 1][factoryId][classId][attributePath String]
+        assert!(data.len() > 17);
+        assert_eq!(data[8], 1);
+        let factory_id = i32::from_be_bytes([data[9], data[10], data[11], data[12]]);
         assert_eq!(factory_id, AGGREGATOR_FACTORY_ID);
 
-        let class_id = i32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+        let class_id = i32::from_be_bytes([data[13], data[14], data[15], data[16]]);
         assert_eq!(class_id, class_ids::INT_SUM);
 
-        assert_eq!(data[8], 1);
+        // attributePath is written as a String: [len i32 BE = 5]["value"]
+        let attr_len = i32::from_be_bytes([data[17], data[18], data[19], data[20]]);
+        assert_eq!(attr_len, 5);
+        assert_eq!(&data[21..26], b"value");
     }
 }

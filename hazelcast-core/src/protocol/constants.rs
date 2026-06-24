@@ -553,6 +553,8 @@ pub const CP_COUNTDOWN_LATCH_AWAIT: i32 = 0x0B0200;
 
 /// CP CountDownLatch get count request.
 pub const CP_COUNTDOWN_LATCH_GET_COUNT: i32 = 0x0B0400;
+
+/// CP CountDownLatch get round request.
 pub const CP_COUNTDOWN_LATCH_GET_ROUND: i32 = 0x0B0500;
 
 /// CP Session create session request.

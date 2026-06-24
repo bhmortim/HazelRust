@@ -115,7 +115,8 @@ pub fn random_uuid() -> (i64, i64) {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as i64)
         .unwrap_or(0);
-    let lsb = (std::process::id() as i64) << 32 | (COUNTER.fetch_add(1, Ordering::Relaxed) & 0xFFFF_FFFF);
+    let lsb =
+        (std::process::id() as i64) << 32 | (COUNTER.fetch_add(1, Ordering::Relaxed) & 0xFFFF_FFFF);
     (msb, lsb)
 }
 
@@ -127,7 +128,9 @@ pub fn decode_long(response: &ClientMessage) -> Result<i64> {
         .first()
         .ok_or_else(|| HazelcastError::Serialization("empty response".to_string()))?;
     if f.content.len() < RESPONSE_HEADER_SIZE + 8 {
-        return Err(HazelcastError::Protocol("CP response too short (i64)".to_string()));
+        return Err(HazelcastError::Protocol(
+            "CP response too short (i64)".to_string(),
+        ));
     }
     Ok(i64::from_le_bytes(
         f.content[RESPONSE_HEADER_SIZE..RESPONSE_HEADER_SIZE + 8]
@@ -144,7 +147,9 @@ pub fn decode_int(response: &ClientMessage) -> Result<i32> {
         .first()
         .ok_or_else(|| HazelcastError::Serialization("empty response".to_string()))?;
     if f.content.len() < RESPONSE_HEADER_SIZE + 4 {
-        return Err(HazelcastError::Protocol("CP response too short (i32)".to_string()));
+        return Err(HazelcastError::Protocol(
+            "CP response too short (i32)".to_string(),
+        ));
     }
     Ok(i32::from_le_bytes(
         f.content[RESPONSE_HEADER_SIZE..RESPONSE_HEADER_SIZE + 4]
@@ -161,7 +166,9 @@ pub fn decode_bool(response: &ClientMessage) -> Result<bool> {
         .first()
         .ok_or_else(|| HazelcastError::Serialization("empty response".to_string()))?;
     if f.content.len() <= RESPONSE_HEADER_SIZE {
-        return Err(HazelcastError::Protocol("CP response too short (bool)".to_string()));
+        return Err(HazelcastError::Protocol(
+            "CP response too short (bool)".to_string(),
+        ));
     }
     Ok(f.content[RESPONSE_HEADER_SIZE] != 0)
 }

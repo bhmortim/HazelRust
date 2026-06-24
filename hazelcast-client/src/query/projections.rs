@@ -313,11 +313,16 @@ mod tests {
         let proj: SingleAttributeProjection<String> = SingleAttributeProjection::new("test");
         let data = proj.to_projection_data().unwrap();
 
-        assert!(data.len() >= 8);
-        let factory_id = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        // IdentifiedDataSerializable wire form (verified against Hazelcast 5.7):
+        // [partitionHash i32=0][typeId i32=-2][isIdentified u8=1][factoryId i32][classId i32][data]
+        assert!(data.len() >= 17);
+        assert_eq!(i32::from_be_bytes([data[0], data[1], data[2], data[3]]), 0);
+        assert_eq!(i32::from_be_bytes([data[4], data[5], data[6], data[7]]), -2);
+        assert_eq!(data[8], 1);
+        let factory_id = i32::from_be_bytes([data[9], data[10], data[11], data[12]]);
         assert_eq!(factory_id, PROJECTION_FACTORY_ID);
 
-        let class_id = i32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+        let class_id = i32::from_be_bytes([data[13], data[14], data[15], data[16]]);
         assert_eq!(class_id, class_ids::SINGLE_ATTRIBUTE);
     }
 
@@ -327,14 +332,16 @@ mod tests {
             MultiAttributeProjection::new(["field1", "field2"]);
         let data = proj.to_projection_data().unwrap();
 
-        assert!(data.len() > 8);
-        let factory_id = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        // [partitionHash][typeId -2][isIdentified 1][factoryId][classId][count i32][attrs...]
+        assert!(data.len() > 17);
+        assert_eq!(data[8], 1);
+        let factory_id = i32::from_be_bytes([data[9], data[10], data[11], data[12]]);
         assert_eq!(factory_id, PROJECTION_FACTORY_ID);
 
-        let class_id = i32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+        let class_id = i32::from_be_bytes([data[13], data[14], data[15], data[16]]);
         assert_eq!(class_id, class_ids::MULTI_ATTRIBUTE);
 
-        let count = i32::from_be_bytes([data[8], data[9], data[10], data[11]]);
+        let count = i32::from_be_bytes([data[17], data[18], data[19], data[20]]);
         assert_eq!(count, 2);
     }
 

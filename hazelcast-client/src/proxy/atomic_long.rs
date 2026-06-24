@@ -176,7 +176,9 @@ impl AtomicLong {
     pub async fn set(&self, value: i64) -> Result<()> {
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
-        let message = self.build_request(ATOMIC_LONG_GET_AND_SET, &[value]).await?;
+        let message = self
+            .build_request(ATOMIC_LONG_GET_AND_SET, &[value])
+            .await?;
         self.invoke(message).await?;
         Ok(())
     }
@@ -267,7 +269,9 @@ impl AtomicLong {
         }
         let offset = RESPONSE_HEADER_SIZE;
         Ok(i64::from_le_bytes(
-            initial_frame.content[offset..offset + 8].try_into().unwrap(),
+            initial_frame.content[offset..offset + 8]
+                .try_into()
+                .unwrap(),
         ))
     }
 
@@ -348,7 +352,10 @@ mod tests {
         assert!(begin.flags & BEGIN_DATA_STRUCTURE_FLAG != 0);
         assert!(end.flags & END_DATA_STRUCTURE_FLAG != 0);
         assert_eq!(fixed.content.len(), 16);
-        assert_eq!(i64::from_le_bytes(fixed.content[0..8].try_into().unwrap()), 7);
+        assert_eq!(
+            i64::from_le_bytes(fixed.content[0..8].try_into().unwrap()),
+            7
+        );
         assert_eq!(
             i64::from_le_bytes(fixed.content[8..16].try_into().unwrap()),
             42

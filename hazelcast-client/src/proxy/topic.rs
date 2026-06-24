@@ -267,11 +267,14 @@ where
         self.check_quorum(false).await?;
         let message_data = Self::serialize_value(&message)?;
 
-        let mut msg = ClientMessage::create_for_encode_any_partition(TOPIC_PUBLISH);
+        let pid = self.name_partition_id();
+        let mut msg = ClientMessage::create_for_encode(TOPIC_PUBLISH, pid);
         msg.add_frame(Self::string_frame(&self.name));
         msg.add_frame(Self::data_frame(&message_data));
 
-        self.invoke(msg).await?;
+        self.connection_manager
+            .invoke_on_partition(pid, msg)
+            .await?;
         self.local_stats.record_publish();
         Ok(())
     }
@@ -325,11 +328,14 @@ where
         for message in messages {
             let message_data = Self::serialize_value(&message)?;
 
-            let mut msg = ClientMessage::create_for_encode_any_partition(TOPIC_PUBLISH);
+            let pid = self.name_partition_id();
+            let mut msg = ClientMessage::create_for_encode(TOPIC_PUBLISH, pid);
             msg.add_frame(Self::string_frame(&self.name));
             msg.add_frame(Self::data_frame(&message_data));
 
-            self.connection_manager.invoke_on_random(msg).await?;
+            self.connection_manager
+                .invoke_on_partition(pid, msg)
+                .await?;
         }
 
         Ok(())
@@ -403,19 +409,20 @@ where
         let local_stats = Arc::clone(&self.local_stats);
         let handler = Arc::new(handler);
         let cb = Arc::clone(&handler);
-        let event_handler: Arc<dyn Fn(ClientMessage) + Send + Sync> = Arc::new(move |event_msg| {
-            match Self::decode_topic_event(&event_msg) {
-                Ok(mut topic_msg) => {
-                    let seq = local_stats.record_receive();
-                    topic_msg.sequence = seq;
-                    if initial_sequence < 0 || seq >= initial_sequence {
-                        stats.record_message();
-                        cb(topic_msg);
+        let event_handler: Arc<dyn Fn(ClientMessage) + Send + Sync> =
+            Arc::new(
+                move |event_msg| match Self::decode_topic_event(&event_msg) {
+                    Ok(mut topic_msg) => {
+                        let seq = local_stats.record_receive();
+                        topic_msg.sequence = seq;
+                        if initial_sequence < 0 || seq >= initial_sequence {
+                            stats.record_message();
+                            cb(topic_msg);
+                        }
                     }
-                }
-                Err(_) => stats.record_error(),
-            }
-        });
+                    Err(_) => stats.record_error(),
+                },
+            );
 
         let response = self
             .connection_manager
@@ -443,7 +450,11 @@ where
 
         let data_frame = &frames[1];
         let content = &data_frame.content;
-        let payload_bytes = if content.len() > 8 { &content[8..] } else { &content[..] };
+        let payload_bytes = if content.len() > 8 {
+            &content[8..]
+        } else {
+            &content[..]
+        };
         let mut input = ObjectDataInput::new(payload_bytes);
         let payload = T::deserialize(&mut input)?;
 
@@ -453,6 +464,20 @@ where
             .unwrap_or(0);
 
         Ok(TopicMessage::with_metadata(payload, publish_time, None))
+    }
+
+    /// Partition id for this topic, derived from the topic name (Hazelcast routes
+    /// ITopic operations to the name's partition owner).
+    fn name_partition_id(&self) -> i32 {
+        let count = self.connection_manager.partition_count();
+        let count = if count > 0 { count } else { 271 };
+        match Self::serialize_value(&self.name) {
+            Ok(d) => {
+                let payload = if d.len() > 8 { &d[8..] } else { &d[..] };
+                hazelcast_core::compute_partition_hash(payload).abs() % count
+            }
+            Err(_) => 0,
+        }
     }
 
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {

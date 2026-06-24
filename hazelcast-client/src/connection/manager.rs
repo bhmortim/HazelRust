@@ -1210,9 +1210,13 @@ impl ConnectionManager {
                 .await
                 .into_iter()
                 .next()
-                .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))?,
+                .ok_or_else(|| {
+                    HazelcastError::Connection("no connections available".to_string())
+                })?,
         };
-        self.invocation.invoke_listener(address, message, handler).await
+        self.invocation
+            .invoke_listener(address, message, handler)
+            .await
     }
 
     /// Removes a previously registered listener event handler.

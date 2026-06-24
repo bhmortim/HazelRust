@@ -298,7 +298,11 @@ where
         let count = if count > 0 { count } else { 271 };
         match Self::serialize_value(&self.name) {
             Ok(data) => {
-                let hash_input = if data.len() > 8 { &data[8..] } else { &data[..] };
+                let hash_input = if data.len() > 8 {
+                    &data[8..]
+                } else {
+                    &data[..]
+                };
                 hazelcast_core::compute_partition_hash(hash_input).abs() % count
             }
             Err(_) => 0,
@@ -308,7 +312,9 @@ where
     async fn invoke(&self, mut message: ClientMessage) -> Result<ClientMessage> {
         let pid = self.name_partition_id();
         message.set_partition_id(pid);
-        self.connection_manager.invoke_on_partition(pid, message).await
+        self.connection_manager
+            .invoke_on_partition(pid, message)
+            .await
     }
 
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {

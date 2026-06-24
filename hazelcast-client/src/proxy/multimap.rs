@@ -578,7 +578,11 @@ where
     }
 
     fn skip8(d: &[u8]) -> &[u8] {
-        if d.len() > 8 { &d[8..] } else { d }
+        if d.len() > 8 {
+            &d[8..]
+        } else {
+            d
+        }
     }
 
     fn key_partition(&self, key_data: &[u8]) -> i32 {

@@ -318,8 +318,10 @@ where
     pub async fn contains_key(&self, key: &K) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
 
-        let mut message =
-            ClientMessage::create_for_encode(REPLICATED_MAP_CONTAINS_KEY, self.key_partition(&key_data));
+        let mut message = ClientMessage::create_for_encode(
+            REPLICATED_MAP_CONTAINS_KEY,
+            self.key_partition(&key_data),
+        );
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
@@ -686,8 +688,12 @@ where
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
         use hazelcast_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
+        // Hazelcast Data format: [partition_hash i32][type_id i32][payload].
+        // Use the value's real Hazelcast type id (e.g. INTEGER=-7), not a hardcoded
+        // STRING(-11): otherwise the server misreads e.g. an i32 value as a String
+        // length and throws StringIndexOutOfBoundsException.
         output.write_int(0)?;
-        output.write_int(-11)?;
+        output.write_int(value.type_id())?;
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }
@@ -699,7 +705,11 @@ where
     }
 
     fn skip8(d: &[u8]) -> &[u8] {
-        if d.len() > 8 { &d[8..] } else { d }
+        if d.len() > 8 {
+            &d[8..]
+        } else {
+            d
+        }
     }
 
     fn key_partition(&self, key_data: &[u8]) -> i32 {
@@ -711,7 +721,9 @@ where
 
     async fn invoke_on_part(&self, pid: i32, mut message: ClientMessage) -> Result<ClientMessage> {
         message.set_partition_id(pid);
-        self.connection_manager.invoke_on_partition(pid, message).await
+        self.connection_manager
+            .invoke_on_partition(pid, message)
+            .await
     }
 
     fn string_frame(s: &str) -> Frame {
@@ -751,7 +763,9 @@ where
             Err(_) => 0,
         };
         message.set_partition_id(pid);
-        self.connection_manager.invoke_on_partition(pid, message).await
+        self.connection_manager
+            .invoke_on_partition(pid, message)
+            .await
     }
 
     fn long_frame(value: i64) -> Frame {
