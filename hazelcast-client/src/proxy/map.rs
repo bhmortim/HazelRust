@@ -5618,6 +5618,7 @@ where
             .ok_or_else(|| {
                 HazelcastError::Connection("connection closed unexpectedly".to_string())
             })?;
+        let response = crate::connection::invocation::check_response(response)?;
 
         Self::decode_event_journal_read_response(&response)
     }

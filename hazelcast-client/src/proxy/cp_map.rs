@@ -5,6 +5,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::BytesMut;
+use tokio::sync::OnceCell;
+
 use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
@@ -27,10 +29,20 @@ use crate::connection::ConnectionManager;
 ///
 /// - `K`: The key type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
 /// - `V`: The value type, must implement `Serializable`, `Deserializable`, `Send`, and `Sync`
+/// A resolved CP Raft group identifier (`seed`, `id`, `name`).
+#[derive(Debug, Clone)]
+struct RaftGroupId {
+    seed: i64,
+    id: i64,
+    name: String,
+}
+
 #[derive(Debug)]
 pub struct CPMap<K, V> {
     name: String,
     connection_manager: Arc<ConnectionManager>,
+    /// Lazily-resolved Raft group id, shared across clones.
+    group_id: Arc<OnceCell<RaftGroupId>>,
     _marker: PhantomData<(K, V)>,
 }
 
@@ -44,8 +56,84 @@ where
         Self {
             name,
             connection_manager,
+            group_id: Arc::new(OnceCell::new()),
             _marker: PhantomData,
         }
+    }
+
+    /// The object name without any `@group` suffix (what CP ops send as `name`).
+    fn object_name(&self) -> &str {
+        match self.name.split_once('@') {
+            Some((obj, _)) => obj,
+            None => &self.name,
+        }
+    }
+
+    /// The CP group name (`default` unless an `@group` suffix is present).
+    fn group_name(&self) -> &str {
+        match self.name.split_once('@') {
+            Some((_, grp)) if !grp.is_empty() => grp,
+            _ => "default",
+        }
+    }
+
+    /// Resolves (and caches) the Raft `groupId` for this CP map's group via
+    /// `CPGroupCreateCPGroup` (0x1E0100), matching the AtomicLong CP path.
+    async fn resolve_group(&self) -> Result<RaftGroupId> {
+        let g = self
+            .group_id
+            .get_or_try_init(|| async {
+                let mut request =
+                    ClientMessage::create_for_encode_any_partition(CP_SUBSYSTEM_GET_GROUP_IDS);
+                request.add_frame(Self::string_frame(self.group_name()));
+                let response = self.connection_manager.invoke_on_random(request).await?;
+                Self::decode_group_id(&response)
+            })
+            .await?;
+        Ok(g.clone())
+    }
+
+    fn decode_group_id(response: &ClientMessage) -> Result<RaftGroupId> {
+        let frames = response.frames();
+        if frames.len() < 4 {
+            return Err(HazelcastError::Protocol(
+                "CP group id response too short (CP subsystem unavailable?)".to_string(),
+            ));
+        }
+        let fixed = &frames[2].content;
+        if fixed.len() < 16 {
+            return Err(HazelcastError::Protocol(
+                "CP group id fixed frame too short".to_string(),
+            ));
+        }
+        let seed = i64::from_le_bytes(fixed[0..8].try_into().unwrap());
+        let id = i64::from_le_bytes(fixed[8..16].try_into().unwrap());
+        let name = String::from_utf8_lossy(&frames[3].content).to_string();
+        Ok(RaftGroupId { seed, id, name })
+    }
+
+    /// Encodes a `RaftGroupId` data structure: BEGIN / [seed(8) id(8)] / name / END.
+    fn encode_group_id(message: &mut ClientMessage, group: &RaftGroupId) {
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        let mut fixed = BytesMut::with_capacity(16);
+        fixed.extend_from_slice(&group.seed.to_le_bytes());
+        fixed.extend_from_slice(&group.id.to_le_bytes());
+        message.add_frame(Frame::with_content(fixed));
+        message.add_frame(Self::string_frame(&group.name));
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
+    }
+
+    /// Builds a CP map request: initial frame (header), groupId data structure,
+    /// object name, then the variable-size `Data` params in order.
+    async fn build_request(&self, msg_type: i32, data_params: &[&[u8]]) -> Result<ClientMessage> {
+        let group = self.resolve_group().await?;
+        let mut message = ClientMessage::create_for_encode_any_partition(msg_type);
+        Self::encode_group_id(&mut message, &group);
+        message.add_frame(Self::string_frame(self.object_name()));
+        for d in data_params {
+            message.add_frame(Self::data_frame(d));
+        }
+        Ok(message)
     }
 
     /// Returns the name of this CPMap.
@@ -88,11 +176,7 @@ where
         self.check_quorum(true).await?;
 
         let key_data = Self::serialize_value(key)?;
-
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_MAP_GET);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&key_data));
-
+        let message = self.build_request(CP_MAP_GET, &[key_data.as_slice()]).await?;
         let response = self.invoke(message).await?;
         Self::decode_optional_value_response(&response)
     }
@@ -120,12 +204,9 @@ where
 
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_MAP_PUT);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::data_frame(&value_data));
-
+        let message = self
+            .build_request(CP_MAP_PUT, &[key_data.as_slice(), value_data.as_slice()])
+            .await?;
         let response = self.invoke(message).await?;
         Self::decode_optional_value_response(&response)
     }
@@ -148,12 +229,9 @@ where
 
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_MAP_SET);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::data_frame(&value_data));
-
+        let message = self
+            .build_request(CP_MAP_SET, &[key_data.as_slice(), value_data.as_slice()])
+            .await?;
         self.invoke(message).await?;
         Ok(())
     }
@@ -176,11 +254,9 @@ where
         self.check_quorum(false).await?;
 
         let key_data = Self::serialize_value(key)?;
-
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_MAP_REMOVE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&key_data));
-
+        let message = self
+            .build_request(CP_MAP_REMOVE, &[key_data.as_slice()])
+            .await?;
         let response = self.invoke(message).await?;
         Self::decode_optional_value_response(&response)
     }
@@ -201,11 +277,9 @@ where
         self.check_quorum(false).await?;
 
         let key_data = Self::serialize_value(key)?;
-
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_MAP_DELETE);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&key_data));
-
+        let message = self
+            .build_request(CP_MAP_DELETE, &[key_data.as_slice()])
+            .await?;
         self.invoke(message).await?;
         Ok(())
     }
@@ -232,13 +306,16 @@ where
         let key_data = Self::serialize_value(key)?;
         let expected_data = Self::serialize_value(expected)?;
         let update_data = Self::serialize_value(&update)?;
-
-        let mut message = ClientMessage::create_for_encode_any_partition(CP_MAP_COMPARE_AND_SET);
-        message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::data_frame(&expected_data));
-        message.add_frame(Self::data_frame(&update_data));
-
+        let message = self
+            .build_request(
+                CP_MAP_COMPARE_AND_SET,
+                &[
+                    key_data.as_slice(),
+                    expected_data.as_slice(),
+                    update_data.as_slice(),
+                ],
+            )
+            .await?;
         let response = self.invoke(message).await?;
         Self::decode_bool_response(&response)
     }
@@ -282,11 +359,9 @@ where
             return Err(HazelcastError::Serialization("empty response".to_string()));
         }
 
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() <= RESPONSE_HEADER_SIZE {
-            return Ok(None);
-        }
-
+        // The value (nullable Data) is the first frame AFTER the response header frame.
+        // Do NOT gate on the initial frame's length: for a Data-valued response the
+        // initial frame is just the header and the value lives in frames[1].
         if frames.len() < 2 {
             return Ok(None);
         }
@@ -327,6 +402,7 @@ impl<K, V> Clone for CPMap<K, V> {
         Self {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
+            group_id: Arc::clone(&self.group_id),
             _marker: PhantomData,
         }
     }

@@ -311,10 +311,12 @@ impl DurableExecutorService {
 
         self.connection_manager.send_to(address, message).await?;
 
-        self.connection_manager
+        let response = self
+            .connection_manager
             .receive_from(address)
             .await?
-            .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))
+            .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))?;
+        crate::connection::invocation::check_response(response)
     }
 
     fn string_frame(s: &str) -> Frame {
@@ -407,7 +409,7 @@ async fn retrieve_result_internal<R: Deserializable>(
         .receive_from(address)
         .await?
         .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))?;
-
+    let response = crate::connection::invocation::check_response(response)?;
     DurableExecutorService::decode_result_response(&response)
 }
 

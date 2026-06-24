@@ -432,6 +432,9 @@ impl super::ExecutorService {
                     .await?
                     .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))?;
 
+                // Surface a server EXCEPTION (e.g. task threw, rejected execution) as a
+                // typed error instead of decoding the error frame as a bogus result.
+                let response = crate::connection::invocation::check_response(response)?;
                 decode_result_response::<R>(&response)
             }
             .await;
@@ -476,10 +479,12 @@ impl super::ExecutorService {
 
         self.connection_manager.send_to(address, message).await?;
 
-        self.connection_manager
+        let response = self
+            .connection_manager
             .receive_from(address)
             .await?
-            .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))
+            .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))?;
+        crate::connection::invocation::check_response(response)
     }
 
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {

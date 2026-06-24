@@ -272,10 +272,12 @@ impl<T: Deserializable> ScheduledFuture<T> {
 
         self.connection_manager.send_to(address, message).await?;
 
-        self.connection_manager
+        let response = self
+            .connection_manager
             .receive_from(address)
             .await?
-            .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))
+            .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))?;
+        crate::connection::invocation::check_response(response)
     }
 
     fn string_frame(s: &str) -> Frame {
@@ -621,10 +623,12 @@ impl ScheduledExecutorService {
 
         self.connection_manager.send_to(address, message).await?;
 
-        self.connection_manager
+        let response = self
+            .connection_manager
             .receive_from(address)
             .await?
-            .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))
+            .ok_or_else(|| HazelcastError::Connection("Connection closed".to_string()))?;
+        crate::connection::invocation::check_response(response)
     }
 
     fn string_frame(s: &str) -> Frame {
