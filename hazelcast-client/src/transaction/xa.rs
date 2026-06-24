@@ -525,21 +525,9 @@ impl XATransaction {
         Ok(())
     }
 
-    fn long_frame(value: i64) -> Frame {
-        let mut buf = BytesMut::with_capacity(8);
-        buf.extend_from_slice(&value.to_le_bytes());
-        Frame::with_content(buf)
-    }
-
     fn int_frame(value: i32) -> Frame {
         let mut buf = BytesMut::with_capacity(4);
         buf.extend_from_slice(&value.to_le_bytes());
-        Frame::with_content(buf)
-    }
-
-    fn uuid_frame(uuid: Uuid) -> Frame {
-        let mut buf = BytesMut::with_capacity(16);
-        buf.extend_from_slice(uuid.as_bytes());
         Frame::with_content(buf)
     }
 
@@ -547,10 +535,57 @@ impl XATransaction {
         Frame::with_content(BytesMut::from(data))
     }
 
-    fn bool_frame(value: bool) -> Frame {
-        let mut buf = BytesMut::with_capacity(1);
-        buf.extend_from_slice(&[if value { 1u8 } else { 0u8 }]);
-        Frame::with_content(buf)
+    /// Appends fixed-size param bytes contiguously into the request's initial frame
+    /// (the Hazelcast codec convention for fixed params), after the header.
+    fn append_fixed(message: &mut ClientMessage, bytes: &[u8]) {
+        if let Some(initial) = message.frames_mut().first_mut() {
+            initial.content.extend_from_slice(bytes);
+        }
+    }
+
+    /// Appends a UUID as a fixed param: `isNull(1) + mostSig(8 LE) + leastSig(8 LE)`.
+    /// We faithfully round-trip the transactionId the server issued, so the exact
+    /// MSB/LSB interpretation is irrelevant as long as encode mirrors decode.
+    fn append_uuid(message: &mut ClientMessage, uuid: Uuid) {
+        let (msb, lsb) = uuid.as_u64_pair();
+        let mut b = Vec::with_capacity(17);
+        b.push(0u8); // isNull = false
+        b.extend_from_slice(&(msb as i64).to_le_bytes());
+        b.extend_from_slice(&(lsb as i64).to_le_bytes());
+        Self::append_fixed(message, &b);
+    }
+
+    /// Encodes an `Xid` as a BEGIN/END data structure:
+    /// BEGIN / [formatId int] / globalTransactionId(byte[]) / branchQualifier(byte[]) / END.
+    fn encode_xid(message: &mut ClientMessage, xid: &Xid) {
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        message.add_frame(Self::int_frame(xid.format_id()));
+        message.add_frame(Self::data_frame(xid.global_transaction_id()));
+        message.add_frame(Self::data_frame(xid.branch_qualifier()));
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
+    }
+
+    /// Decodes the `transactionId` (UUID) returned by XATransactionCreate from the
+    /// response's initial frame: `[header][isNull(1)][mostSig(8)][leastSig(8)]`.
+    fn decode_uuid_response(response: &ClientMessage) -> Result<Uuid> {
+        let frames = response.frames();
+        let initial = frames
+            .first()
+            .ok_or_else(|| HazelcastError::Serialization("empty XA response".to_string()))?;
+        let off = RESPONSE_HEADER_SIZE;
+        if initial.content.len() < off + 17 {
+            return Err(HazelcastError::Serialization(
+                "XA create response too short for transactionId UUID".to_string(),
+            ));
+        }
+        if initial.content[off] != 0 {
+            return Err(HazelcastError::Protocol(
+                "XA create returned a null transactionId".to_string(),
+            ));
+        }
+        let msb = i64::from_le_bytes(initial.content[off + 1..off + 9].try_into().unwrap()) as u64;
+        let lsb = i64::from_le_bytes(initial.content[off + 9..off + 17].try_into().unwrap()) as u64;
+        Ok(Uuid::from_u64_pair(msb, lsb))
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
@@ -576,44 +611,24 @@ impl XATransaction {
             .next()
             .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
-
-    fn decode_int_response(response: &ClientMessage) -> Result<i32> {
-        let frames = response.frames();
-        if frames.is_empty() {
-            return Err(HazelcastError::Serialization("empty response".to_string()));
-        }
-
-        let initial_frame = &frames[0];
-        if initial_frame.content.len() >= RESPONSE_HEADER_SIZE + 4 {
-            let offset = RESPONSE_HEADER_SIZE;
-            Ok(i32::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-            ]))
-        } else {
-            // Do NOT default a too-short/malformed response to 0 (== XA_OK):
-            // that would let a coordinator commit a branch the server never prepared.
-            Err(HazelcastError::Serialization(
-                "XA response too short to contain an int vote".to_string(),
-            ))
-        }
-    }
 }
 
 impl XAResource for XATransaction {
     async fn start(&mut self, flags: i32) -> Result<()> {
         self.validate_state_for_start(flags)?;
 
+        // XATransaction.create(xid, timeout): `timeout` (long) is the only fixed param
+        // (packed into the initial frame); `xid` is a BEGIN/END data structure. There is
+        // NO threadId. The server returns the `transactionId` (UUID) that prepare/commit/
+        // rollback must reference — capture it (previously the response was discarded and
+        // a client-generated UUID used, which the server would never recognize).
         let timeout_ms = self.timeout.as_millis() as i64;
-
         let mut message = ClientMessage::create_for_encode_any_partition(XA_TXN_CREATE);
-        message.add_frame(Self::data_frame(&self.xid.to_bytes()));
-        message.add_frame(Self::long_frame(timeout_ms));
-        message.add_frame(Self::long_frame(self.thread_id));
+        Self::append_fixed(&mut message, &timeout_ms.to_le_bytes());
+        Self::encode_xid(&mut message, &self.xid);
 
-        let _response = self.invoke(message).await?;
+        let response = self.invoke(message).await?;
+        self.txn_id = Self::decode_uuid_response(&response)?;
 
         self.state = XaTransactionState::Active;
         self.start_time = Some(std::time::Instant::now());
@@ -638,32 +653,29 @@ impl XAResource for XATransaction {
     async fn prepare(&mut self) -> Result<i32> {
         self.validate_state_for_prepare()?;
 
+        // prepare(transactionId: UUID) — the UUID is the only (fixed) param.
         let mut message = ClientMessage::create_for_encode_any_partition(XA_TXN_PREPARE);
-        message.add_frame(Self::data_frame(&self.xid.to_bytes()));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
+        Self::append_uuid(&mut message, self.txn_id);
 
-        let response = self.invoke(message).await?;
-        let vote = Self::decode_int_response(&response)?;
-
-        if vote == XA_OK || vote == XA_RDONLY {
-            self.state = XaTransactionState::Prepared;
-        }
-
-        Ok(vote)
+        // A successful prepare returns no payload; a vote-to-rollback or failure surfaces
+        // as a server error via check_response. Reaching here means the branch voted OK.
+        self.invoke(message).await?;
+        self.state = XaTransactionState::Prepared;
+        Ok(XA_OK)
     }
 
     async fn commit(&mut self, one_phase: bool) -> Result<()> {
         self.validate_state_for_commit(one_phase)?;
 
+        // commit(transactionId: UUID, onePhase: bool) — both fixed, packed into the
+        // initial frame (UUID 17B + bool 1B).
         let mut message = ClientMessage::create_for_encode_any_partition(XA_TXN_COMMIT);
-        message.add_frame(Self::data_frame(&self.xid.to_bytes()));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
-        message.add_frame(Self::bool_frame(one_phase));
+        Self::append_uuid(&mut message, self.txn_id);
+        Self::append_fixed(&mut message, &[if one_phase { 1u8 } else { 0u8 }]);
 
-        let _response = self.invoke(message).await?;
-
+        // A failed commit surfaces as a server error via check_response; reaching here
+        // means the server accepted the commit (no more silent false-success).
+        self.invoke(message).await?;
         self.state = XaTransactionState::Committed;
         Ok(())
     }
@@ -671,13 +683,11 @@ impl XAResource for XATransaction {
     async fn rollback(&mut self) -> Result<()> {
         self.validate_state_for_rollback()?;
 
+        // rollback(transactionId: UUID) — the UUID is the only (fixed) param.
         let mut message = ClientMessage::create_for_encode_any_partition(XA_TXN_ROLLBACK);
-        message.add_frame(Self::data_frame(&self.xid.to_bytes()));
-        message.add_frame(Self::uuid_frame(self.txn_id));
-        message.add_frame(Self::long_frame(self.thread_id));
+        Self::append_uuid(&mut message, self.txn_id);
 
-        let _response = self.invoke(message).await?;
-
+        self.invoke(message).await?;
         self.state = XaTransactionState::RolledBack;
         Ok(())
     }

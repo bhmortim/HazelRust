@@ -176,7 +176,9 @@ where
         self.check_quorum(true).await?;
 
         let key_data = Self::serialize_value(key)?;
-        let message = self.build_request(CP_MAP_GET, &[key_data.as_slice()]).await?;
+        let message = self
+            .build_request(CP_MAP_GET, &[key_data.as_slice()])
+            .await?;
         let response = self.invoke(message).await?;
         Self::decode_optional_value_response(&response)
     }
