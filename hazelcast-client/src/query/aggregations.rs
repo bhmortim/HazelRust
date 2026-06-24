@@ -28,35 +28,35 @@ pub const AGGREGATOR_FACTORY_ID: i32 = -29;
 /// Class IDs for aggregator types in the Hazelcast protocol.
 pub mod class_ids {
     /// Count aggregator class ID.
-    pub const COUNT: i32 = 0;
+    pub const COUNT: i32 = 4;
     /// Double average aggregator class ID.
-    pub const DOUBLE_AVG: i32 = 1;
+    pub const DOUBLE_AVG: i32 = 6;
     /// Double sum aggregator class ID.
-    pub const DOUBLE_SUM: i32 = 2;
+    pub const DOUBLE_SUM: i32 = 7;
     /// Fixed-point sum aggregator class ID.
-    pub const FIXED_POINT_SUM: i32 = 3;
+    pub const FIXED_POINT_SUM: i32 = 8;
     /// Floating-point sum aggregator class ID.
-    pub const FLOATING_POINT_SUM: i32 = 4;
+    pub const FLOATING_POINT_SUM: i32 = 9;
     /// Max aggregator class ID.
-    pub const MAX: i32 = 5;
+    pub const MAX: i32 = 14;
     /// Min aggregator class ID.
-    pub const MIN: i32 = 6;
+    pub const MIN: i32 = 15;
     /// Integer average aggregator class ID.
-    pub const INT_AVG: i32 = 7;
+    pub const INT_AVG: i32 = 10;
     /// Integer sum aggregator class ID.
-    pub const INT_SUM: i32 = 8;
+    pub const INT_SUM: i32 = 11;
     /// Long average aggregator class ID.
-    pub const LONG_AVG: i32 = 9;
+    pub const LONG_AVG: i32 = 12;
     /// Long sum aggregator class ID.
-    pub const LONG_SUM: i32 = 10;
+    pub const LONG_SUM: i32 = 13;
     /// Number average aggregator class ID.
-    pub const NUMBER_AVG: i32 = 11;
+    pub const NUMBER_AVG: i32 = 16;
     /// Distinct values aggregator class ID.
-    pub const DISTINCT: i32 = 12;
+    pub const DISTINCT: i32 = 5;
     /// Max by aggregator class ID.
-    pub const MAX_BY: i32 = 13;
+    pub const MAX_BY: i32 = 17;
     /// Min by aggregator class ID.
-    pub const MIN_BY: i32 = 14;
+    pub const MIN_BY: i32 = 18;
 }
 
 /// Trait for aggregators that compute aggregate values over map entries.
@@ -106,14 +106,18 @@ fn write_string(output: &mut ObjectDataOutput, value: &str) -> Result<()> {
 
 /// Helper to write an optional attribute name.
 fn write_attribute(output: &mut ObjectDataOutput, attribute: &Option<String>) -> Result<()> {
+    // Hazelcast writes the attribute path as a nullable String (length, or -1 for null).
     match attribute {
-        Some(attr) => {
-            (1i8).serialize(output)?;
-            write_string(output, attr)?;
-        }
-        None => {
-            (0i8).serialize(output)?;
-        }
+        Some(attr) => write_string(output, attr)?,
+        None => write_i32(output, -1)?,
+    }
+    Ok(())
+}
+
+/// Helper to write an i64 in big-endian format.
+fn write_i64(output: &mut ObjectDataOutput, value: i64) -> Result<()> {
+    for byte in value.to_be_bytes() {
+        output.write_byte(byte as i8)?;
     }
     Ok(())
 }
@@ -150,7 +154,9 @@ impl Aggregator for CountAggregator {
     }
 
     fn write_data(&self, output: &mut ObjectDataOutput) -> Result<()> {
-        write_attribute(output, &self.attribute)
+        write_attribute(output, &self.attribute)?;
+        write_i64(output, 0)?; // initial accumulator value
+        Ok(())
     }
 }
 
@@ -204,7 +210,9 @@ impl Aggregator for LongSumAggregator {
     }
 
     fn write_data(&self, output: &mut ObjectDataOutput) -> Result<()> {
-        write_attribute(output, &self.attribute)
+        write_attribute(output, &self.attribute)?;
+        write_i64(output, 0)?; // initial accumulator value
+        Ok(())
     }
 }
 
@@ -339,7 +347,10 @@ impl Aggregator for LongAvgAggregator {
     }
 
     fn write_data(&self, output: &mut ObjectDataOutput) -> Result<()> {
-        write_attribute(output, &self.attribute)
+        write_attribute(output, &self.attribute)?;
+        write_i64(output, 0)?; // sum
+        write_i64(output, 0)?; // count
+        Ok(())
     }
 }
 

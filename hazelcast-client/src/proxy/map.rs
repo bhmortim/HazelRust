@@ -4593,7 +4593,10 @@ where
             ));
         }
 
-        let mut input = ObjectDataInput::new(&data_frame.content);
+        // The aggregate result is a Hazelcast Data: skip the 8-byte header.
+        let content = &data_frame.content;
+        let payload = if content.len() > 8 { &content[8..] } else { &content[..] };
+        let mut input = ObjectDataInput::new(payload);
         T::deserialize(&mut input)
     }
 
