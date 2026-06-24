@@ -1,8 +1,20 @@
 # HazelRust CBDC Remediation — Results
 
-**Branch:** `fix/cbdc-remediation`, from `origin/main` `e6386d2`. **Date:** 2026-06-24.
-**Commits:** `dff7058` (correctness/type-id/DoS/secret/lint), `bcfd057` (docs), `fa27761` (CPMap + executor error-surfacing), `231ee6f` (XA framing), `13cdf58` (EntryProcessor framing).
+**Merged to `main`** (from `origin/main` `e6386d2`). **Date:** 2026-06-24.
+**Commits:** `dff7058` (correctness/type-id/DoS/secret/lint), `bcfd057` (docs), `fa27761` (CPMap + executor error-surfacing), `231ee6f` (XA framing), `13cdf58` (EntryProcessor framing), `2fba538` (docs pass-2), `3b48ff6` (A4 CP-constant hygiene). All pushed to `origin/main`.
 **Plan:** `CBDC_REMEDIATION_PLAN.md` · **Roadmap:** `PRODUCTION_READINESS_ROADMAP.md` (both in-repo).
+
+### Disposition of the remaining ignored-suite failures (investigated, not guessed)
+- **9 java_parity = genuine server-side infra** (client side proven correct): `load_all`/`load_all_keys` need a configured **MapStore**; `project`/`entry_set_with_predicate` need **typed domain objects**; `get_entry_view` needs **per-entry-stats-enabled** (decode is structurally correct — the test's `key()`/`value()` assertions pass, only `hits()>=2` fails because stats are off); `execute_on_key`/`execute_on_keys`/`execute_on_entries`/`submit_to_key_async` need a **registered server-side EntryProcessor class** (framing now proven correct — they fail with a clean post-decode `ClassCastException`, not a codec crash).
+- **`try_lock_with_timeout` = not a client defect.** Both `lock` and `try_lock` use `threadId=0`, so re-locking the client's own key is **correctly reentrant**; the test assumes Java multi-threading the single-`threadId` client doesn't model.
+- **`multiple_xa_transactions` = the one residual code item** — the XA two-phase commit-*after-prepare* path (state-dependent server `AIOOBE`); needs a Java-client byte-diff to settle.
+
+### Still open (require test infrastructure not available in this environment)
+- **mTLS DNS-hostname verification (R7-TLS)** — needs a TLS-enabled cluster listener to verify cert-chain + hostname enforcement and bypass-rejection.
+- **Auth-failure surfacing + reader-loop in-flight failing (R8 remainder)** — needs a **credential-required** cluster to exercise the failure path safely (the test cluster accepts anonymous auth, so the failure path can't be verified here; a partial change would be unverifiable).
+- **XA 2PC residual** — needs the stock **Java client** for a differential byte capture.
+- **Closing the 9 infra tests** — needs server-side Java classes (EntryProcessor, MapStore) + map config (per-entry-stats, typed objects) deployed to the cluster.
+- **P2/P3** (Jepsen, chaos beyond single-member, dedicated-hardware perf + 72h soak, continuous fuzzing, third-party pen test, governance/sign-off) — external infra and parties.
 
 ## Verdict after remediation: still **NO-GO**, now with a clear conditional path
 
