@@ -53,6 +53,9 @@ pub trait Projection: Debug + Send + Sync {
     /// Serializes this projection to bytes including type information.
     fn to_projection_data(&self) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
+        write_i32(&mut output, 0)?; // partition hash
+        write_i32(&mut output, -2)?; // type id: IdentifiedDataSerializable
+        output.write_byte(1)?; // isIdentified = true
         write_i32(&mut output, PROJECTION_FACTORY_ID)?;
         write_i32(&mut output, self.class_id())?;
         self.write_data(&mut output)?;
