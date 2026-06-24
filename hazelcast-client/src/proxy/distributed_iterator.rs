@@ -140,7 +140,7 @@ impl<T> DistributedIterator<T> {
         let partition_cursors: Vec<PartitionCursor> = (0..partition_count)
             .map(|id| PartitionCursor {
                 partition_id: id,
-                table_index: 0, // Start from slot 0
+                table_index: i32::MAX, // Hazelcast initial iteration index (Integer.MAX_VALUE)
                 has_more: true,
             })
             .collect();
@@ -220,7 +220,7 @@ where
         {
             let mut buf = BytesMut::with_capacity(8);
             buf.extend_from_slice(&table_index.to_le_bytes());
-            buf.extend_from_slice(&0i32.to_le_bytes()); // tableSize = 0 (unknown)
+            buf.extend_from_slice(&(-1i32).to_le_bytes()); // tableSize = -1 (Hazelcast initial)
             message.add_frame(Frame::with_content(buf));
         }
 
@@ -366,7 +366,7 @@ where
         {
             let mut buf = BytesMut::with_capacity(8);
             buf.extend_from_slice(&table_index.to_le_bytes());
-            buf.extend_from_slice(&0i32.to_le_bytes()); // tableSize = 0 (unknown)
+            buf.extend_from_slice(&(-1i32).to_le_bytes()); // tableSize = -1 (Hazelcast initial)
             message.add_frame(Frame::with_content(buf));
         }
 
