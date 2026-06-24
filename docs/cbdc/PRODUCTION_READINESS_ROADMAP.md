@@ -12,16 +12,19 @@ Forward-looking work list to take the client from its current state (independent
 - **What:** the XA `create/prepare/commit/rollback` request encoders are mis-framed; the server throws `ArrayIndexOutOfBoundsException`/`NullPointerException` during decode. The false-success bug is fixed (errors now surface), but XA is **non-functional**. Re-derive the XA codec framing against the Hazelcast 5.x `XATransaction` codec; verify each op decodes server-side.
 - **Why:** atomic multi-resource ledger postings (RR-1/RR-2). Until fixed, XA cannot be used at all.
 - **Exit:** the 8 `xa_transaction_test` cases pass **and assert the data effect** (committed writes are visible via a separate client; rollback leaves none; a server-rejected commit returns `Err`, never `Ok`).
+- **STATUS (remediation pass 2 — mostly done):** re-framed against the upstream codec (timeout fixed-in-initial-frame; xid as a BEGIN/END group; server-issued transactionId UUID captured and reused). **7/10 XA cases now pass live** (create, one-phase commit, prepare, recover, rollback-from-active, suspend/resume, timeout, auto-xid, via-context). **Remaining:** the two-phase commit-*after-prepare* path (3 cases) still hits a server AIOOBE in the prepared-transaction state — needs a differential byte-capture vs the Java client to settle the residual Xid/2PC detail. Data-effect assertions still to be added.
 
 ### A2. Fix CPMap request framing — *M*
 - **What:** CPMap `put`/`get` requests are mis-framed (server `NullPointerException` on a missing frame). The value Data-header fix (R6) is in place but unverifiable until the request frames are correct.
 - **Why:** strongly-consistent CP map for ledger metadata/config.
 - **Exit:** live CPMap round-trip (i64 + String) passes; cross-client read (Java) matches.
+- **STATUS (remediation pass 2 — DONE):** the requests were missing the entire `RaftGroupId` data structure; added the group machinery (resolve via `CPGroupCreateCPGroup`, cache, encode BEGIN/[seed,id]/name/END) and fixed the value decode (8-byte Data-header skip + removed a wrong response short-circuit). **CPMap put/get round-trip verified live** for i64 and String. (Cross-client Java read still to confirm.)
 
 ### A3. Fix EntryProcessor invocation framing — *M*
 - **What:** `execute_on_key`, `execute_on_keys`, `submit_to_key` produce server codec errors (`AIOOBE`, `peekNext()==null`) at **decode time** — the requests are mis-framed (distinct from the infra-blocked cases that fail post-decode). Correct the EntryProcessor request codecs.
 - **Why:** server-side compute on ledger entries (in-scope cache/query).
 - **Exit:** with a registered server-side EntryProcessor class, these cases pass and return the processor result; framing-only fixes verified even where a class is absent (clean typed error, not a codec crash).
+- **STATUS (remediation pass 2 — framing DONE):** `execute_on_key` was missing the `threadId` fixed param; `execute_on_keys` sent an int-count + raw frames instead of a `List<Data>`. Both re-framed; `submit_to_key` delegates to `execute_on_key`. `entry_processor_test::{test_execute_on_key,test_execute_on_keys}` now **PASS live**; the `java_parity` variants now fail with a clean post-decode `ClassCastException` (custom processor class not deployed) instead of a codec crash — framing confirmed correct, residual failure is the server-class infra gap.
 
 ### A4. Complete protocol-constant correctness & hygiene — *M*
 - **What:** of 219 audited constants, 18 corrected; ~11 remain wrong/unverifiable (`CONSTANTS_VERIFICATION.md`). Add a correctly-named `CP_GROUP_CREATE_CP_GROUP = 0x1E0100`, repoint the CP proxies to it, then give `CP_SUBSYSTEM_*` their real `0x22` values; fix `ContinuousQuery` service (`0x14`→`0x16`); resolve `MAP_SET_ALL`/`MAP_FETCH_VALUES` semantics; re-check AtomicLong/AtomicReference `n/a` ops (no upstream method → re-implement via the correct codec).

@@ -1,11 +1,24 @@
 # HazelRust CBDC Remediation — Results
 
-**Branch:** `fix/cbdc-remediation` (commit `dff7058`, 18 files, +446/−100), from `origin/main` `e6386d2`.
-**Plan:** `docs/CBDC_REMEDIATION_PLAN.md` (in-repo). **Date:** 2026-06-24.
+**Branch:** `fix/cbdc-remediation`, from `origin/main` `e6386d2`. **Date:** 2026-06-24.
+**Commits:** `dff7058` (correctness/type-id/DoS/secret/lint), `bcfd057` (docs), `fa27761` (CPMap + executor error-surfacing), `231ee6f` (XA framing), `13cdf58` (EntryProcessor framing).
+**Plan:** `CBDC_REMEDIATION_PLAN.md` · **Roadmap:** `PRODUCTION_READINESS_ROADMAP.md` (both in-repo).
 
 ## Verdict after remediation: still **NO-GO**, now with a clear conditional path
 
-The remediation **eliminated or reduced several disqualifying defect classes** (silent type-id corruption, silent element-drop, XA false-success, secret leakage in logs, decoder DoS, wrong public partition routing, ~18 wrong protocol constants) and **hardened the gates** (clippy green, cluster-absence can no longer false-pass). It also **exposed** latent breakage that the old false-success behavior was hiding (XA, CPMap framing). The system is **not yet production-ready**: TLS hostname verification, secondary-path error surfacing, full XA/CPMap request framing, server-honored dedup tokens, and all of distributed-correctness/soak/pen-test remain. **Re-validation required after those land.**
+The remediation **eliminated or reduced several disqualifying defect classes** (silent type-id corruption, silent element-drop, XA false-success, secret leakage in logs, decoder DoS, wrong public partition routing, ~18 wrong protocol constants), **made three non-functional in-scope features work** (CPMap, XA, EntryProcessor — pass 2), and **hardened the gates** (clippy green, cluster-absence can no longer false-pass). The system is **not yet production-ready**: TLS hostname verification, secondary-path error surfacing, the XA two-phase commit-after-prepare path, server-honored dedup tokens, and all of distributed-correctness/soak/pen-test remain. **Re-validation required after those land.**
+
+### Remediation pass 2 — protocol request framing (CPMap / XA / EntryProcessor)
+
+The three in-scope features that were *non-functional* (server codec crashes) were re-framed against the authoritative upstream codecs and verified live:
+
+| Feature | Before | After |
+|---|---|---|
+| **CPMap** | server `NullPointerException` (request missing the entire `RaftGroupId` group) — unusable | **put/get round-trip verified live** (i64 + String); group resolved + encoded; value decode fixed |
+| **XA** | every op `AIOOBE`/`NPE`; false-success masked it — unusable | **7/10 cases pass live** (create, one-phase commit, prepare, recover, rollback-from-active, suspend/resume, timeout, auto-xid, via-context); transactionId now captured from create |
+| **EntryProcessor** | `execute_on_key/keys`, `submit_to_key` crashed the server codec at decode | **framing fixed** — `entry_processor_test` cases pass; `java_parity` variants now fail only with a clean post-decode `ClassCastException` (custom class not deployed = infra) |
+
+**Live test deltas (ignored integration suite):** 148 pass / 10 fail (baseline, with XA *vacuously* passing via the false-success bug) → 140 / 18 (after pass 1 made XA fail *honestly*) → **147 / 11** (after pass 2 made the features actually work). Non-ignored suite: **2183 / 0** throughout (zero regressions). The 11 remaining ignored failures are now all (a) genuine server-side **infra** gaps — MapStore (`load_all`/`load_all_keys`), typed domain objects (`project`/`entry_set_with_predicate`), per-entry stats (`get_entry_view`), registered server-side EntryProcessor classes (`execute_on_key/keys/entries`, `submit_to_key_async` — framing now proven correct) — or (b) two residual code items: the XA two-phase commit-after-prepare path (state-dependent server `AIOOBE`) and `try_lock_with_timeout`. **None are the silent-corruption or false-success class.**
 
 ## What was implemented and how it was verified
 
