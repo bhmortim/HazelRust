@@ -409,7 +409,9 @@ impl ConnectionManager {
         // Build and send ClientAuthentication matching exact Java wire format
         {
             use bytes::{BufMut, BytesMut};
-            use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
+            use hazelcast_core::protocol::constants::{
+                CLIENT_AUTHENTICATION, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+            };
             use hazelcast_core::protocol::Frame;
 
             let cluster_name = self.config.cluster_name().to_string();
@@ -455,6 +457,38 @@ impl ConnectionManager {
                 .await
             {
                 Ok(Ok(Some(response))) => {
+                    // R8: CHECK THE AUTHENTICATION STATUS BYTE. The auth response's
+                    // initial frame is [response header (RESPONSE_HEADER_SIZE=13 bytes)]
+                    // followed by the fixed `status` byte: 0 = AUTHENTICATED, 1 =
+                    // CREDENTIALS_FAILED, 2 = SERIALIZATION_VERSION_MISMATCH, 3 =
+                    // NOT_ALLOWED_IN_CLUSTER. Previously a rejected auth was only logged
+                    // and the half-authenticated connection was still registered — surface
+                    // it as a typed Err and register nothing.
+                    let initial_content = &response.frames()[0].content;
+                    let status = initial_content
+                        .get(RESPONSE_HEADER_SIZE)
+                        .copied()
+                        .ok_or_else(|| {
+                            HazelcastError::Authentication(format!(
+                                "auth response from {} too short ({} bytes) to contain a status byte",
+                                address,
+                                initial_content.len()
+                            ))
+                        })?;
+                    if status != 0 {
+                        let reason = match status {
+                            1 => "credentials failed",
+                            2 => "serialization version mismatch",
+                            3 => "client not allowed in cluster (wrong cluster name?)",
+                            _ => "unknown authentication failure",
+                        };
+                        tracing::warn!(address = %address, status, reason, "authentication rejected");
+                        return Err(HazelcastError::Authentication(format!(
+                            "authentication to {} rejected: {} (status {})",
+                            address, reason, status
+                        )));
+                    }
+
                     tracing::info!(
                         address = %address,
                         msg_type = ?response.message_type(),
@@ -465,7 +499,6 @@ impl ConnectionManager {
                     // Auth response initial frame: [16 header] [status:1] [address_holder...] [member_uuid:16] [ser_ver:1] [partition_count:4] ...
                     // The exact offset depends on the address format
                     // For simplicity, look for partition_count after the known fields
-                    let initial_content = &response.frames()[0].content;
                     if initial_content.len() >= 34 {
                         // partition_count is at offset 30 (after status + uuid + ser_ver)
                         let pc_bytes = &initial_content[30..34];
@@ -489,6 +522,15 @@ impl ConnectionManager {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     connection.drain_socket().await;
                 }
+                // The connection-closed / read-error / timeout cases are left as
+                // best-effort (log only): a real EE member always answers auth with
+                // a status byte (the rejection path above), so these arise only from
+                // transport faults. A connection that fails to complete auth is dead
+                // and its first op fails — and RR-21 now fails its in-flight ops fast
+                // on the reader-loop break — so it never silently masquerades as
+                // authenticated. (Hard-failing these would also reject the in-process
+                // mock servers used by unit tests, which do not speak the auth
+                // handshake.)
                 Ok(Ok(None)) => {
                     tracing::warn!(address = %address, "connection closed during authentication");
                 }

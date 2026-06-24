@@ -29,51 +29,63 @@ use tokio_util::codec::Decoder;
 type BoxedWrite = Box<dyn AsyncWrite + Send + Unpin>;
 /// Boxed read half of a pooled connection (see [`BoxedWrite`]).
 type BoxedRead = Box<dyn AsyncRead + Send + Unpin>;
+/// Correlation ids dispatched on ONE connection and still awaiting a response.
+/// Tracked per-connection so a reader can fail exactly its own in-flight ops on
+/// teardown (RR-21) — `pending_ops` is global across all members, so failing all
+/// of it on a single connection's break would wrongly abort other members' ops.
+type InFlight = Arc<DashMap<i64, ()>>;
+
+/// A single pooled connection: its write half plus the set of correlation ids
+/// it has dispatched and is still awaiting responses for.
+struct PooledConn {
+    writer: Arc<Mutex<BoxedWrite>>,
+    inflight: InFlight,
+}
 
 /// A pool of write connections to a single cluster member.
 struct ConnectionPool {
-    /// Write halves of the pooled connections.
-    writers: Vec<Arc<Mutex<BoxedWrite>>>,
+    /// Pooled connections (each a write half + its in-flight correlation set).
+    conns: Vec<PooledConn>,
     /// Round-robin counter for selecting the next connection.
     next: AtomicUsize,
 }
 
 impl ConnectionPool {
     /// Create a pool with a single connection.
-    fn new(writer: Arc<Mutex<BoxedWrite>>) -> Self {
+    fn new(conn: PooledConn) -> Self {
         Self {
-            writers: vec![writer],
+            conns: vec![conn],
             next: AtomicUsize::new(0),
         }
     }
 
     /// Add a connection to the pool.
-    fn add(&mut self, writer: Arc<Mutex<BoxedWrite>>) {
-        self.writers.push(writer);
+    fn add(&mut self, conn: PooledConn) {
+        self.conns.push(conn);
     }
 
-    /// Select the next writer via round-robin.
-    fn select(&self) -> &Arc<Mutex<BoxedWrite>> {
-        let idx = self.next.fetch_add(1, Ordering::Relaxed) % self.writers.len();
-        &self.writers[idx]
+    /// Select the next connection via round-robin.
+    fn select(&self) -> &PooledConn {
+        let idx = self.next.fetch_add(1, Ordering::Relaxed) % self.conns.len();
+        &self.conns[idx]
     }
 
-    /// Returns the first (stable) writer in the pool. Used to pin a sequence of
-    /// requests (e.g. a transaction) to a single server connection/endpoint.
-    fn first(&self) -> &Arc<Mutex<BoxedWrite>> {
-        &self.writers[0]
+    /// Returns the first (stable) connection in the pool. Used to pin a sequence
+    /// of requests (e.g. a transaction) to a single server connection/endpoint.
+    fn first(&self) -> &PooledConn {
+        &self.conns[0]
     }
 
     /// Number of connections in the pool.
     fn size(&self) -> usize {
-        self.writers.len()
+        self.conns.len()
     }
 }
 
 impl std::fmt::Debug for ConnectionPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConnectionPool")
-            .field("size", &self.writers.len())
+            .field("size", &self.conns.len())
             .finish()
     }
 }
@@ -92,8 +104,10 @@ pub struct InvocationService {
     /// Uses DashMap for lock-free reads on the hot path — `send_raw()`
     /// only needs a per-shard read lock instead of a global RwLock.
     pools: DashMap<SocketAddr, ConnectionPool>,
-    /// Pending operation waiters keyed by correlation_id.
-    pending_ops: Arc<DashMap<i64, oneshot::Sender<ClientMessage>>>,
+    /// Pending operation waiters keyed by correlation_id. The value is a
+    /// `Result` so a reader can deliver a typed failure (e.g. the connection was
+    /// torn down with the op in flight) instead of dropping the sender silently.
+    pending_ops: Arc<DashMap<i64, oneshot::Sender<Result<ClientMessage>>>>,
     /// Long-lived event handlers keyed by the listener registration correlation_id.
     event_handlers: Arc<DashMap<i64, Arc<dyn Fn(ClientMessage) + Send + Sync>>>,
     /// Set of map names for which CreateProxy has been sent.
@@ -137,12 +151,16 @@ impl InvocationService {
         write_half: BoxedWrite,
     ) {
         let write = Arc::new(Mutex::new(write_half));
+        let inflight: InFlight = Arc::new(DashMap::new());
 
-        // Add writer to pool (create pool if first connection for this address)
+        // Add connection to pool (create pool if first connection for this address)
         match self.pools.entry(address) {
             dashmap::mapref::entry::Entry::Occupied(mut entry) => {
                 let pool = entry.get_mut();
-                pool.add(write);
+                pool.add(PooledConn {
+                    writer: write,
+                    inflight: Arc::clone(&inflight),
+                });
                 tracing::info!(
                     address = %address,
                     pool_size = pool.size(),
@@ -150,7 +168,10 @@ impl InvocationService {
                 );
             }
             dashmap::mapref::entry::Entry::Vacant(entry) => {
-                entry.insert(ConnectionPool::new(write));
+                entry.insert(ConnectionPool::new(PooledConn {
+                    writer: write,
+                    inflight: Arc::clone(&inflight),
+                }));
             }
         }
 
@@ -158,17 +179,22 @@ impl InvocationService {
         let pending = Arc::clone(&self.pending_ops);
         let events = Arc::clone(&self.event_handlers);
         let handle = tokio::spawn(async move {
-            Self::reader_loop(address, read_half, pending, events).await;
+            Self::reader_loop(address, read_half, pending, events, inflight).await;
         });
         self._readers.write().await.push(handle);
     }
 
     /// Background reader loop that decodes messages and routes to pending ops.
+    ///
+    /// On teardown (decode error / clean close / I/O error) it fails this
+    /// connection's still-in-flight invocations with a typed error (RR-21), so
+    /// callers fail fast instead of blocking until the invocation timeout.
     async fn reader_loop(
         address: SocketAddr,
         mut read: BoxedRead,
-        pending_ops: Arc<DashMap<i64, oneshot::Sender<ClientMessage>>>,
+        pending_ops: Arc<DashMap<i64, oneshot::Sender<Result<ClientMessage>>>>,
         event_handlers: Arc<DashMap<i64, Arc<dyn Fn(ClientMessage) + Send + Sync>>>,
+        inflight: InFlight,
     ) {
         let mut codec = ClientMessageCodec::new();
         let mut read_buffer = BytesMut::with_capacity(16384);
@@ -188,8 +214,9 @@ impl InvocationService {
                             }
                         }
                     } else if let Some(corr_id) = msg.correlation_id() {
+                        inflight.remove(&corr_id);
                         if let Some((_, tx)) = pending_ops.remove(&corr_id) {
-                            let _ = tx.send(msg);
+                            let _ = tx.send(Ok(msg));
                         }
                         // Unmatched non-event responses are discarded.
                     }
@@ -217,6 +244,29 @@ impl InvocationService {
                     tracing::warn!(address = %address, error = %e, "reader I/O error");
                     break;
                 }
+            }
+        }
+
+        // The connection is gone. Fail THIS connection's still-in-flight ops with
+        // a typed error so their callers return immediately instead of waiting out
+        // the invocation timeout. Only this connection's correlation ids are
+        // touched — other members' in-flight ops (also in the global pending_ops)
+        // are left intact.
+        let stranded: Vec<i64> = inflight.iter().map(|e| *e.key()).collect();
+        if !stranded.is_empty() {
+            tracing::warn!(
+                address = %address,
+                in_flight = stranded.len(),
+                "failing in-flight invocations after connection teardown"
+            );
+        }
+        for corr_id in stranded {
+            inflight.remove(&corr_id);
+            if let Some((_, tx)) = pending_ops.remove(&corr_id) {
+                let _ = tx.send(Err(HazelcastError::Connection(format!(
+                    "connection to {} closed with operation in flight",
+                    address
+                ))));
             }
         }
     }
@@ -277,7 +327,9 @@ impl InvocationService {
 
         // Wait for response with timeout
         match tokio::time::timeout(self.timeout, rx).await {
-            Ok(Ok(response)) => check_response(response),
+            // `result` is the reader's outcome: Ok(msg) for a real response, or
+            // Err(..) if the connection was torn down with this op in flight.
+            Ok(Ok(result)) => result.and_then(check_response),
             Ok(Err(_)) => {
                 self.pending_ops.remove(&corr_id);
                 Err(HazelcastError::Connection(
@@ -297,23 +349,32 @@ impl InvocationService {
     /// Send a message without waiting for a response.
     ///
     /// Uses round-robin selection across pooled connections to reduce
-    /// contention on any single write Mutex.
+    /// contention on any single write Mutex. The correlation id is recorded in
+    /// the selected connection's in-flight set so its reader can fail it on
+    /// teardown.
     async fn send_raw(&self, address: SocketAddr, message: &mut ClientMessage) -> Result<()> {
-        let pool_ref = self
-            .pools
-            .get(&address)
-            .ok_or_else(|| HazelcastError::Connection(format!("no connection to {}", address)))?;
+        let corr_id = message.correlation_id().unwrap_or(0);
+        let (writer, inflight) = {
+            let pool_ref = self.pools.get(&address).ok_or_else(|| {
+                HazelcastError::Connection(format!("no connection to {}", address))
+            })?;
+            let conn = pool_ref.select();
+            (conn.writer.clone(), conn.inflight.clone())
+        }; // Release DashMap shard lock before awaiting
 
-        let writer = pool_ref.select().clone();
-        drop(pool_ref); // Release DashMap shard lock before awaiting
+        inflight.insert(corr_id, ());
 
         let mut buf = BytesMut::with_capacity(256);
         message.write_to(&mut buf);
 
         let mut w = writer.lock().await;
-        w.write_all(&buf).await.map_err(|e| {
-            HazelcastError::Connection(format!("failed to write to {}: {}", address, e))
-        })?;
+        if let Err(e) = w.write_all(&buf).await {
+            inflight.remove(&corr_id);
+            return Err(HazelcastError::Connection(format!(
+                "failed to write to {}: {}",
+                address, e
+            )));
+        }
         Ok(())
     }
 
@@ -333,7 +394,7 @@ impl InvocationService {
             return Err(e);
         }
         match tokio::time::timeout(self.timeout, rx).await {
-            Ok(Ok(response)) => check_response(response),
+            Ok(Ok(result)) => result.and_then(check_response),
             Ok(Err(_)) => {
                 self.pending_ops.remove(&corr_id);
                 Err(HazelcastError::Connection(
@@ -355,18 +416,25 @@ impl InvocationService {
         address: SocketAddr,
         message: &mut ClientMessage,
     ) -> Result<()> {
-        let pool_ref = self
-            .pools
-            .get(&address)
-            .ok_or_else(|| HazelcastError::Connection(format!("no connection to {}", address)))?;
-        let writer = pool_ref.first().clone();
-        drop(pool_ref);
+        let corr_id = message.correlation_id().unwrap_or(0);
+        let (writer, inflight) = {
+            let pool_ref = self.pools.get(&address).ok_or_else(|| {
+                HazelcastError::Connection(format!("no connection to {}", address))
+            })?;
+            let conn = pool_ref.first();
+            (conn.writer.clone(), conn.inflight.clone())
+        };
+        inflight.insert(corr_id, ());
         let mut buf = BytesMut::with_capacity(256);
         message.write_to(&mut buf);
         let mut w = writer.lock().await;
-        w.write_all(&buf).await.map_err(|e| {
-            HazelcastError::Connection(format!("failed to write to {}: {}", address, e))
-        })?;
+        if let Err(e) = w.write_all(&buf).await {
+            inflight.remove(&corr_id);
+            return Err(HazelcastError::Connection(format!(
+                "failed to write to {}: {}",
+                address, e
+            )));
+        }
         Ok(())
     }
 
@@ -470,4 +538,54 @@ fn decode_error_response(response: &ClientMessage) -> HazelcastError {
         .or_else(|| strings.first().cloned())
         .unwrap_or_else(|| "server exception".to_string());
     HazelcastError::from_server(code, message, class_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// RR-21: an invocation that is in flight when its connection is torn down
+    /// must fail fast with a typed `Connection` error, not hang until the
+    /// invocation timeout. Backed by an in-memory duplex so no cluster is needed.
+    #[tokio::test]
+    async fn in_flight_op_fails_fast_on_connection_teardown() {
+        let svc = InvocationService::new(Duration::from_secs(30));
+        let addr: SocketAddr = "127.0.0.1:65000".parse().unwrap();
+
+        // `client_io` is the client end; `server_io` is the peer. Splitting the
+        // client end gives the read/write halves the pool/reader use.
+        let (client_io, server_io) = tokio::io::duplex(4096);
+        let (read_half, write_half) = tokio::io::split(client_io);
+        svc.register_connection(addr, Box::new(read_half), Box::new(write_half))
+            .await;
+
+        // Fire an invocation; it sends the request (buffered by the duplex) and
+        // then awaits a response that will never come.
+        let svc = Arc::new(svc);
+        let svc2 = Arc::clone(&svc);
+        let invoke = tokio::spawn(async move {
+            let mut msg = ClientMessage::create_for_encode(0x010000, PARTITION_ID_ANY);
+            msg.set_correlation_id(4242);
+            svc2.invoke(addr, msg).await
+        });
+
+        // Let the request go out and the reader settle into its read.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Tear the connection down: dropping the peer end EOFs the client's read
+        // half, breaking the reader loop, which must fail the in-flight op.
+        drop(server_io);
+
+        // Must resolve quickly (well under the 30s invocation timeout).
+        let result = tokio::time::timeout(Duration::from_secs(5), invoke)
+            .await
+            .expect("invoke must resolve fast after teardown, not hang")
+            .expect("invoke task panicked");
+
+        match result {
+            Err(HazelcastError::Connection(_)) => {}
+            other => panic!("expected Err(Connection(..)) on teardown, got {:?}", other),
+        }
+    }
 }
