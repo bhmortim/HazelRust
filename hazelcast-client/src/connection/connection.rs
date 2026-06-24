@@ -301,8 +301,20 @@ impl Connection {
         let tls_stream =
             Self::perform_tls_handshake(stream, address, tls_config, server_name).await?;
 
-        tracing::debug!(address = %address, "established TLS connection");
-        Ok(Self::new_tls(tls_stream, address))
+        let mut conn = Self::new_tls(tls_stream, address);
+        // Send the Hazelcast open binary client protocol header "CP2" over the TLS
+        // channel, exactly as the plaintext path does. Without this the server reads
+        // the first ClientMessage bytes as the protocol identifier and rejects the
+        // connection ("Unknown protocol"), so no TLS data connection ever works.
+        conn.stream.write_all(b"CP2").await.map_err(|e| {
+            HazelcastError::Connection(format!(
+                "failed to send protocol header to {}: {}",
+                address, e
+            ))
+        })?;
+
+        tracing::debug!(address = %address, "established TLS connection with CP2 protocol header");
+        Ok(conn)
     }
 
     #[cfg(feature = "tls")]
@@ -316,6 +328,18 @@ impl Connection {
         use std::sync::Arc;
         use tokio_rustls::rustls::{ClientConfig, RootCertStore};
         use tokio_rustls::TlsConnector;
+
+        // rustls 0.23 requires a process-default CryptoProvider to be installed before
+        // building a ClientConfig; without this every TLS connection PANICS. Install the
+        // aws-lc-rs provider exactly once. (Bug: the tls feature was unusable without it.)
+        {
+            use std::sync::Once;
+            static CRYPTO_INIT: Once = Once::new();
+            CRYPTO_INIT.call_once(|| {
+                let _ = tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
+                    .install_default();
+            });
+        }
 
         let mut root_store = RootCertStore::empty();
 
@@ -378,8 +402,13 @@ impl Connection {
 
         let connector = TlsConnector::from(Arc::new(client_config));
 
+        // Verify the server certificate against the configured DNS identity
+        // (sni_hostname) when set — NOT the raw IP. Verifying against the IP makes the
+        // cert hostname/SAN check meaningless for a named member (RR-13). Precedence:
+        // explicit caller name -> configured sni_hostname -> connection IP (last resort).
         let name = server_name
             .map(|s| s.to_string())
+            .or_else(|| tls_config.sni_hostname().map(|s| s.to_string()))
             .unwrap_or_else(|| address.ip().to_string());
 
         let server_name = rustls_pki_types::ServerName::try_from(name.clone()).map_err(|e| {
