@@ -3223,8 +3223,17 @@ where
 
         let mut message =
             ClientMessage::create_for_encode(MAP_REMOVE_ENTRY_LISTENER, PARTITION_ID_ANY);
+        // Fixed param: registrationId (UUID) in the initial frame; name is a var frame.
+        if let Some(initial) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            let b = *registration.id().as_uuid().as_bytes();
+            let msb = i64::from_be_bytes(b[0..8].try_into().unwrap());
+            let lsb = i64::from_be_bytes(b[8..16].try_into().unwrap());
+            initial.content.put_u8(0u8); // not null
+            initial.content.put_i64_le(msb);
+            initial.content.put_i64_le(lsb);
+        }
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::uuid_frame(registration.id().as_uuid()));
 
         let response = self.invoke_on_random(message).await?;
         Self::decode_bool_response(&response)
@@ -4036,37 +4045,41 @@ where
         let mut message = ClientMessage::create_for_encode(MAP_ADD_INDEX, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
 
-        // Encode index config as nested structure
-        // Index type
-        message.add_frame(Self::int_frame(config.index_type.as_i32()));
-
-        // Index name (nullable)
-        if let Some(ref name) = config.name {
-            message.add_frame(Self::string_frame(name));
-        } else {
-            message.add_frame(Frame::new_null_frame());
+        // IndexConfig codec: BEGIN, [type int], nullable name, attributes list,
+        // bitmapIndexOptions struct, nullable btreeIndexConfig, END.
+        use bytes::BufMut;
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        // type (fixed int) in an initial frame
+        let mut type_buf = BytesMut::new();
+        type_buf.put_i32_le(config.index_type.as_i32());
+        message.add_frame(Frame::with_content(type_buf));
+        // name (nullable String)
+        match config.name {
+            Some(ref name) => message.add_frame(Self::string_frame(name)),
+            None => message.add_frame(Frame::new_null_frame()),
         }
-
-        // Attributes count
-        message.add_frame(Self::int_frame(config.attributes.len() as i32));
-
-        // Encode each attribute
+        // attributes (List<String>)
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         for attr in &config.attributes {
             message.add_frame(Self::string_frame(attr));
         }
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
+        // bitmapIndexOptions (always present; default uniqueKey=__key, transformation=0)
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
+        let (unique_key, transformation) = match config.bitmap_options {
+            Some(ref b) => (b.unique_key().to_string(), b.unique_key_transformation().as_i32()),
+            None => ("__key".to_string(), 0),
+        };
+        let mut tr_buf = BytesMut::new();
+        tr_buf.put_i32_le(transformation);
+        message.add_frame(Frame::with_content(tr_buf));
+        message.add_frame(Self::string_frame(&unique_key));
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
+        // btreeIndexConfig (nullable -> null)
+        message.add_frame(Frame::new_null_frame());
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
-        // Encode bitmap index options if present
-        if let Some(ref bitmap_opts) = config.bitmap_options {
-            message.add_frame(Self::bool_frame(true)); // has bitmap options
-            message.add_frame(Self::string_frame(bitmap_opts.unique_key()));
-            message.add_frame(Self::int_frame(
-                bitmap_opts.unique_key_transformation().as_i32(),
-            ));
-        } else {
-            message.add_frame(Self::bool_frame(false)); // no bitmap options
-        }
-
-        self.invoke_on_random_mutating(message).await?;
+        
         Ok(())
     }
 

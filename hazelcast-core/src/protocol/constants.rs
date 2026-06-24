@@ -378,10 +378,10 @@ pub const MAP_LOCK: i32 = 0x011000;
 pub const MAP_TRY_LOCK: i32 = 0x011100;
 
 /// Map add entry listener request.
-pub const MAP_ADD_ENTRY_LISTENER: i32 = 0x011400;
+pub const MAP_ADD_ENTRY_LISTENER: i32 = 0x011900;
 
 /// Map remove entry listener request.
-pub const MAP_REMOVE_ENTRY_LISTENER: i32 = 0x011500;
+pub const MAP_REMOVE_ENTRY_LISTENER: i32 = 0x011A00;
 
 /// Map force unlock request.
 pub const MAP_FORCE_UNLOCK: i32 = 0x013300;
@@ -393,13 +393,13 @@ pub const MAP_UNLOCK: i32 = 0x011300;
 pub const MAP_IS_LOCKED: i32 = 0x011200;
 
 /// Map add entry listener with predicate request.
-pub const MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x011900;
+pub const MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x011700;
 
 /// Map add entry listener for a specific key request.
-pub const MAP_ADD_ENTRY_LISTENER_TO_KEY: i32 = 0x011C00;
+pub const MAP_ADD_ENTRY_LISTENER_TO_KEY: i32 = 0x011800;
 
 /// Map add entry listener for a specific key with predicate request.
-pub const MAP_ADD_ENTRY_LISTENER_TO_KEY_WITH_PREDICATE: i32 = 0x011D00;
+pub const MAP_ADD_ENTRY_LISTENER_TO_KEY_WITH_PREDICATE: i32 = 0x011600;
 
 /// Client add membership listener request.
 pub const CLIENT_ADD_MEMBERSHIP_LISTENER: i32 = 0x000300;
@@ -616,7 +616,7 @@ pub const MAP_EXECUTE_ON_ALL_KEYS: i32 = 0x013000;
 pub const MAP_EXECUTE_WITH_PREDICATE: i32 = 0x013100;
 
 /// Map add index request.
-pub const MAP_ADD_INDEX: i32 = 0x013100;
+pub const MAP_ADD_INDEX: i32 = 0x012900;
 
 /// Map aggregate request.
 pub const MAP_AGGREGATE: i32 = 0x013900;
