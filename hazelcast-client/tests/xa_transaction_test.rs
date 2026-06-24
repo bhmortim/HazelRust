@@ -215,6 +215,75 @@ async fn test_multiple_xa_transactions() {
     client.shutdown().await.unwrap();
 }
 
+/// Data-effect assertion: a value written inside an XA transaction is visible
+/// to a SEPARATE client only after the XA transaction commits.
+#[tokio::test]
+#[ignore = "requires running Hazelcast cluster"]
+async fn test_xa_commit_data_effect() {
+    let client = create_test_client().await;
+    let key = format!("xa-commit-effect-{}", std::process::id());
+
+    let xid = Xid::new(0, b"test-xa-commit-effect", b"branch-001");
+    let mut xa_txn = client.new_xa_transaction(xid);
+    xa_txn.start(XA_TMNOFLAGS).await.unwrap();
+    let txn_map = xa_txn
+        .get_map::<String, String>("xa-data-effect-map")
+        .unwrap();
+    txn_map
+        .put(key.clone(), "committed-value".to_string())
+        .await
+        .unwrap();
+    xa_txn.end(XA_TMSUCCESS).await.unwrap();
+    xa_txn.commit(true).await.unwrap();
+
+    // A separate client must observe the committed write.
+    let observer = create_test_client().await;
+    let obs_map = observer.get_map::<String, String>("xa-data-effect-map");
+    assert_eq!(
+        obs_map.get(&key).await.unwrap(),
+        Some("committed-value".to_string()),
+        "committed XA write must be visible to a separate client"
+    );
+
+    observer.shutdown().await.unwrap();
+    client.shutdown().await.unwrap();
+}
+
+/// Data-effect assertion: a value written inside an XA transaction that is
+/// rolled back (after prepare) leaves NO trace visible to a separate client.
+#[tokio::test]
+#[ignore = "requires running Hazelcast cluster"]
+async fn test_xa_rollback_data_effect() {
+    let client = create_test_client().await;
+    let key = format!("xa-rollback-effect-{}", std::process::id());
+
+    let xid = Xid::new(0, b"test-xa-rollback-effect", b"branch-001");
+    let mut xa_txn = client.new_xa_transaction(xid);
+    xa_txn.start(XA_TMNOFLAGS).await.unwrap();
+    let txn_map = xa_txn
+        .get_map::<String, String>("xa-data-effect-map")
+        .unwrap();
+    txn_map
+        .put(key.clone(), "rolled-back-value".to_string())
+        .await
+        .unwrap();
+    xa_txn.end(XA_TMSUCCESS).await.unwrap();
+    xa_txn.prepare().await.unwrap();
+    xa_txn.rollback().await.unwrap();
+
+    // A separate client must observe NOTHING for the rolled-back write.
+    let observer = create_test_client().await;
+    let obs_map = observer.get_map::<String, String>("xa-data-effect-map");
+    assert_eq!(
+        obs_map.get(&key).await.unwrap(),
+        None,
+        "rolled-back XA write must NOT be visible to a separate client"
+    );
+
+    observer.shutdown().await.unwrap();
+    client.shutdown().await.unwrap();
+}
+
 // ============================================================================
 // Unit Tests (no cluster required)
 // ============================================================================

@@ -34,7 +34,7 @@ use uuid::Uuid;
 
 use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, HazelcastError, Result};
+use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
 use crate::connection::ConnectionManager;
 
@@ -406,6 +406,10 @@ pub struct XATransaction {
     state: XaTransactionState,
     timeout: Duration,
     start_time: Option<std::time::Instant>,
+    /// The member endpoint this transaction is pinned to. Captured at `start()`
+    /// and reused for every subsequent op (prepare/commit/rollback), because the
+    /// server binds an XA branch to the connection that created it.
+    pinned_address: Option<SocketAddr>,
 }
 
 impl XATransaction {
@@ -421,6 +425,7 @@ impl XATransaction {
             state: XaTransactionState::NotStarted,
             timeout: Duration::from_secs(120),
             start_time: None,
+            pinned_address: None,
         }
     }
 
@@ -447,6 +452,38 @@ impl XATransaction {
     /// Returns true if the transaction is prepared.
     pub fn is_prepared(&self) -> bool {
         self.state == XaTransactionState::Prepared
+    }
+
+    /// Returns a transactional map bound to THIS XA branch's transaction id.
+    ///
+    /// Operations on the returned map execute *inside* the XA transaction and
+    /// only become visible to other clients after a successful [`commit`]. The
+    /// transaction must be [`Active`] (i.e. after [`start`], before [`end`]).
+    ///
+    /// [`commit`]: XAResource::commit
+    /// [`Active`]: XaTransactionState::Active
+    /// [`start`]: XAResource::start
+    pub fn get_map<K, V>(&self, name: &str) -> Result<super::TransactionalMap<K, V>>
+    where
+        K: Serializable + Deserializable + Send + Sync,
+        V: Serializable + Deserializable + Send + Sync,
+    {
+        if self.state != XaTransactionState::Active {
+            return Err(HazelcastError::Protocol(format!(
+                "XA transaction must be Active to obtain a transactional map (state: {:?})",
+                self.state
+            )));
+        }
+        let address = self.pinned_address.ok_or_else(|| {
+            HazelcastError::Protocol("XA transaction has no pinned connection".to_string())
+        })?;
+        Ok(super::TransactionalMap::new(
+            name.to_string(),
+            Arc::clone(&self.connection_manager),
+            self.txn_id,
+            self.thread_id,
+            address,
+        ))
     }
 
     /// Returns the elapsed time since the transaction started.
@@ -589,19 +626,22 @@ impl XATransaction {
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let address = self.get_connection_address().await?;
-        self.connection_manager.send_to(address, message).await?;
-        let response = self
-            .connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| {
-                HazelcastError::Connection("connection closed unexpectedly".to_string())
-            })?;
-        // Surface a server EXCEPTION (message type 0) as a typed error. Without this,
-        // a failed XA prepare/commit/rollback was silently treated as success —
-        // a two-phase-commit atomicity violation (divergent ledger state).
-        crate::connection::invocation::check_response(response)
+        let address = match self.pinned_address {
+            Some(a) => a,
+            None => self.get_connection_address().await?,
+        };
+        // Route XA ops through the correlation-matched invocation service rather
+        // than send_to/receive_from. The latter read the *next* raw frame on the
+        // shared metadata connection with no correlation-id check, so unsolicited
+        // cluster events / heartbeat responses were mis-read as XA responses,
+        // corrupting the decoded transactionId and triggering a server
+        // ArrayIndexOutOfBoundsException on a later commit/rollback. invoke_pinned
+        // pins to the member endpoint, matches the response by correlation id, and
+        // already surfaces server exceptions via check_response (so a failed
+        // prepare/commit/rollback returns Err, never a silent false success).
+        self.connection_manager
+            .invoke_pinned(address, message)
+            .await
     }
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
@@ -622,6 +662,11 @@ impl XAResource for XATransaction {
         // NO threadId. The server returns the `transactionId` (UUID) that prepare/commit/
         // rollback must reference — capture it (previously the response was discarded and
         // a client-generated UUID used, which the server would never recognize).
+        // Pin this XA branch to a single member endpoint for its whole lifecycle
+        // (create/prepare/commit/rollback must all reach the connection that owns
+        // the branch). Captured once here and reused by every subsequent invoke().
+        self.pinned_address = Some(self.get_connection_address().await?);
+
         let timeout_ms = self.timeout.as_millis() as i64;
         let mut message = ClientMessage::create_for_encode_any_partition(XA_TXN_CREATE);
         Self::append_fixed(&mut message, &timeout_ms.to_le_bytes());
