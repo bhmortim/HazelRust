@@ -495,25 +495,44 @@ impl ConnectionManager {
                         "authentication successful"
                     );
 
-                    // Parse partition count from auth response
-                    // Auth response initial frame: [16 header] [status:1] [address_holder...] [member_uuid:16] [ser_ver:1] [partition_count:4] ...
-                    // The exact offset depends on the address format
-                    // For simplicity, look for partition_count after the known fields
-                    if initial_content.len() >= 34 {
-                        // partition_count is at offset 30 (after status + uuid + ser_ver)
-                        let pc_bytes = &initial_content[30..34];
+                    // Parse partition_count from the ClientAuthentication response.
+                    //
+                    // The initial frame's fixed block layout (verified live by a hexdump
+                    // of a real EE 5.7 auth response — cbdc lead #1):
+                    //   messageType    : 4  @ 0
+                    //   correlationId  : 8  @ 4
+                    //   backupAcks     : 1  @ 12   (RESPONSE_HEADER_SIZE = 13)
+                    //   status         : 1  @ 13
+                    //   memberUuid     : 17 @ 14   (1-byte not-null flag + 16-byte value)
+                    //   serialVersion  : 1  @ 31
+                    //   partitionCount : 4  @ 32   (i32 LE)   <-- here
+                    //   clusterId      : 17 @ 36
+                    //   failover       : 1  @ 53
+                    // The variable-size `address` field lives in a later frame, so it does
+                    // not shift these fixed offsets. (The previous code read offset 30,
+                    // treating the UUID as 16 bytes and omitting its not-null flag, so it
+                    // parsed [uuid_tail, serialVersion, pc_lo, pc_mid] = a large garbage
+                    // value that the range check silently rejected, leaving partition_count
+                    // at 0 and forcing every caller onto the 271-partition fallback.)
+                    const PARTITION_COUNT_OFFSET: usize = 32;
+                    if initial_content.len() >= PARTITION_COUNT_OFFSET + 4 {
                         let pc = i32::from_le_bytes([
-                            pc_bytes[0],
-                            pc_bytes[1],
-                            pc_bytes[2],
-                            pc_bytes[3],
+                            initial_content[PARTITION_COUNT_OFFSET],
+                            initial_content[PARTITION_COUNT_OFFSET + 1],
+                            initial_content[PARTITION_COUNT_OFFSET + 2],
+                            initial_content[PARTITION_COUNT_OFFSET + 3],
                         ]);
-                        if pc > 0 && pc < 100000 {
+                        if pc > 0 && pc < 100_000 {
                             self.partition_count
                                 .store(pc, std::sync::atomic::Ordering::Release);
                             tracing::info!(
                                 partition_count = pc,
                                 "parsed partition count from auth response"
+                            );
+                        } else {
+                            tracing::warn!(
+                                partition_count = pc,
+                                "auth response partition_count out of range; ignoring"
                             );
                         }
                     }
