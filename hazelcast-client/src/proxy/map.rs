@@ -3757,6 +3757,12 @@ where
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_EXECUTE_ON_KEY, partition_id);
+        // Fixed param: threadId (long) packed into the initial frame (was missing,
+        // causing the server to mis-read the variable frames -> AIOOBE).
+        if let Some(initial) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial.content.put_i64_le(0); // threadId = 0
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&processor_data));
         message.add_frame(Self::data_frame(&key_data));
@@ -3811,14 +3817,15 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&processor_data));
 
-        // Encode keys count
-        message.add_frame(Self::int_frame(keys.len() as i32));
-
-        // Encode each key
+        // keys: List<Data> — BEGIN_DATA_STRUCTURE, one Data frame per key,
+        // END_DATA_STRUCTURE. (Was an int count + raw key frames, which the server's
+        // list codec mis-read -> NullPointerException on a missing frame.)
+        message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         for key in keys {
             let key_data = Self::serialize_value(key)?;
             message.add_frame(Self::data_frame(&key_data));
         }
+        message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
 
         let response = self.invoke_on_random_mutating(message).await?;
         self.decode_entry_processor_results::<E::Output>(&response)
