@@ -76,6 +76,9 @@ pub trait Aggregator: Debug + Send + Sync {
     /// Serializes this aggregator to bytes including type information.
     fn to_aggregator_data(&self) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
+        write_i32(&mut output, 0)?; // partition hash
+        write_i32(&mut output, -2)?; // type id: IdentifiedDataSerializable
+        output.write_byte(1)?; // isIdentified = true
         write_i32(&mut output, AGGREGATOR_FACTORY_ID)?;
         write_i32(&mut output, self.class_id())?;
         self.write_data(&mut output)?;
