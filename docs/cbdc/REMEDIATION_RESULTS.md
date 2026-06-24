@@ -9,8 +9,11 @@
 - **`try_lock_with_timeout` = not a client defect.** Both `lock` and `try_lock` use `threadId=0`, so re-locking the client's own key is **correctly reentrant**; the test assumes Java multi-threading the single-`threadId` client doesn't model.
 - **`multiple_xa_transactions` = the one residual code item** — the XA two-phase commit-*after-prepare* path (state-dependent server `AIOOBE`); needs a Java-client byte-diff to settle.
 
-### Still open (require test infrastructure not available in this environment)
-- **mTLS DNS-hostname verification (R7-TLS)** — needs a TLS-enabled cluster listener to verify cert-chain + hostname enforcement and bypass-rejection.
+### Remediation pass 3 — mTLS (verified against a live TLS EE member)
+Stood up a mutual-auth Hazelcast EE 5.7 TLS member (cluster `tls`, port 5801, CA + server cert with SAN `hzcp.test`/`127.0.0.1` + client cert) and exercised the client's `tls` feature end-to-end. Found + fixed **three** TLS defects: (1) **missing rustls CryptoProvider** — every TLS connection *panicked* (TLS was 100% broken); (2) **missing `CP2` protocol preamble** on the TLS path — server rejected connections (`Unknown protocol`); (3) **R7** — server cert verified against the IP, not the configured DNS identity. **Verified live:** mTLS handshake + client-cert auth succeeds (`authenticated=true`); an **untrusted-CA** server cert is **rejected** (chain validation); a **wrong hostname** is **rejected** (R7/SAN validation). The mTLS *security* properties of the gate are proven.
+
+### Still open
+- **mTLS operations (functional):** the security handshake/auth/validation works, but data *operations* over TLS don't yet complete — authenticated connections are reset before the invocation pool is usable (a TLS connection-lifecycle bug; plaintext is unaffected). Needs connection-manager work.
 - **Auth-failure surfacing + reader-loop in-flight failing (R8 remainder)** — needs a **credential-required** cluster to exercise the failure path safely (the test cluster accepts anonymous auth, so the failure path can't be verified here; a partial change would be unverifiable).
 - **XA 2PC residual** — needs the stock **Java client** for a differential byte capture.
 - **Closing the 9 infra tests** — needs server-side Java classes (EntryProcessor, MapStore) + map config (per-entry-stats, typed objects) deployed to the cluster.
