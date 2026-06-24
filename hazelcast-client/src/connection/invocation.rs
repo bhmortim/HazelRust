@@ -52,6 +52,12 @@ impl ConnectionPool {
         &self.writers[idx]
     }
 
+    /// Returns the first (stable) writer in the pool. Used to pin a sequence of
+    /// requests (e.g. a transaction) to a single server connection/endpoint.
+    fn first(&self) -> &Arc<Mutex<OwnedWriteHalf>> {
+        &self.writers[0]
+    }
+
     /// Number of connections in the pool.
     fn size(&self) -> usize {
         self.writers.len()
@@ -294,6 +300,59 @@ impl InvocationService {
         let mut buf = BytesMut::with_capacity(256);
         message.write_to(&mut buf);
 
+        let mut w = writer.lock().await;
+        w.write_all(&buf).await.map_err(|e| {
+            HazelcastError::Connection(format!("failed to write to {}: {}", address, e))
+        })?;
+        Ok(())
+    }
+
+    /// Invokes a request on the FIRST (pinned) connection for `address` rather
+    /// than round-robining the pool. Required for transactions, which the server
+    /// associates with a specific client endpoint (connection).
+    pub async fn invoke_pinned(
+        &self,
+        address: SocketAddr,
+        mut message: ClientMessage,
+    ) -> Result<ClientMessage> {
+        let corr_id = message.correlation_id().unwrap_or(0);
+        let (tx, rx) = oneshot::channel();
+        self.pending_ops.insert(corr_id, tx);
+        if let Err(e) = self.send_raw_pinned(address, &mut message).await {
+            self.pending_ops.remove(&corr_id);
+            return Err(e);
+        }
+        match tokio::time::timeout(self.timeout, rx).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => {
+                self.pending_ops.remove(&corr_id);
+                Err(HazelcastError::Connection(
+                    "response channel dropped".to_string(),
+                ))
+            }
+            Err(_) => {
+                self.pending_ops.remove(&corr_id);
+                Err(HazelcastError::Timeout(format!(
+                    "invocation timed out after {:?}",
+                    self.timeout
+                )))
+            }
+        }
+    }
+
+    async fn send_raw_pinned(
+        &self,
+        address: SocketAddr,
+        message: &mut ClientMessage,
+    ) -> Result<()> {
+        let pool_ref = self
+            .pools
+            .get(&address)
+            .ok_or_else(|| HazelcastError::Connection(format!("no connection to {}", address)))?;
+        let writer = pool_ref.first().clone();
+        drop(pool_ref);
+        let mut buf = BytesMut::with_capacity(256);
+        message.write_to(&mut buf);
         let mut w = writer.lock().await;
         w.write_all(&buf).await.map_err(|e| {
             HazelcastError::Connection(format!("failed to write to {}: {}", address, e))

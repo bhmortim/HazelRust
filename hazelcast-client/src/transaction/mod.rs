@@ -534,7 +534,7 @@ async fn txn_invoke_at(
     address: SocketAddr,
     message: ClientMessage,
 ) -> Result<ClientMessage> {
-    connection_manager.invocation.invoke(address, message).await
+    connection_manager.invoke_pinned(address, message).await
 }
 
 /// Sends a message and waits for the response on an available connection.
@@ -703,7 +703,7 @@ where
         message.add_frame(txn_string_frame(&self.name));
         message.add_frame(txn_data_frame(&key_data));
         message.add_frame(txn_data_frame(&value_data));
-        put_long_initial(&mut message, -1);
+        put_long_initial(&mut message, 0);
 
         let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_nullable_response(&response)

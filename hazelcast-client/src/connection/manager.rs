@@ -1167,6 +1167,16 @@ impl ConnectionManager {
         self.send(message).await
     }
 
+    /// Invokes a request on the pinned (first) connection for `address`.
+    /// Used by transactions, which are bound to a single server endpoint.
+    pub async fn invoke_pinned(
+        &self,
+        address: std::net::SocketAddr,
+        message: hazelcast_core::ClientMessage,
+    ) -> Result<hazelcast_core::ClientMessage> {
+        self.invocation.invoke_pinned(address, message).await
+    }
+
     /// Sends a message and returns the response (backward-compatible wrapper).
     pub async fn send(
         &self,
