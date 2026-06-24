@@ -2597,14 +2597,20 @@ where
         } else {
             ttl.as_millis() as i64
         };
-        let _max_idle_ms = if max_idle.is_zero() {
+        let max_idle_ms = if max_idle.is_zero() {
             -1
         } else {
             max_idle.as_millis() as i64
         };
 
-        let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
-        Self::write_initial_thread_id_and_ttl(&mut message, ttl_ms);
+        let mut message = ClientMessage::create_for_encode(MAP_PUT_WITH_MAX_IDLE, partition_id);
+        // Fixed-size params: threadId + ttl + maxIdle
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(self.thread_id);
+            initial_frame.content.put_i64_le(ttl_ms);
+            initial_frame.content.put_i64_le(max_idle_ms);
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
