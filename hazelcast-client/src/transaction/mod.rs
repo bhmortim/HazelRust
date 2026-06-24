@@ -703,7 +703,7 @@ where
         message.add_frame(txn_string_frame(&self.name));
         message.add_frame(txn_data_frame(&key_data));
         message.add_frame(txn_data_frame(&value_data));
-        put_long_initial(&mut message, 0);
+        put_long_initial(&mut message, -1);
 
         let response = txn_invoke_at(&self.connection_manager, self.address, message).await?;
         txn_decode_nullable_response(&response)

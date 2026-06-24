@@ -736,52 +736,52 @@ pub const TXN_MAP_CONTAINS_KEY: i32 = 0x0E0100;
 pub const TXN_MAP_GET: i32 = 0x0E0200;
 
 /// Transactional map put request.
-pub const TXN_MAP_PUT: i32 = 0x0E0300;
+pub const TXN_MAP_PUT: i32 = 0x0E0600;
 
 /// Transactional map set request.
-pub const TXN_MAP_SET: i32 = 0x0E0400;
+pub const TXN_MAP_SET: i32 = 0x0E0700;
 
 /// Transactional map put if absent request.
-pub const TXN_MAP_PUT_IF_ABSENT: i32 = 0x0E0500;
+pub const TXN_MAP_PUT_IF_ABSENT: i32 = 0x0E0800;
 
 /// Transactional map replace request.
-pub const TXN_MAP_REPLACE: i32 = 0x0E0600;
+pub const TXN_MAP_REPLACE: i32 = 0x0E0900;
 
 /// Transactional map remove request.
-pub const TXN_MAP_REMOVE: i32 = 0x0E0800;
+pub const TXN_MAP_REMOVE: i32 = 0x0E0B00;
 
 /// Transactional map delete request.
-pub const TXN_MAP_DELETE: i32 = 0x0E0900;
+pub const TXN_MAP_DELETE: i32 = 0x0E0C00;
 
 /// Transactional map size request.
-pub const TXN_MAP_SIZE: i32 = 0x0E0B00;
+pub const TXN_MAP_SIZE: i32 = 0x0E0400;
 
 /// Transactional queue offer request.
-pub const TXN_QUEUE_OFFER: i32 = 0x100100;
+pub const TXN_QUEUE_OFFER: i32 = 0x120100;
 
 /// Transactional queue poll request.
-pub const TXN_QUEUE_POLL: i32 = 0x100300;
+pub const TXN_QUEUE_POLL: i32 = 0x120300;
 
 /// Transactional queue size request.
-pub const TXN_QUEUE_SIZE: i32 = 0x100500;
+pub const TXN_QUEUE_SIZE: i32 = 0x120500;
 
 /// Transactional set add request.
-pub const TXN_SET_ADD: i32 = 0x110100;
+pub const TXN_SET_ADD: i32 = 0x100100;
 
 /// Transactional set remove request.
-pub const TXN_SET_REMOVE: i32 = 0x110200;
+pub const TXN_SET_REMOVE: i32 = 0x100200;
 
 /// Transactional set size request.
-pub const TXN_SET_SIZE: i32 = 0x110300;
+pub const TXN_SET_SIZE: i32 = 0x100300;
 
 /// Transactional list add request.
-pub const TXN_LIST_ADD: i32 = 0x120100;
+pub const TXN_LIST_ADD: i32 = 0x110100;
 
 /// Transactional list remove request.
-pub const TXN_LIST_REMOVE: i32 = 0x120200;
+pub const TXN_LIST_REMOVE: i32 = 0x110200;
 
 /// Transactional list size request.
-pub const TXN_LIST_SIZE: i32 = 0x120300;
+pub const TXN_LIST_SIZE: i32 = 0x110300;
 
 /// XA transaction create request.
 pub const XA_TXN_CREATE: i32 = 0x150400;
