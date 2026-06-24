@@ -40,6 +40,27 @@ use hazelcast_core::serialization::{Deserializable, Serializable};
 pub trait EntryProcessor: Serializable + Send + Sync {
     /// The type of result returned when this processor is executed on an entry.
     type Output: Deserializable;
+
+    /// The `IdentifiedDataSerializable` factory id of the matching **server-side**
+    /// processor class, if this processor is sent as an `IdentifiedDataSerializable`.
+    ///
+    /// The Hazelcast member must reconstruct the processor from the wire bytes,
+    /// which requires a registered class. When both `factory_id` and `class_id`
+    /// return `Some`, the client serializes the processor in the
+    /// `IdentifiedDataSerializable` form (`[type=-2][isIdentified=1][factoryId]
+    /// [classId][writeData]`) so the member's `DataSerializableFactory` can create
+    /// it. When either is `None` (the default), the legacy plain serialization is
+    /// used (suitable only where the member already resolves the type by other
+    /// means).
+    fn factory_id(&self) -> Option<i32> {
+        None
+    }
+
+    /// The `IdentifiedDataSerializable` class id of the matching server-side
+    /// processor class. See [`factory_id`](EntryProcessor::factory_id).
+    fn class_id(&self) -> Option<i32> {
+        None
+    }
 }
 
 /// Marker trait for entry processors that can be offloaded to a separate thread pool.

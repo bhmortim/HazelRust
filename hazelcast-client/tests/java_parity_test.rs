@@ -476,24 +476,22 @@ async fn test_values_with_predicate() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_entry_set_with_predicate() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "entry_set_predicate");
+    // Use i64 values so `this >= 100` is a numeric comparison. With String
+    // values the member compares lexically ("50" >= "100" is true), so the
+    // predicate would not filter as intended — the test, not the client, was
+    // at fault. test_aggregate already exercises i64-valued maps.
+    let map: IMap<String, i64> = client.get_map("java_parity_test_entry_set_predicate");
 
-    map.put("item_a".to_string(), "100".to_string())
-        .await
-        .unwrap();
-    map.put("item_b".to_string(), "200".to_string())
-        .await
-        .unwrap();
-    map.put("item_c".to_string(), "50".to_string())
-        .await
-        .unwrap();
+    map.put("item_a".to_string(), 100).await.unwrap();
+    map.put("item_b".to_string(), 200).await.unwrap();
+    map.put("item_c".to_string(), 50).await.unwrap();
 
     let predicate = Predicates::sql("this >= 100");
     let entries = map.entries_with_predicate(&predicate).await.unwrap();
 
     assert_eq!(entries.len(), 2);
 
-    let as_map: HashMap<String, String> = entries.into_iter().collect();
+    let as_map: HashMap<String, i64> = entries.into_iter().collect();
     assert!(as_map.contains_key("item_a"));
     assert!(as_map.contains_key("item_b"));
 
@@ -587,28 +585,25 @@ async fn test_execute_on_keys() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_execute_on_entries_with_predicate() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "execute_on_entries_predicate");
+    // i64 values so `this > 100` filters numerically (a String `this > 100`
+    // compares lexically server-side, matching "50" too). Uses LongIncrementProcessor
+    // (server class id 2) which operates on Long values.
+    let map: IMap<String, i64> = client.get_map("java_parity_test_execute_on_entries_predicate");
 
-    map.put("user_1".to_string(), "50".to_string())
-        .await
-        .unwrap();
-    map.put("user_2".to_string(), "150".to_string())
-        .await
-        .unwrap();
-    map.put("user_3".to_string(), "200".to_string())
-        .await
-        .unwrap();
+    map.put("user_1".to_string(), 50).await.unwrap();
+    map.put("user_2".to_string(), 150).await.unwrap();
+    map.put("user_3".to_string(), 200).await.unwrap();
 
     let predicate = Predicates::sql("this > 100");
-    let processor = IncrementProcessor::new(10);
+    let processor = LongIncrementProcessor::new(10);
     let results = map
         .execute_on_entries_with_predicate(&processor, &predicate)
         .await
         .unwrap();
 
     assert_eq!(results.len(), 2);
-    assert_eq!(results.get(&"user_2".to_string()), Some(&"160".to_string()));
-    assert_eq!(results.get(&"user_3".to_string()), Some(&"210".to_string()));
+    assert_eq!(results.get(&"user_2".to_string()), Some(&160));
+    assert_eq!(results.get(&"user_3".to_string()), Some(&210));
 
     map.clear().await.unwrap();
 }
@@ -896,17 +891,25 @@ async fn test_aggregate_with_predicate() {
 #[ignore = "requires running Hazelcast cluster"]
 async fn test_project() {
     let client = create_test_client().await;
-    let map = get_test_map(&client, "project");
+    // Store values as HazelcastJsonValue (type id -130) so the member treats them
+    // as queryable JSON and can project the `name` attribute. Plain String values
+    // are opaque to the projection engine (no top-level `name` attribute).
+    let map: IMap<String, hazelcast_core::serialization::HazelcastJsonValue> =
+        client.get_map("java_parity_test_project");
 
     map.put(
         "user_1".to_string(),
-        r#"{"name":"Alice","age":30}"#.to_string(),
+        hazelcast_core::serialization::HazelcastJsonValue::from_string(
+            r#"{"name":"Alice","age":30}"#,
+        ),
     )
     .await
     .unwrap();
     map.put(
         "user_2".to_string(),
-        r#"{"name":"Bob","age":25}"#.to_string(),
+        hazelcast_core::serialization::HazelcastJsonValue::from_string(
+            r#"{"name":"Bob","age":25}"#,
+        ),
     )
     .await
     .unwrap();
@@ -971,9 +974,50 @@ impl IncrementProcessor {
 
 impl EntryProcessor for IncrementProcessor {
     type Output = String;
+
+    // Matches the server-side com.hazelcast.test.IncrementEntryProcessor registered
+    // under JavaParityFactory (factory id 1, class id 1) on the dev cluster, so the
+    // member can reconstruct the processor from the IdentifiedDataSerializable bytes.
+    fn factory_id(&self) -> Option<i32> {
+        Some(1)
+    }
+    fn class_id(&self) -> Option<i32> {
+        Some(1)
+    }
 }
 
 impl Serializable for IncrementProcessor {
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
+        output.write_long(self.increment)?;
+        Ok(())
+    }
+}
+
+/// Entry processor that increments a Long map value (server class id 2,
+/// com.hazelcast.test.IncrementLongEntryProcessor). Used where the map values
+/// are numeric (i64) so SQL predicates filter numerically.
+struct LongIncrementProcessor {
+    increment: i64,
+}
+
+impl LongIncrementProcessor {
+    fn new(increment: i64) -> Self {
+        Self { increment }
+    }
+}
+
+impl EntryProcessor for LongIncrementProcessor {
+    type Output = i64;
+
+    fn factory_id(&self) -> Option<i32> {
+        Some(1)
+    }
+    fn class_id(&self) -> Option<i32> {
+        Some(2)
+    }
+}
+
+impl Serializable for LongIncrementProcessor {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
         output.write_long(self.increment)?;
         Ok(())

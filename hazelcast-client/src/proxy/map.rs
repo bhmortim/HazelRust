@@ -2765,6 +2765,30 @@ where
         Ok(output.into_bytes())
     }
 
+    /// Serializes an entry processor for an `execute_on_*` request. When the
+    /// processor declares both a factory id and class id, it is written as
+    /// `IdentifiedDataSerializable` so the member can reconstruct it via a
+    /// registered `DataSerializableFactory`; otherwise the plain value
+    /// serialization is used (the legacy behaviour). All header ints are
+    /// big-endian (`write_int` uses `put_i32`), matching the Hazelcast Data
+    /// header and the projection codec.
+    fn serialize_processor<E: EntryProcessor>(processor: &E) -> Result<Vec<u8>> {
+        use hazelcast_core::serialization::DataOutput;
+        match (processor.factory_id(), processor.class_id()) {
+            (Some(factory_id), Some(class_id)) => {
+                let mut output = ObjectDataOutput::new();
+                output.write_int(0)?; // partition_hash placeholder
+                output.write_int(-2)?; // type id: IdentifiedDataSerializable
+                output.write_byte(1)?; // isIdentified = true
+                output.write_int(factory_id)?;
+                output.write_int(class_id)?;
+                processor.serialize(&mut output)?; // writeData payload
+                Ok(output.into_bytes())
+            }
+            _ => Self::serialize_value(processor),
+        }
+    }
+
     fn string_frame(s: &str) -> Frame {
         Frame::with_content(BytesMut::from(s.as_bytes()))
     }
@@ -3753,7 +3777,7 @@ where
         self.check_permission(PermissionAction::Read)?;
         self.check_permission(PermissionAction::Put)?;
         let key_data = Self::serialize_value(key)?;
-        let processor_data = Self::serialize_value(processor)?;
+        let processor_data = Self::serialize_processor(processor)?;
         let partition_id = self.partition_index_dynamic(&key_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_EXECUTE_ON_KEY, partition_id);
@@ -3811,7 +3835,7 @@ where
             return Ok(EntryProcessorResult::default());
         }
 
-        let processor_data = Self::serialize_value(processor)?;
+        let processor_data = Self::serialize_processor(processor)?;
 
         let mut message = ClientMessage::create_for_encode(MAP_EXECUTE_ON_KEYS, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
@@ -3889,7 +3913,7 @@ where
     {
         self.check_permission(PermissionAction::Read)?;
         self.check_permission(PermissionAction::Put)?;
-        let processor_data = Self::serialize_value(processor)?;
+        let processor_data = Self::serialize_processor(processor)?;
 
         let mut message =
             ClientMessage::create_for_encode(MAP_EXECUTE_ON_ALL_KEYS, PARTITION_ID_ANY);
@@ -3939,7 +3963,7 @@ where
     {
         self.check_permission(PermissionAction::Read)?;
         self.check_permission(PermissionAction::Put)?;
-        let processor_data = Self::serialize_value(processor)?;
+        let processor_data = Self::serialize_processor(processor)?;
         let predicate_data = predicate.to_predicate_data()?;
 
         let mut message =
@@ -4598,7 +4622,17 @@ where
                 continue;
             }
 
-            let mut input = ObjectDataInput::new(&frame.content);
+            // Each projected value is a Hazelcast Data: an 8-byte header
+            // [partition_hash: i32][type_id: i32] precedes the payload, so skip it
+            // before deserializing (otherwise the 0 partition_hash is read as the
+            // string length and every projected value decodes empty).
+            let content = &frame.content;
+            let payload = if content.len() > 8 {
+                &content[8..]
+            } else {
+                &content[..]
+            };
+            let mut input = ObjectDataInput::new(payload);
             results.push(T::deserialize(&mut input)?);
         }
 
@@ -5907,31 +5941,45 @@ where
         let frames = response.frames();
         let mut results = HashMap::new();
 
-        // Skip initial frame, pairs of frames are key/result
+        // The response is an EntryList<Data,Data>: a single data structure whose
+        // payload frames alternate key, value, key, value, ... (confirmed on the
+        // wire). Skip the initial frame and the empty BEGIN/END structure frames,
+        // then pair the remaining Data frames.
         let data_frames: Vec<_> = frames
             .iter()
             .skip(1)
             .filter(|f| !f.content.is_empty())
             .collect();
 
+        // Each frame is a full Hazelcast Data: an 8-byte header
+        // [partition_hash: i32][type_id: i32] precedes the serialized payload, so
+        // deserialize must start after it. (Without this skip the 4-byte
+        // partition_hash 0 was read as the string length, collapsing every key to
+        // "" and dropping all but one entry.)
+        let payload = |content: &[u8]| -> Vec<u8> {
+            if content.len() > 8 {
+                content[8..].to_vec()
+            } else {
+                content.to_vec()
+            }
+        };
+
         let mut i = 0;
         while i + 1 < data_frames.len() {
             let key_frame = data_frames[i];
             let result_frame = data_frames[i + 1];
-
-            if key_frame.flags & END_FLAG != 0 && key_frame.content.is_empty() {
-                break;
-            }
 
             if key_frame.flags & IS_NULL_FLAG != 0 {
                 i += 2;
                 continue;
             }
 
-            let mut key_input = ObjectDataInput::new(&key_frame.content);
+            let key_payload = payload(&key_frame.content);
+            let mut key_input = ObjectDataInput::new(&key_payload);
             let key = K::deserialize(&mut key_input)?;
             if result_frame.flags & IS_NULL_FLAG == 0 && !result_frame.content.is_empty() {
-                let mut result_input = ObjectDataInput::new(&result_frame.content);
+                let result_payload = payload(&result_frame.content);
+                let mut result_input = ObjectDataInput::new(&result_payload);
                 let result = R::deserialize(&mut result_input)?;
                 results.insert(key, result);
             }
