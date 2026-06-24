@@ -184,6 +184,23 @@ impl InvocationService {
         self._readers.write().await.push(handle);
     }
 
+    /// Removes the entire connection pool for `address`.
+    ///
+    /// Used before a reconnect rebuilds the pool: it drops the (now-dead) write
+    /// halves so `send_raw`'s round-robin can no longer select a stale, broken
+    /// connection. The reader tasks for those connections exit on their own when
+    /// their read halves break and fail any still-in-flight ops (RR-21), so no
+    /// caller is left blocked. A no-op if no pool exists for the address (e.g. on
+    /// the initial connect). See cbdc lead #3.
+    pub fn remove_address(&self, address: SocketAddr) {
+        if self.pools.remove(&address).is_some() {
+            tracing::info!(
+                address = %address,
+                "evicted stale connection pool (reconnect or teardown)"
+            );
+        }
+    }
+
     /// Background reader loop that decodes messages and routes to pending ops.
     ///
     /// On teardown (decode error / clean close / I/O error) it fails this

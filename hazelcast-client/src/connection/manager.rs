@@ -373,7 +373,11 @@ impl ConnectionManager {
             ));
         }
 
-        self.spawn_heartbeat_task();
+        // NOTE: the heartbeat task (which also drives reconnect) is spawned by the
+        // owning HazelcastClient once the manager is behind an Arc — the
+        // heartbeat-driven reconnect needs `Arc<Self>` to route through the full
+        // authenticated `connect_to` path (cbdc lead #3). `start` itself only needs
+        // `&self`, so direct unit-test callers are unaffected.
 
         let _ = self.lifecycle_sender.send(LifecycleEvent::ClientConnected);
         tracing::debug!("client lifecycle: ClientConnected");
@@ -564,6 +568,12 @@ impl ConnectionManager {
 
         // Store auth connection for heartbeats and metadata
         self.connections.write().await.insert(address, connection);
+
+        // On a reconnect this address may still carry a stale pool of dead write
+        // halves from the previous (now-broken) connection; evict it so the pool
+        // rebuilt below contains only the freshly authenticated connections.
+        // No-op on the initial connect. (cbdc lead #3.)
+        self.invocation.remove_address(address);
 
         // Create data connections for InvocationService (connection pool)
         let pool_size = self.config.connection_pool_size();
@@ -1755,12 +1765,15 @@ impl ConnectionManager {
         }
     }
 
-    fn spawn_heartbeat_task(&self) {
+    pub(crate) fn spawn_heartbeat_task(self: &Arc<Self>) {
+        // Clone the whole manager (Arc) so the heartbeat-driven reconnect can go
+        // through the full `connect_to` path (re-auth + pool rebuild), not a raw
+        // unauthenticated socket. (cbdc lead #3.)
+        let manager = Arc::clone(self);
         let connections = Arc::clone(&self.connections);
         let event_sender = self.event_sender.clone();
         let heartbeat_interval = self.config.network().heartbeat_interval();
         let reconnect_mode = self.config.network().reconnect_mode();
-        let config = Arc::clone(&self.config);
         let has_failover = self.failover_config.is_some();
         let mut shutdown_rx = self.shutdown.subscribe();
 
@@ -1804,17 +1817,22 @@ impl ConnectionManager {
                             drop(conns);
 
                             if reconnect_mode.is_enabled() {
-                                let connections_clone = Arc::clone(&connections);
-                                let event_sender_clone = event_sender.clone();
-                                let config_clone = Arc::clone(&config);
-
+                                // Reconnect via the manager's `reconnect` -> `connect_to`,
+                                // which re-authenticates the new connection, parses the
+                                // partition count, evicts the dead pool and registers a
+                                // fresh authenticated invocation pool — so data ops resume
+                                // after the drop. The previous static `attempt_reconnect`
+                                // opened a raw, unauthenticated socket and never touched the
+                                // invocation pool, leaving it full of dead write halves.
+                                let manager_clone = Arc::clone(&manager);
                                 let reconnect_task = async move {
-                                    Self::attempt_reconnect(
-                                        address,
-                                        &connections_clone,
-                                        &event_sender_clone,
-                                        &config_clone,
-                                    ).await;
+                                    if let Err(e) = manager_clone.reconnect(address).await {
+                                        tracing::error!(
+                                            address = %address,
+                                            error = %e,
+                                            "heartbeat-driven reconnect failed"
+                                        );
+                                    }
                                 };
 
                                 if reconnect_mode.is_async() {
@@ -1841,107 +1859,6 @@ impl ConnectionManager {
                 }
             }
         });
-    }
-
-    async fn attempt_reconnect(
-        address: SocketAddr,
-        connections: &Arc<RwLock<HashMap<SocketAddr, Connection>>>,
-        event_sender: &broadcast::Sender<ConnectionEvent>,
-        config: &Arc<ClientConfig>,
-    ) {
-        let retry_config = config.retry();
-        let mut current_backoff = retry_config.initial_backoff();
-        let mut attempt = 0u32;
-
-        loop {
-            attempt += 1;
-
-            if attempt > retry_config.max_retries() {
-                let error = format!(
-                    "failed to reconnect after {} attempts",
-                    retry_config.max_retries()
-                );
-                tracing::error!(
-                    address = %address,
-                    attempts = attempt,
-                    "reconnection failed permanently"
-                );
-                let _ = event_sender.send(ConnectionEvent::ReconnectFailed { address, error });
-                return;
-            }
-
-            let _ = event_sender.send(ConnectionEvent::ReconnectAttempt {
-                address,
-                attempt,
-                next_delay: current_backoff,
-            });
-
-            tracing::debug!(
-                address = %address,
-                attempt = attempt,
-                backoff = ?current_backoff,
-                "attempting reconnection"
-            );
-
-            tokio::time::sleep(current_backoff).await;
-
-            let connect_result = timeout(
-                config.network().connection_timeout(),
-                Self::create_connection_static(address, config),
-            )
-            .await;
-
-            match connect_result {
-                Ok(Ok(connection)) => {
-                    let id = connection.id();
-                    connections.write().await.insert(address, connection);
-                    let _ = event_sender.send(ConnectionEvent::Connected { id, address });
-                    tracing::info!(
-                        address = %address,
-                        attempt = attempt,
-                        "reconnection successful"
-                    );
-                    return;
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!(
-                        address = %address,
-                        attempt = attempt,
-                        error = %e,
-                        "reconnection attempt failed"
-                    );
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        address = %address,
-                        attempt = attempt,
-                        "reconnection attempt timed out"
-                    );
-                }
-            }
-
-            current_backoff = calculate_backoff_with_jitter(
-                current_backoff,
-                retry_config.multiplier(),
-                retry_config.max_backoff(),
-                retry_config.jitter(),
-            );
-        }
-    }
-
-    async fn create_connection_static(
-        address: SocketAddr,
-        _config: &ClientConfig,
-    ) -> Result<Connection> {
-        #[cfg(feature = "tls")]
-        {
-            let tls_config = _config.network().tls();
-            if tls_config.enabled() {
-                return Connection::connect_tls(address, tls_config, None).await;
-            }
-        }
-
-        Connection::connect(address).await
     }
 }
 

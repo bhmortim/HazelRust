@@ -251,10 +251,12 @@ impl HazelcastClient {
     /// - Network errors occur during connection
     pub async fn new(config: ClientConfig) -> Result<Self> {
         let client_uuid = Uuid::new_v4();
-        let connection_manager = ConnectionManager::from_config(config.clone());
+        let connection_manager = Arc::new(ConnectionManager::from_config(config.clone()));
         connection_manager.start().await?;
-
-        let connection_manager = Arc::new(connection_manager);
+        // Spawn the heartbeat/reconnect task now that the manager is behind an Arc:
+        // the heartbeat-driven reconnect routes through the full authenticated
+        // `connect_to` path and rebuilds the invocation pool (cbdc lead #3).
+        connection_manager.spawn_heartbeat_task();
 
         // Initialize CP session manager for session-aware CP proxies
         let cp_session_manager = Arc::new(CPSessionManager::new(Arc::clone(&connection_manager)));
