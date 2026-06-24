@@ -573,8 +573,16 @@ impl PortableReader for DefaultPortableReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in portable field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_byte()?);
                 }
@@ -592,8 +600,16 @@ impl PortableReader for DefaultPortableReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in portable field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_bool()?);
                 }
@@ -611,8 +627,16 @@ impl PortableReader for DefaultPortableReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in portable field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     let code = input.read_short()? as u32;
                     let c = char::from_u32(code).ok_or_else(|| {
@@ -634,8 +658,16 @@ impl PortableReader for DefaultPortableReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in portable field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_short()?);
                 }
@@ -653,8 +685,16 @@ impl PortableReader for DefaultPortableReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in portable field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_int()?);
                 }
@@ -672,8 +712,16 @@ impl PortableReader for DefaultPortableReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in portable field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_long()?);
                 }
@@ -691,8 +739,16 @@ impl PortableReader for DefaultPortableReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in portable field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_float()?);
                 }
@@ -710,8 +766,16 @@ impl PortableReader for DefaultPortableReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in portable field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_double()?);
                 }
@@ -729,8 +793,16 @@ impl PortableReader for DefaultPortableReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in portable field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_string()?);
                 }
@@ -749,8 +821,16 @@ impl PortableReader for DefaultPortableReader {
                     return Ok(None);
                 }
 
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in portable field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
 
                 for _ in 0..len {
                     let _factory_id = input.read_int()?;

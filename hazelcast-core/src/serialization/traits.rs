@@ -172,6 +172,10 @@ impl Serializable for Vec<u8> {
         output.write_int(self.len() as i32)?;
         output.write_bytes(self)
     }
+
+    fn type_id(&self) -> i32 {
+        -12 // CONSTANT_TYPE_BYTE_ARRAY — was the trait default -11 (STRING), corrupting binary values cross-client
+    }
 }
 
 impl Deserializable for Vec<u8> {
@@ -186,6 +190,10 @@ impl Serializable for [u8] {
         output.write_int(self.len() as i32)?;
         output.write_bytes(self)
     }
+
+    fn type_id(&self) -> i32 {
+        -12 // CONSTANT_TYPE_BYTE_ARRAY
+    }
 }
 
 // ============================================================================
@@ -195,6 +203,10 @@ impl Serializable for [u8] {
 impl Serializable for u8 {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_byte(*self as i8)
+    }
+
+    fn type_id(&self) -> i32 {
+        -3 // CONSTANT_TYPE_BYTE
     }
 }
 
@@ -208,6 +220,10 @@ impl Serializable for u16 {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_short(*self as i16)
     }
+
+    fn type_id(&self) -> i32 {
+        -6 // CONSTANT_TYPE_SHORT
+    }
 }
 
 impl Deserializable for u16 {
@@ -220,6 +236,10 @@ impl Serializable for u32 {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_int(*self as i32)
     }
+
+    fn type_id(&self) -> i32 {
+        -7 // CONSTANT_TYPE_INTEGER
+    }
 }
 
 impl Deserializable for u32 {
@@ -231,6 +251,10 @@ impl Deserializable for u32 {
 impl Serializable for u64 {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_long(*self as i64)
+    }
+
+    fn type_id(&self) -> i32 {
+        -8 // CONSTANT_TYPE_LONG
     }
 }
 
@@ -377,6 +401,28 @@ mod tests {
         let mut input = ObjectDataInput::new(bytes);
         let result = T::deserialize(&mut input).unwrap();
         assert_eq!(value, result);
+    }
+
+    /// Golden-vector regression: each built-in type must carry its correct
+    /// Hazelcast `SerializationConstants` type id in the Data header. A wrong
+    /// type id silently corrupts the value for any other client / SQL / the
+    /// server's own type interpretation (CBDC-disqualifying). These were the
+    /// values that regressed to the trait default STRING(-11).
+    #[test]
+    fn test_constant_type_ids_match_hazelcast() {
+        assert_eq!(0i8.type_id(), -3, "BYTE");
+        assert_eq!(0u8.type_id(), -3, "BYTE (u8)");
+        assert_eq!(false.type_id(), -4, "BOOLEAN");
+        assert_eq!(0i16.type_id(), -6, "SHORT");
+        assert_eq!(0u16.type_id(), -6, "SHORT (u16)");
+        assert_eq!(0i32.type_id(), -7, "INTEGER");
+        assert_eq!(0u32.type_id(), -7, "INTEGER (u32)");
+        assert_eq!(0i64.type_id(), -8, "LONG");
+        assert_eq!(0u64.type_id(), -8, "LONG (u64)");
+        assert_eq!(0f32.type_id(), -9, "FLOAT");
+        assert_eq!(0f64.type_id(), -10, "DOUBLE");
+        assert_eq!(String::from("x").type_id(), -11, "STRING");
+        assert_eq!(vec![1u8, 2, 3].type_id(), -12, "BYTE_ARRAY");
     }
 
     #[test]

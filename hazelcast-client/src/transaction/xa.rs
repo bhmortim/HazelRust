@@ -556,10 +556,17 @@ impl XATransaction {
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
         let address = self.get_connection_address().await?;
         self.connection_manager.send_to(address, message).await?;
-        self.connection_manager
+        let response = self
+            .connection_manager
             .receive_from(address)
             .await?
-            .ok_or_else(|| HazelcastError::Connection("connection closed unexpectedly".to_string()))
+            .ok_or_else(|| {
+                HazelcastError::Connection("connection closed unexpectedly".to_string())
+            })?;
+        // Surface a server EXCEPTION (message type 0) as a typed error. Without this,
+        // a failed XA prepare/commit/rollback was silently treated as success —
+        // a two-phase-commit atomicity violation (divergent ledger state).
+        crate::connection::invocation::check_response(response)
     }
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
@@ -586,7 +593,11 @@ impl XATransaction {
                 initial_frame.content[offset + 3],
             ]))
         } else {
-            Ok(0)
+            // Do NOT default a too-short/malformed response to 0 (== XA_OK):
+            // that would let a coordinator commit a branch the server never prepared.
+            Err(HazelcastError::Serialization(
+                "XA response too short to contain an int vote".to_string(),
+            ))
         }
     }
 }

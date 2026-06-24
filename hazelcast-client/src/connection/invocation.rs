@@ -417,7 +417,7 @@ impl InvocationService {
 
 /// If the response is a server error (message type 0), decode it into a
 /// `HazelcastError`; otherwise pass the response through unchanged.
-fn check_response(response: ClientMessage) -> Result<ClientMessage> {
+pub(crate) fn check_response(response: ClientMessage) -> Result<ClientMessage> {
     if response.message_type() == Some(0) {
         return Err(decode_error_response(&response));
     }

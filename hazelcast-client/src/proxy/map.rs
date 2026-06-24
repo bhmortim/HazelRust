@@ -1757,7 +1757,9 @@ where
         let get_results = futures::future::join_all(futs).await;
 
         for (key, get_result) in keys_vec.into_iter().zip(get_results) {
-            if let Ok(Some(value)) = get_result {
+            // A failed get must surface as an error, not be silently omitted
+            // (silent omission is indistinguishable from a genuinely absent key).
+            if let Some(value) = get_result? {
                 results.insert(key, value);
             }
         }
@@ -3404,14 +3406,16 @@ where
                 continue;
             }
 
-            // Skip 8-byte Data header (partition_hash + type_id)
+            // Each element is a Data: 8-byte header (partition_hash + type_id) + payload.
             if frame.content.len() < 8 {
-                continue;
+                return Err(HazelcastError::Serialization(
+                    "values/keys element frame shorter than 8-byte Data header".to_string(),
+                ));
             }
             let mut input = ObjectDataInput::new(&frame.content[8..]);
-            if let Ok(value) = T::deserialize(&mut input) {
-                values.push(value);
-            }
+            // Propagate a deserialize failure instead of silently dropping the element.
+            // Silent drop -> short, wrong-but-plausible collections (CBDC-disqualifying).
+            values.push(T::deserialize(&mut input)?);
         }
 
         Ok(values)
@@ -4476,9 +4480,7 @@ where
             }
 
             let mut input = ObjectDataInput::new(&frame.content);
-            if let Ok(value) = T::deserialize(&mut input) {
-                values.push(value);
-            }
+            values.push(T::deserialize(&mut input)?);
         }
 
         Ok((values, anchors))
@@ -4566,12 +4568,9 @@ where
             let mut key_input = ObjectDataInput::new(&key_frame.content);
             let mut value_input = ObjectDataInput::new(&value_frame.content);
 
-            if let (Ok(key), Ok(value)) = (
-                K::deserialize(&mut key_input),
-                V::deserialize(&mut value_input),
-            ) {
-                entries.push((key, value));
-            }
+            let key = K::deserialize(&mut key_input)?;
+            let value = V::deserialize(&mut value_input)?;
+            entries.push((key, value));
         }
 
         Ok((entries, anchors))
@@ -4593,9 +4592,7 @@ where
             }
 
             let mut input = ObjectDataInput::new(&frame.content);
-            if let Ok(value) = T::deserialize(&mut input) {
-                results.push(value);
-            }
+            results.push(T::deserialize(&mut input)?);
         }
 
         Ok(results)
@@ -5924,13 +5921,11 @@ where
             }
 
             let mut key_input = ObjectDataInput::new(&key_frame.content);
-            if let Ok(key) = K::deserialize(&mut key_input) {
-                if result_frame.flags & IS_NULL_FLAG == 0 && !result_frame.content.is_empty() {
-                    let mut result_input = ObjectDataInput::new(&result_frame.content);
-                    if let Ok(result) = R::deserialize(&mut result_input) {
-                        results.insert(key, result);
-                    }
-                }
+            let key = K::deserialize(&mut key_input)?;
+            if result_frame.flags & IS_NULL_FLAG == 0 && !result_frame.content.is_empty() {
+                let mut result_input = ObjectDataInput::new(&result_frame.content);
+                let result = R::deserialize(&mut result_input)?;
+                results.insert(key, result);
             }
 
             i += 2;

@@ -81,7 +81,7 @@ pub const MAP_REMOVE: i32 = 0x010300;
 pub const MAP_PUT_ALL: i32 = 0x012C00;
 
 /// Map set all request.
-pub const MAP_SET_ALL: i32 = 0x012C00;
+pub const MAP_SET_ALL: i32 = 0x014900;
 
 /// Map get all request.
 pub const MAP_GET_ALL: i32 = 0x012300;
@@ -318,7 +318,7 @@ pub const MULTI_MAP_ADD_ENTRY_LISTENER: i32 = 0x020E00;
 pub const MULTI_MAP_REMOVE_ENTRY_LISTENER: i32 = 0x020F00;
 
 /// MultiMap add entry listener with predicate request.
-pub const MULTI_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x021500;
+pub const MULTI_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE: i32 = 0x020D00;
 
 /// Topic publish request.
 pub const TOPIC_PUBLISH: i32 = 0x040100;
@@ -414,13 +414,13 @@ pub const CLIENT_ADD_PARTITION_LOST_LISTENER: i32 = 0x000600;
 pub const CLIENT_REMOVE_PARTITION_LOST_LISTENER: i32 = 0x000700;
 
 /// Client add distributed object listener request.
-pub const CLIENT_ADD_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000800;
+pub const CLIENT_ADD_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000900;
 
 /// Client remove distributed object listener request.
-pub const CLIENT_REMOVE_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000900;
+pub const CLIENT_REMOVE_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000A00;
 
 /// Client get distributed objects request.
-pub const CLIENT_GET_DISTRIBUTED_OBJECTS: i32 = 0x000A00;
+pub const CLIENT_GET_DISTRIBUTED_OBJECTS: i32 = 0x000800;
 
 /// Client create proxy request.
 pub const CLIENT_CREATE_PROXY: i32 = 0x000400;
@@ -786,25 +786,25 @@ pub const TXN_LIST_REMOVE: i32 = 0x110200;
 pub const TXN_LIST_SIZE: i32 = 0x110300;
 
 /// XA transaction create request.
-pub const XA_TXN_CREATE: i32 = 0x150400;
+pub const XA_TXN_CREATE: i32 = 0x140500;
 
 /// XA transaction prepare request.
-pub const XA_TXN_PREPARE: i32 = 0x150500;
+pub const XA_TXN_PREPARE: i32 = 0x140600;
 
 /// XA transaction commit request.
-pub const XA_TXN_COMMIT: i32 = 0x150600;
+pub const XA_TXN_COMMIT: i32 = 0x140400;
 
 /// XA transaction rollback request.
-pub const XA_TXN_ROLLBACK: i32 = 0x150700;
+pub const XA_TXN_ROLLBACK: i32 = 0x140700;
 
 /// XA transaction clear remote request.
-pub const XA_TXN_CLEAR_REMOTE: i32 = 0x150800;
+pub const XA_TXN_CLEAR_REMOTE: i32 = 0x140100;
 
 /// XA transaction collect transactions request.
-pub const XA_TXN_COLLECT_TRANSACTIONS: i32 = 0x150900;
+pub const XA_TXN_COLLECT_TRANSACTIONS: i32 = 0x140200;
 
 /// XA transaction finalize request.
-pub const XA_TXN_FINALIZE: i32 = 0x150A00;
+pub const XA_TXN_FINALIZE: i32 = 0x140300;
 
 /// Durable executor submit to partition request.
 pub const DURABLE_EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x180100;
@@ -831,10 +831,10 @@ pub const CARDINALITY_ESTIMATOR_ADD: i32 = 0x160100;
 pub const CARDINALITY_ESTIMATOR_ESTIMATE: i32 = 0x160200;
 
 /// Map add interceptor request.
-pub const MAP_ADD_INTERCEPTOR: i32 = 0x012E00;
+pub const MAP_ADD_INTERCEPTOR: i32 = 0x011400;
 
 /// Map remove interceptor request.
-pub const MAP_REMOVE_INTERCEPTOR: i32 = 0x012F00;
+pub const MAP_REMOVE_INTERCEPTOR: i32 = 0x011500;
 
 /// Map load all keys request.
 pub const MAP_LOAD_ALL: i32 = 0x012000;
@@ -843,10 +843,10 @@ pub const MAP_LOAD_ALL: i32 = 0x012000;
 pub const MAP_LOAD_GIVEN_KEYS: i32 = 0x012100;
 
 /// Map add partition lost listener request.
-pub const MAP_ADD_PARTITION_LOST_LISTENER: i32 = 0x012200;
+pub const MAP_ADD_PARTITION_LOST_LISTENER: i32 = 0x011B00;
 
 /// Map remove partition lost listener request.
-pub const MAP_REMOVE_PARTITION_LOST_LISTENER: i32 = 0x012300;
+pub const MAP_REMOVE_PARTITION_LOST_LISTENER: i32 = 0x011C00;
 
 /// Cache get request.
 pub const CACHE_GET: i32 = 0x130100;
@@ -965,7 +965,7 @@ pub const MAP_FETCH_KEYS: i32 = 0x013700;
 pub const MAP_FETCH_ENTRIES: i32 = 0x013800;
 
 /// Map fetch values request (for partition-level iteration).
-pub const MAP_FETCH_VALUES: i32 = 0x013900;
+pub const MAP_FETCH_VALUES: i32 = 0x014000;
 
 /// Map contains value request.
 pub const MAP_CONTAINS_VALUE: i32 = 0x010700;
@@ -985,6 +985,13 @@ pub const CLIENT_STATISTICS: i32 = 0x000C00;
 // CP Subsystem Management operations
 
 /// CP Subsystem get group IDs request.
+// NOTE: this value (0x1E0100) is actually CPGroup.createCPGroup, and the CP proxies
+// (AtomicLong/AtomicReference/etc.) deliberately use this constant to create/resolve
+// their Raft group — so the VALUE is load-bearing despite the misleading NAME.
+// The real CPSubsystem.getCPGroupIds is 0x220500 (service 0x22). Renumbering this
+// constant breaks live CP group resolution; the correct fix is to introduce a
+// dedicated CP_GROUP_CREATE_CP_GROUP=0x1E0100 constant and repoint the proxies, then
+// give this its true 0x220500. Tracked in CBDC_REMEDIATION_PLAN.md (R1 follow-up).
 pub const CP_SUBSYSTEM_GET_GROUP_IDS: i32 = 0x1E0100;
 
 /// CP Subsystem get group request.

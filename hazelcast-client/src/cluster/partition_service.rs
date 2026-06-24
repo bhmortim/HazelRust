@@ -345,11 +345,13 @@ impl PartitionService {
             return Partition::new(0, None);
         }
 
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        key.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let partition_id = ((hash as i64).abs() % (partition_count as i64)) as i32;
+        // Use Hazelcast's MurmurHash3-based partitioning over the SERIALIZED key
+        // payload (matching the verified IMap key path), NOT Rust's SipHash —
+        // SipHash returns a partition unrelated to where the key actually lives.
+        let partition_id = match key.to_bytes() {
+            Ok(bytes) => hazelcast_core::compute_partition_hash(&bytes).abs() % partition_count,
+            Err(_) => 0,
+        };
 
         let owner_uuid = self
             .connection_manager

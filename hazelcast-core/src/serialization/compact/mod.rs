@@ -1518,8 +1518,16 @@ impl CompactReader for DefaultCompactReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in compact field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_bool()?);
                 }
@@ -1537,8 +1545,16 @@ impl CompactReader for DefaultCompactReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in compact field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_byte()?);
                 }
@@ -1556,8 +1572,16 @@ impl CompactReader for DefaultCompactReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in compact field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_short()?);
                 }
@@ -1575,8 +1599,16 @@ impl CompactReader for DefaultCompactReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in compact field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_int()?);
                 }
@@ -1594,8 +1626,16 @@ impl CompactReader for DefaultCompactReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in compact field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_long()?);
                 }
@@ -1613,8 +1653,16 @@ impl CompactReader for DefaultCompactReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in compact field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_float()?);
                 }
@@ -1632,8 +1680,16 @@ impl CompactReader for DefaultCompactReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in compact field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     result.push(input.read_double()?);
                 }
@@ -1651,8 +1707,16 @@ impl CompactReader for DefaultCompactReader {
                 if !has_value {
                     return Ok(None);
                 }
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in compact field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
                 for _ in 0..len {
                     let has_str = input.read_bool()?;
                     if has_str {
@@ -1711,8 +1775,16 @@ impl CompactReader for DefaultCompactReader {
                     return Ok(None);
                 }
 
-                let len = input.read_int()? as usize;
-                let mut result = Vec::with_capacity(len);
+                let len = input.read_int()?;
+                if len < 0 {
+                    return Err(crate::error::HazelcastError::Serialization(
+                        "negative array length in compact field".to_string(),
+                    ));
+                }
+                let len = len as usize;
+                // Do not pre-allocate an attacker-controlled capacity (OOM/abort DoS):
+                // cap the initial reservation; the loop errors cleanly if input runs out.
+                let mut result = Vec::with_capacity(len.min(1024));
 
                 for _ in 0..len {
                     let type_name = input.read_string()?;

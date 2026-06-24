@@ -126,6 +126,10 @@
 //! | `config-file` | Declarative configuration from YAML/TOML files |
 
 #![warn(missing_docs)]
+// Test fixtures use literals like 3.14159 as sample float values, not as PI.
+// `approx_constant` is deny-by-default; allow it in test builds only so the clippy
+// --all-targets gate is green without masking the lint in production code.
+#![cfg_attr(test, allow(clippy::approx_constant))]
 // The protocol/proxy layer has inherently complex generic signatures; aliasing
 // every one of them is a readability nicety tracked in EXECUTION_PLAN.md, not a
 // correctness concern, so the lint is allowed crate-wide for now.

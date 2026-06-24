@@ -51,6 +51,10 @@
 // serialization/protocol layer; aliasing tracked separately.
 #![allow(clippy::type_complexity)]
 #![allow(clippy::multiple_bound_locations)]
+// Test fixtures use literals like 3.14 / 2.718 purely as sample float values, not as
+// PI/E. `approx_constant` is deny-by-default; allow it in test builds only so the
+// clippy --all-targets gate is green without masking the lint in production code.
+#![cfg_attr(test, allow(clippy::approx_constant))]
 
 pub mod error;
 pub mod partition_aware;

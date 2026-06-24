@@ -1713,12 +1713,17 @@ pub struct SecurityConfig {
 
 impl std::fmt::Debug for SecurityConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print secrets: redact password/token (presence only). Leaking these
+        // in a {:?} log/error/panic would expose ledger-cluster credentials.
         f.debug_struct("SecurityConfig")
             .field("username", &self.username)
-            .field("password", &self.password)
-            .field("token", &self.token)
+            .field(
+                "password",
+                &self.password.as_ref().map(|_| "***REDACTED***"),
+            )
+            .field("token", &self.token.as_ref().map(|_| "***REDACTED***"))
             .field("authenticator", &self.authenticator.is_some())
-            .field("credential_provider", &self.credential_provider)
+            .field("credential_provider", &self.credential_provider.is_some())
             .finish()
     }
 }
@@ -1795,10 +1800,14 @@ pub struct SecurityConfigBuilder {
 
 impl std::fmt::Debug for SecurityConfigBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print secrets: redact password/token (presence only).
         f.debug_struct("SecurityConfigBuilder")
             .field("username", &self.username)
-            .field("password", &self.password)
-            .field("token", &self.token)
+            .field(
+                "password",
+                &self.password.as_ref().map(|_| "***REDACTED***"),
+            )
+            .field("token", &self.token.as_ref().map(|_| "***REDACTED***"))
             .field("authenticator", &self.authenticator.is_some())
             .field("credential_provider", &self.credential_provider.is_some())
             .finish()

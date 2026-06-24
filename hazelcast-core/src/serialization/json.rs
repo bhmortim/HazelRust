@@ -62,6 +62,10 @@ impl Serializable for HazelcastJsonValue {
     fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
         output.write_string(&self.json)
     }
+
+    fn type_id(&self) -> i32 {
+        JSON_TYPE_ID // -130; was the trait default -11 (STRING), breaking server-side JSON/SQL queries
+    }
 }
 
 impl Deserializable for HazelcastJsonValue {

@@ -827,9 +827,7 @@ where
             }
 
             let mut input = ObjectDataInput::new(Self::skip8(&frame.content));
-            if let Ok(value) = T::deserialize(&mut input) {
-                result.push(value);
-            }
+            result.push(T::deserialize(&mut input)?);
         }
 
         Ok(result)

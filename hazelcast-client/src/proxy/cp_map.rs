@@ -244,7 +244,15 @@ where
     }
 
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
-        value.to_bytes()
+        // Emit a proper Hazelcast Data: [partition_hash: i32 BE][type_id: i32 BE][payload],
+        // matching the IMap path. Previously this wrote a bare payload with no type-id
+        // header, making CP-map entries non-standard Data (unreadable by other clients).
+        use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
+        let mut output = ObjectDataOutput::new();
+        output.write_int(0)?; // partition_hash placeholder (CP maps are Raft-replicated, not partitioned)
+        output.write_int(value.type_id())?;
+        value.serialize(&mut output)?;
+        Ok(output.into_bytes())
     }
 
     fn string_frame(s: &str) -> Frame {
@@ -288,7 +296,14 @@ where
             return Ok(None);
         }
 
-        let value = V::from_bytes(&data_frame.content)?;
+        // Skip the 8-byte Data header (partition_hash + type_id) before deserializing,
+        // matching the IMap value-decode path and the header now written by serialize_value.
+        if data_frame.content.len() < 8 {
+            return Err(HazelcastError::Serialization(
+                "CP map value frame shorter than 8-byte Data header".to_string(),
+            ));
+        }
+        let value = V::from_bytes(&data_frame.content[8..])?;
         Ok(Some(value))
     }
 

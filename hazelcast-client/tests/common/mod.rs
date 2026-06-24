@@ -108,7 +108,18 @@ pub async fn wait_for_cluster_ready() {
 
 pub fn skip_if_no_cluster() -> bool {
     let addr: SocketAddr = DEFAULT_CLUSTER_ADDRESS.parse().unwrap();
-    std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_err()
+    let unreachable = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_err();
+    // A cluster-absent run must NOT silently report green (false assurance). When
+    // HZ_REQUIRE_CLUSTER is set (CI / release gates), an unreachable cluster is a hard
+    // failure rather than a skip. Without the env var, local dev runs still skip.
+    if unreachable && std::env::var("HZ_REQUIRE_CLUSTER").is_ok() {
+        panic!(
+            "HZ_REQUIRE_CLUSTER is set but no Hazelcast cluster is reachable at {} — \
+             refusing to skip (a skipped integration test must not count as passed)",
+            DEFAULT_CLUSTER_ADDRESS
+        );
+    }
+    unreachable
 }
 
 #[macro_export]

@@ -1,4 +1,5 @@
 //! IQueue client-side serialization benchmarks.
+#![allow(clippy::approx_constant)] // sample float literals, not PI
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use hazelcast_core::serialization::{
