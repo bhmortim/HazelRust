@@ -86,6 +86,9 @@ pub trait Predicate: Debug + Send + Sync {
     /// Serializes this predicate to bytes including type information.
     fn to_predicate_data(&self) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
+        write_i32(&mut output, 0)?; // partition hash
+        write_i32(&mut output, -2)?; // type id: IdentifiedDataSerializable
+        write_bool(&mut output, true)?; // isIdentified
         write_i32(&mut output, PREDICATE_FACTORY_ID)?;
         write_i32(&mut output, self.class_id())?;
         self.write_data(&mut output)?;
@@ -120,7 +123,7 @@ fn write_string(output: &mut ObjectDataOutput, value: &str) -> Result<()> {
 
 /// Helper to write serialized data bytes with length prefix.
 fn write_data_bytes(output: &mut ObjectDataOutput, data: &[u8]) -> Result<()> {
-    write_i32(output, data.len() as i32)?;
+    // Predicate values are pre-serialized writeObject bytes; emit them as-is.
     for byte in data {
         output.write_byte(*byte as i8)?;
     }
@@ -129,7 +132,9 @@ fn write_data_bytes(output: &mut ObjectDataOutput, data: &[u8]) -> Result<()> {
 
 /// Serializes a value to bytes.
 fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
+    // writeObject form: type id (BE) followed by the value payload, no length prefix.
     let mut output = ObjectDataOutput::new();
+    write_i32(&mut output, value.type_id())?;
     value.serialize(&mut output)?;
     Ok(output.into_bytes())
 }
