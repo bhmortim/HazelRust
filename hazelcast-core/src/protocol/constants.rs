@@ -851,6 +851,14 @@ pub const MAP_ADD_PARTITION_LOST_LISTENER: i32 = 0x011B00;
 /// Map remove partition lost listener request.
 pub const MAP_REMOVE_PARTITION_LOST_LISTENER: i32 = 0x011C00;
 
+/// Cache create-config request (server-side dynamic cache creation). Carries a
+/// `createAlsoOnOthers` bool then a `CacheConfigHolder`. Matches the EE jar
+/// `CacheCreateConfigCodec` (0x130300); distinct from `CACHE_PUT` (0x131300).
+pub const CACHE_CREATE_CONFIG: i32 = 0x130300;
+
+/// Cache get-config request (fetch a cache's `CacheConfigHolder`).
+pub const CACHE_GET_CONFIG: i32 = 0x130C00;
+
 /// Cache get request.
 pub const CACHE_GET: i32 = 0x130D00;
 

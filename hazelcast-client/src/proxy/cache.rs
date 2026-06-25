@@ -18,12 +18,13 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use hazelcast_core::protocol::constants::{
-    CACHE_ADD_ENTRY_LISTENER, CACHE_CLEAR, CACHE_CONTAINS_KEY, CACHE_EVENT_JOURNAL_READ,
-    CACHE_EVENT_JOURNAL_SUBSCRIBE, CACHE_GET, CACHE_GET_ALL, CACHE_GET_AND_PUT,
-    CACHE_GET_AND_REMOVE, CACHE_GET_AND_REPLACE, CACHE_INVOKE, CACHE_PUT, CACHE_PUT_ALL,
-    CACHE_PUT_IF_ABSENT, CACHE_REMOVE, CACHE_REMOVE_ALL, CACHE_REMOVE_ENTRY_LISTENER,
-    CACHE_REPLACE, CACHE_REPLACE_IF_SAME, CACHE_SIZE, END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG,
-    PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    BEGIN_DATA_STRUCTURE_FLAG, CACHE_ADD_ENTRY_LISTENER, CACHE_CLEAR, CACHE_CONTAINS_KEY,
+    CACHE_CREATE_CONFIG, CACHE_EVENT_JOURNAL_READ, CACHE_EVENT_JOURNAL_SUBSCRIBE, CACHE_GET,
+    CACHE_GET_ALL, CACHE_GET_AND_PUT, CACHE_GET_AND_REMOVE, CACHE_GET_AND_REPLACE, CACHE_INVOKE,
+    CACHE_PUT, CACHE_PUT_ALL, CACHE_PUT_IF_ABSENT, CACHE_REMOVE, CACHE_REMOVE_ALL,
+    CACHE_REMOVE_ENTRY_LISTENER, CACHE_REPLACE, CACHE_REPLACE_IF_SAME, CACHE_SIZE,
+    END_DATA_STRUCTURE_FLAG, END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, PARTITION_ID_ANY,
+    RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
@@ -1978,6 +1979,137 @@ where
         let _address = self.get_connection_address().await?;
 
         self.connection_manager.invoke_on_random(message).await
+    }
+
+    /// The serialized `EternalExpiryPolicy.factoryOf()` (a `javax.cache`
+    /// `SingletonFactory`, Java-serialized, Hazelcast type id -100). This is the
+    /// default cache expiry-policy factory; it is a fixed, deterministic blob
+    /// captured from a stock Java client (see DumpFactory.java), replayed verbatim
+    /// because `CacheConfigHolder.expiryPolicyFactory` is a NON-nullable `Data` the
+    /// member must be able to deserialize at create time.
+    const EXPIRY_POLICY_FACTORY_HEX: &'static str = "00000000ffffff9caced0005737200396a617661782e63616368652e636f6e66696775726174696f6e2e466163746f72794275696c6465722453696e676c65746f6e466163746f72790000002edeb815420200014c0008696e7374616e63657400124c6a6176612f6c616e672f4f626a6563743b7870737200266a617661782e63616368652e6578706972792e457465726e616c457870697279506f6c6963790000002edeb815230200007870";
+
+    fn expiry_policy_factory_data() -> Vec<u8> {
+        let h = Self::EXPIRY_POLICY_FACTORY_HEX;
+        (0..h.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&h[i..i + 2], 16).expect("valid hex"))
+            .collect()
+    }
+
+    /// Encodes a `CacheConfigHolder` (the EE jar custom codec) with sensible
+    /// defaults for a BINARY, store-by-value cache: 1 backup, no eviction limit
+    /// hit (ENTRY_COUNT/LRU/10000), PutIfAbsent merge, eternal expiry. Frame layout
+    /// per `CacheConfigHolderCodec.encode`.
+    fn encode_cache_config_holder(message: &mut ClientMessage, name: &str) {
+        use bytes::BufMut;
+        let begin = || Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG);
+        let end = || Frame::with_flags(END_DATA_STRUCTURE_FLAG);
+
+        message.add_frame(begin());
+        // Initial fixed fields (14 bytes): backupCount@0, asyncBackupCount@4, then
+        // 6 bools @8..13 (readThrough, writeThrough, storeByValue, managementEnabled,
+        // statisticsEnabled, disablePerEntryInvalidationEvents).
+        let mut init = BytesMut::with_capacity(14);
+        init.put_i32_le(1); // backupCount
+        init.put_i32_le(0); // asyncBackupCount
+        init.put_u8(0); // readThrough = false
+        init.put_u8(0); // writeThrough = false
+        init.put_u8(1); // storeByValue = true
+        init.put_u8(0); // managementEnabled = false
+        init.put_u8(0); // statisticsEnabled = false
+        init.put_u8(0); // disablePerEntryInvalidationEvents = false
+        message.add_frame(Frame::with_content(init));
+
+        // Hazelcast caches carry a manager prefix; the holder `name` is the FULL
+        // name (prefix + simple name) and `managerPrefix` is the prefix. A null
+        // prefix with an unprefixed name makes the member's name handling fault.
+        let full_name = format!("/hz/{name}");
+        message.add_frame(Self::string_frame(&full_name)); // name (full)
+        message.add_frame(Self::string_frame("/hz/")); // managerPrefix
+        message.add_frame(Frame::new_null_frame()); // uriString: String?
+        message.add_frame(Self::string_frame("BINARY")); // inMemoryFormat
+
+        // evictionConfigHolder: BEGIN [size:i32] maxSizePolicy evictionPolicy
+        //   nullable(comparatorClassName) nullable(comparator:Data) END
+        message.add_frame(begin());
+        let mut ev = BytesMut::with_capacity(4);
+        ev.put_i32_le(10000); // size
+        message.add_frame(Frame::with_content(ev));
+        message.add_frame(Self::string_frame("ENTRY_COUNT")); // maxSizePolicy
+        message.add_frame(Self::string_frame("LRU")); // evictionPolicy
+        message.add_frame(Frame::new_null_frame()); // comparatorClassName: String?
+        message.add_frame(Frame::new_null_frame()); // comparator: Data?
+        message.add_frame(end());
+
+        message.add_frame(Frame::new_null_frame()); // wanReplicationRef
+        message.add_frame(Self::string_frame("java.lang.Object")); // keyClassName
+        message.add_frame(Self::string_frame("java.lang.Object")); // valueClassName
+        message.add_frame(Frame::new_null_frame()); // cacheLoaderFactory: Data?
+        message.add_frame(Frame::new_null_frame()); // cacheWriterFactory: Data?
+        message.add_frame(Self::data_frame(&Self::expiry_policy_factory_data())); // expiryPolicyFactory: Data (non-null)
+        message.add_frame(Frame::new_null_frame()); // hotRestartConfig
+        message.add_frame(Frame::new_null_frame()); // eventJournalConfig
+        message.add_frame(Frame::new_null_frame()); // splitBrainProtectionName: String?
+        message.add_frame(Frame::new_null_frame()); // listenerConfigurations: List?
+
+        // mergePolicyConfig: BEGIN [batchSize:i32] policy END
+        message.add_frame(begin());
+        let mut mp = BytesMut::with_capacity(4);
+        mp.put_i32_le(100); // batchSize
+        message.add_frame(Frame::with_content(mp));
+        message.add_frame(Self::string_frame(
+            "com.hazelcast.spi.merge.PutIfAbsentMergePolicy",
+        ));
+        message.add_frame(end());
+
+        message.add_frame(Frame::new_null_frame()); // cachePartitionLostListenerConfigs: List?
+        message.add_frame(Frame::new_null_frame()); // merkleTreeConfig
+
+        // dataPersistenceConfig: BEGIN [enabled:u8, fsync:u8] END
+        message.add_frame(begin());
+        let mut dp = BytesMut::with_capacity(2);
+        dp.put_u8(0); // enabled = false
+        dp.put_u8(0); // fsync = false
+        message.add_frame(Frame::with_content(dp));
+        message.add_frame(end());
+
+        message.add_frame(Frame::new_null_frame()); // userCodeNamespace: String?
+
+        message.add_frame(end()); // end CacheConfigHolder
+    }
+
+    /// Creates this cache's configuration on the cluster (JCache `createCache`
+    /// semantics). Required before cache operations work — the member otherwise
+    /// throws `CacheNotExistsException`. Sends `CacheCreateConfig` (createAlsoOnOthers
+    /// = true) with a default [`encode_cache_config_holder`] config. Idempotent: a
+    /// repeat create returns the existing config.
+    pub async fn create_config(&self) -> Result<()> {
+        use bytes::BufMut;
+        let mut message = ClientMessage::create_for_encode_any_partition(CACHE_CREATE_CONFIG);
+        // Fixed param in the initial frame: createAlsoOnOthers (bool) @16.
+        if let Some(initial) = message.frames_mut().first_mut() {
+            initial.content.put_u8(1);
+        }
+        Self::encode_cache_config_holder(&mut message, &self.name);
+        if std::env::var("HZ_DEBUG_CACHE").is_ok() {
+            for (i, f) in message.frames().iter().enumerate() {
+                let hex: String = f
+                    .content
+                    .iter()
+                    .take(20)
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!(
+                    "[cc-req] frame[{i:02}] flags=0x{:04x} len={:3} {hex}",
+                    f.flags,
+                    f.content.len()
+                );
+            }
+        }
+        self.invoke_on_cluster(message).await?;
+        Ok(())
     }
 
     async fn get_connection_address(&self) -> Result<SocketAddr> {
