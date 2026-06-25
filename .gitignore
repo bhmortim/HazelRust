@@ -13,3 +13,9 @@
 # Rust build artifacts
 /target/
 .claude/worktrees/
+
+# Benchmark run outputs + Java build dirs (regenerable; not source)
+/benchmarks/out_*/
+/bench-java/build/
+/bench-java/.gradle/
+/bench/manifest.t2.json

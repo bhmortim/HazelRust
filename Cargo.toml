@@ -3,6 +3,7 @@ members = [
     "hazelcast-core",
     "hazelcast-client",
     "hazelcast-derive",
+    "hazelrust-bench",
 ]
 resolver = "2"
 

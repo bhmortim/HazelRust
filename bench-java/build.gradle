@@ -1,0 +1,44 @@
+plugins {
+    id 'java'
+    id 'application'
+    // Fat/shaded JAR (JDK 21 + Gradle 8.10 compatible)
+    id 'com.gradleup.shadow' version '8.3.5'
+}
+
+repositories { mavenCentral() }
+
+dependencies {
+    // Official Hazelcast OSS client — version-identical to the EE 5.7.0 cluster
+    // (latest 5.7.x on Maven Central is 5.7.0) for exact protocol parity.
+    implementation 'com.hazelcast:hazelcast:5.7.0'
+    implementation 'org.hdrhistogram:HdrHistogram:2.2.2'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+    implementation 'info.picocli:picocli:4.7.6'
+}
+
+java {
+    // Use the Gradle-running JDK (Corretto 21 on the instance) directly — no
+    // toolchain auto-provisioning.
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+application { mainClass = 'bench.Main' }
+
+shadowJar {
+    archiveBaseName = 'hazeljava-bench'
+    archiveClassifier = ''
+    archiveVersion = ''
+    mergeServiceFiles()
+}
+
+// Print the resolved Hazelcast client version (recorded in provenance).
+tasks.register('printClientVersion') {
+    doLast {
+        configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.each { a ->
+            if (a.moduleVersion.id.name == 'hazelcast') {
+                println "HZ_CLIENT_VERSION=" + a.moduleVersion.id.version
+            }
+        }
+    }
+}
