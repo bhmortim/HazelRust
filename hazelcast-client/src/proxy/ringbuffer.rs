@@ -253,6 +253,16 @@ where
             if f.flags & IS_NULL_FLAG != 0 || f.content.is_empty() {
                 continue;
             }
+            // NOTE: the lenient decode here is load-bearing and must NOT be turned
+            // into `?`-propagation like the other collection decoders. The
+            // RINGBUFFER_READ_MANY (`ReadResultSet`) response carries trailing
+            // item-sequence frames after the data items; this loop relies on
+            // `decode_value_at` failing on those non-item frames to skip them
+            // (verified: a naive `?` here regresses test_ringbuffer_add_multiple_read_many).
+            // A correct fix must reframe against the ReadResultSet codec (item-list
+            // BEGIN/END markers + a separate seq array) so items and sequences are
+            // distinguished structurally; tracked as an open silent-element-drop
+            // item. (cbdc.)
             if let Ok(v) = Self::decode_value_at(&f.content) {
                 items.push(v);
             }

@@ -851,12 +851,11 @@ where
             let mut key_input = ObjectDataInput::new(Self::skip8(&key_frame.content));
             let mut value_input = ObjectDataInput::new(Self::skip8(&value_frame.content));
 
-            if let (Ok(key), Ok(value)) = (
-                K::deserialize(&mut key_input),
-                V::deserialize(&mut value_input),
-            ) {
-                entries.push((key, value));
-            }
+            // Propagate decode failures instead of silently dropping pairs.
+            // (cbdc silent-element-drop.)
+            let key = K::deserialize(&mut key_input)?;
+            let value = V::deserialize(&mut value_input)?;
+            entries.push((key, value));
 
             i += 2;
         }

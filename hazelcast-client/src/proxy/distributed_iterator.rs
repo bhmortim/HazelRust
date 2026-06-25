@@ -276,9 +276,9 @@ where
             // Skip 8-byte Data header (partition_hash + type_id)
             let payload = &frame.content[8..];
             let mut input = ObjectDataInput::new(payload);
-            if let Ok(key) = K::deserialize(&mut input) {
-                keys.push(key);
-            }
+            // Propagate decode failures rather than silently dropping keys: markers
+            // (BEGIN/END/null/short) were already skipped above. (cbdc silent-element-drop.)
+            keys.push(K::deserialize(&mut input)?);
         }
 
         Ok((keys, next_table_index))
@@ -434,12 +434,11 @@ where
             let mut key_input = ObjectDataInput::new(key_payload);
             let mut value_input = ObjectDataInput::new(value_payload);
 
-            if let (Ok(key), Ok(value)) = (
-                K::deserialize(&mut key_input),
-                V::deserialize(&mut value_input),
-            ) {
-                entries.push((key, value));
-            }
+            // Propagate decode failures rather than silently dropping pairs: marker
+            // and short frames were already filtered out above. (cbdc silent-element-drop.)
+            let key = K::deserialize(&mut key_input)?;
+            let value = V::deserialize(&mut value_input)?;
+            entries.push((key, value));
 
             i += 2;
         }

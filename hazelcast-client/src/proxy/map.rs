@@ -3504,24 +3504,14 @@ where
             let mut key_input = ObjectDataInput::new(&key_frame.content[8..]);
             let mut value_input = ObjectDataInput::new(&value_frame.content[8..]);
 
-            match (
-                K::deserialize(&mut key_input),
-                V::deserialize(&mut value_input),
-            ) {
-                (Ok(key), Ok(value)) => {
-                    entries.push((key, value));
-                }
-                (k_result, v_result) => {
-                    tracing::warn!(
-                        frame_idx = i,
-                        key_ok = k_result.is_ok(),
-                        val_ok = v_result.is_ok(),
-                        key_frame_len = key_frame.content.len(),
-                        val_frame_len = value_frame.content.len(),
-                        "decode_entries_response: failed to deserialize entry"
-                    );
-                }
-            }
+            // Propagate a per-entry decode failure instead of silently dropping the
+            // pair: marker/null/empty frames were already filtered out above, so a
+            // failure here means real corruption or a type mismatch, and a dropped
+            // ledger entry (wrong key_set/entry_set/values) is catastrophic.
+            // (cbdc silent-element-drop.)
+            let key = K::deserialize(&mut key_input)?;
+            let value = V::deserialize(&mut value_input)?;
+            entries.push((key, value));
 
             i += 2;
         }
