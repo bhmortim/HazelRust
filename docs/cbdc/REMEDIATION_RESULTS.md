@@ -64,11 +64,29 @@ unblocked items previously called "blocked" by building the missing verification
   plus a force-destroy op) and would need request-structure changes too — admin/management ops, not
   the money path.
 
+### Cross-client value-fidelity sweep (pass 8 — gold-standard differential, all clean)
+
+Using the Java cross-client harness, a stock **Java** client wrote a known value into each
+money-path data structure and the **Rust** client read it back and asserted equality — the
+gold-standard check for the most dangerous bug class (silent cross-client value corruption, the
+one that hit AtomicReference). **All clean:** IMap, ReplicatedMap, MultiMap, IList, ISet, IQueue
+(`xclient_collections_test`), and CPMap + AtomicLong (`xclient_cp_test`). So the money-path data
+structures are now cross-client **value-verified live** (not just code-reviewed); AtomicReference
+was the only one with the Data-header bug, and it is fixed + verified.
+
 ### Still open after pass 8 (large / infra-bound — precise specs in passes 6–7)
 
 - **ICache server-side cache creation** — `get_cache` never sends a `CacheCreateConfig`, so the
   cache does not exist server-side (`CacheNotExistsException`); the get/put framing is now correct
   but unusable until cache creation is implemented (a large `CacheConfig` codec).
+- **Map + ICache event-journal — broken at BOTH request and response layers** (precise spec).
+  Request: `read_from_event_journal` sends `startSequence`/`minSize`/`maxSize` as separate frames,
+  but `MapEventJournalReadCodec` expects them as **fixed params in the initial frame** plus
+  nullable `predicate` + `projection` `Data` frames (same class as the ICache/paging request bugs).
+  Response: `decode_event_journal_read_response` has the entry-listener mis-framing class (initial
+  fixed-field offsets + the 8-byte Data skip + `.ok()` drops). Also needs an **event-journal-enabled
+  map** on the cluster (the dev cluster has none) to verify. A paging-level multi-iteration fix for
+  a secondary CDC feature.
 
 - **ICache** — full codec re-derivation (entire `CACHE_*` constant block is wrong + request framing
   + value header). The wrong-constant problem appears systemic (the CP `ATOMIC_*` constants were
