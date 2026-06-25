@@ -6,7 +6,7 @@ for i in 1 2 3; do
   port=$((5700 + i))
   cat > hz/hz$i.yaml <<YAML
 hazelcast:
-  license-key: <REDACTED-read-from-hz/license.key>
+  license-key: $LIC
   cluster-name: dev
   network:
     port:
@@ -32,6 +32,11 @@ hazelcast:
       - factory-id: 1
         class-name: com.hazelcast.test.JavaParityFactory
   map:
+    "ej-*":
+      event-journal:
+        enabled: true
+        capacity: 10000
+        time-to-live-seconds: 0
     "java_parity_test_load_all":
       map-store:
         enabled: true

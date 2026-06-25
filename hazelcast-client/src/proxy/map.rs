@@ -5725,10 +5725,19 @@ where
         max_size: i32,
     ) -> Result<Vec<EventJournalMapEvent<K, V>>> {
         let mut message = ClientMessage::create_for_encode(MAP_EVENT_JOURNAL_READ, partition_id);
+        // MapEventJournalReadCodec request: fixed params in the INITIAL frame
+        // (startSequence:i64@16, minSize:i32@24, maxSize:i32@28), then name, then
+        // nullable predicate + projection Data frames. The previous code sent the
+        // fixed params as separate frames (server mis-decoded the request).
+        if let Some(initial) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial.content.put_i64_le(start_sequence);
+            initial.content.put_i32_le(min_size);
+            initial.content.put_i32_le(max_size);
+        }
         message.add_frame(Self::string_frame(map_name));
-        message.add_frame(Self::long_frame(start_sequence));
-        message.add_frame(Self::int_frame(min_size));
-        message.add_frame(Self::int_frame(max_size));
+        message.add_frame(Frame::new_null_frame()); // predicate = null
+        message.add_frame(Frame::new_null_frame()); // projection = null
 
         let addresses = connection_manager.connected_addresses().await;
         let address = addresses
@@ -5744,6 +5753,23 @@ where
                 HazelcastError::Connection("connection closed unexpectedly".to_string())
             })?;
         let response = crate::connection::invocation::check_response(response)?;
+
+        if std::env::var("HZ_DEBUG_EVENT_JOURNAL").is_ok() {
+            for (i, f) in response.frames().iter().enumerate() {
+                let hex: String = f
+                    .content
+                    .iter()
+                    .take(48)
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!(
+                    "[ej-read] frame[{i:02}] flags=0x{:04x} len={:3} {hex}",
+                    f.flags,
+                    f.content.len()
+                );
+            }
+        }
 
         Self::decode_event_journal_read_response(&response)
     }
