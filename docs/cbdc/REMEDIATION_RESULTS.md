@@ -47,7 +47,28 @@ unblocked items previously called "blocked" by building the missing verification
   each return the correct 10 decoded entries), cross-checked against a stock Java paging client +
   a tcpdump capture of the request framing.
 
+- **Protocol message-type constant audit — 44 wrong constants fixed** (`c8c12dc`). A systematic
+  diff of all **474** EE 5.7 client codec `REQUEST_MESSAGE_TYPE` values vs `constants.rs` found the
+  client was invoking the **wrong server operation** for entire blocks: all of `CACHE_*` (17),
+  `SCHEDULED_EXECUTOR_*` (11), `DURABLE_EXECUTOR_*` (6), `JET_*` (6), `SQL_*` (2),
+  `CARDINALITY_ESTIMATOR_*` (2), `CONTINUOUS_QUERY_*` (1). All corrected to the authoritative jar
+  values; the 168 already-correct constants are unchanged. **No regression** (workspace 2185/2185 —
+  the wrong constants were broken ops not relied on by any passing test). Also fixed the **ICache
+  get/put request framing** (CacheGet adds the `expiryPolicy` frame; CachePut adds the `get` +
+  `completionId` fixed params + `expiryPolicy`; correct partition id) — verified the put now reaches
+  the right op (error moved from `ArrayIndexOutOfBoundsException` → `CacheNotExistsException`).
+  *Residual from the audit (recorded open):* 7 of the 111 not-auto-mappable constants are suspect —
+  `CP_ATOMIC_REFERENCE_{ALTER,APPLY,IS_NULL}` are **dead** (0 callers; no 5.x server codec), and 4
+  used `CP_SUBSYSTEM_*` management constants point to the **wrong service** (the real ops are under
+  the MC service: `MCGetCPMembers=0x201900`, `MCPromoteToCPMember=0x201A00`, `MCRemoveCPMember=0x201B00`,
+  plus a force-destroy op) and would need request-structure changes too — admin/management ops, not
+  the money path.
+
 ### Still open after pass 8 (large / infra-bound — precise specs in passes 6–7)
+
+- **ICache server-side cache creation** — `get_cache` never sends a `CacheCreateConfig`, so the
+  cache does not exist server-side (`CacheNotExistsException`); the get/put framing is now correct
+  but unusable until cache creation is implemented (a large `CacheConfig` codec).
 
 - **ICache** — full codec re-derivation (entire `CACHE_*` constant block is wrong + request framing
   + value header). The wrong-constant problem appears systemic (the CP `ATOMIC_*` constants were
