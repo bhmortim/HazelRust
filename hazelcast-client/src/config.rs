@@ -1728,6 +1728,18 @@ impl std::fmt::Debug for SecurityConfig {
     }
 }
 
+impl Drop for SecurityConfig {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        if let Some(p) = self.password.as_mut() {
+            p.zeroize();
+        }
+        if let Some(t) = self.token.as_mut() {
+            t.zeroize();
+        }
+    }
+}
+
 impl SecurityConfig {
     /// Returns the configured username.
     pub fn username(&self) -> Option<&str> {

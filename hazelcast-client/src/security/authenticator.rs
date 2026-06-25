@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use base64::Engine;
+use zeroize::Zeroize;
 
 /// Format of the authentication token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -15,7 +16,7 @@ pub enum TokenFormat {
 }
 
 /// Token-based credentials for authentication.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TokenCredentials {
     /// The raw token string.
     token: String,
@@ -63,8 +64,26 @@ impl TokenCredentials {
     }
 }
 
+// Custom Debug redacts the token (the derived Debug would print it in clear on
+// any `{:?}` / `tracing::debug!(?creds)`); Drop zeroizes it from memory.
+impl std::fmt::Debug for TokenCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenCredentials")
+            .field("token", &"***REDACTED***")
+            .field("format", &self.format)
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
+impl Drop for TokenCredentials {
+    fn drop(&mut self) {
+        self.token.zeroize();
+    }
+}
+
 /// Credentials used for authentication.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Credentials {
     /// Username and password credentials.
     UsernamePassword {
@@ -82,10 +101,56 @@ pub enum Credentials {
 }
 
 /// Custom credentials with arbitrary attributes.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct CustomCredentials {
     credential_type: String,
     attributes: HashMap<String, Vec<u8>>,
+}
+
+// Custom Debug redacts the (possibly secret) attribute values; Drop zeroizes
+// them. The Credentials enum below redacts password / token and relies on these
+// nested Drops for Custom/TokenCredentials.
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Credentials::UsernamePassword { username, .. } => f
+                .debug_struct("UsernamePassword")
+                .field("username", username)
+                .field("password", &"***REDACTED***")
+                .finish(),
+            Credentials::Token(_) => f.debug_tuple("Token").field(&"***REDACTED***").finish(),
+            Credentials::Custom(c) => f.debug_tuple("Custom").field(c).finish(),
+            Credentials::TokenCredentials(t) => f.debug_tuple("TokenCredentials").field(t).finish(),
+        }
+    }
+}
+
+// NOTE: the `Credentials` enum intentionally does NOT implement `Drop`: several
+// call sites move the inner `String`s out of it by value (e.g. destructuring
+// `Credentials::UsernamePassword { password, .. }`), and Rust forbids moving a
+// field out of a type that implements `Drop` (E0509). Its inline secrets are
+// protected from accidental disclosure by the redacted `Debug` above; the
+// `Custom`/`TokenCredentials` variants still zeroize via their own `Drop`. A
+// full inline-secret scrub would wrap the fields in `zeroize::Zeroizing<String>`.
+
+impl std::fmt::Debug for CustomCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustomCredentials")
+            .field("credential_type", &self.credential_type)
+            .field(
+                "attributes",
+                &format_args!("<{} value(s) redacted>", self.attributes.len()),
+            )
+            .finish()
+    }
+}
+
+impl Drop for CustomCredentials {
+    fn drop(&mut self) {
+        for v in self.attributes.values_mut() {
+            v.zeroize();
+        }
+    }
 }
 
 impl CustomCredentials {
@@ -524,6 +589,44 @@ impl Authenticator for TokenAuthenticator {
 mod tests {
     use super::*;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+    #[test]
+    fn test_credentials_debug_redacts_secrets() {
+        let up = Credentials::UsernamePassword {
+            username: "alice".to_string(),
+            password: "s3cr3t-pw".to_string(),
+        };
+        let s = format!("{up:?}");
+        assert!(
+            s.contains("alice"),
+            "username is not secret, should be shown"
+        );
+        assert!(
+            !s.contains("s3cr3t-pw"),
+            "password must not appear in Debug: {s}"
+        );
+        assert!(s.contains("REDACTED"));
+
+        let tok = Credentials::Token("jwt-abc.def.ghi".to_string());
+        let s = format!("{tok:?}");
+        assert!(
+            !s.contains("jwt-abc"),
+            "token must not appear in Debug: {s}"
+        );
+
+        let tc = TokenCredentials::new("jwt-secret-xyz").with_name("svc");
+        let s = format!("{tc:?}");
+        assert!(!s.contains("jwt-secret-xyz"), "token must be redacted: {s}");
+        assert!(s.contains("svc"), "the non-secret name should be shown");
+
+        let custom = CustomCredentials::new("aws")
+            .with_attribute("secret_access_key", b"AKIA-super-secret".to_vec());
+        let s = format!("{custom:?}");
+        assert!(
+            !s.contains("super-secret"),
+            "custom attribute values must be redacted: {s}"
+        );
+    }
 
     #[test]
     fn test_credentials_username_password() {
