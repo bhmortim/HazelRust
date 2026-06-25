@@ -235,7 +235,21 @@ where
         let r = self.invoke(m).await?;
         let frames = r.frames();
         // initial frame: readCount(int) @ HDR, nextSeq(long) @ HDR+4 (+ readCount field layout)
+        // ReadResultSet response (RingbufferReadManyCodec, EE 5.7): the initial
+        // frame is [readCount:i32 @ RESPONSE_HEADER_SIZE][nextSeq:i64 @ +4]
+        // (INITIAL_FRAME_SIZE = RESPONSE_HEADER_SIZE+12), then a List<Data> of the
+        // read items wrapped in BEGIN_DATA_STRUCTURE..END_DATA_STRUCTURE, then a
+        // SEPARATE nullable long[] `itemSeqs` frame.
         let init = &frames[0];
+        let read_count = if init.content.len() >= RESPONSE_HEADER_SIZE + 4 {
+            i32::from_le_bytes(
+                init.content[RESPONSE_HEADER_SIZE..RESPONSE_HEADER_SIZE + 4]
+                    .try_into()
+                    .unwrap(),
+            )
+        } else {
+            0
+        };
         let next_seq = if init.content.len() >= RESPONSE_HEADER_SIZE + 12 {
             i64::from_le_bytes(
                 init.content[RESPONSE_HEADER_SIZE + 4..RESPONSE_HEADER_SIZE + 12]
@@ -245,27 +259,30 @@ where
         } else {
             start_sequence
         };
-        let mut items = Vec::new();
+        // Read ONLY the items inside the List<Data> and STOP at its END frame; the
+        // `itemSeqs` long[] follows and must not be decoded as an item. The old
+        // loop read every trailing frame and relied on `decode_value_at` FAILING on
+        // the itemSeqs frame to skip it — which silently injected a garbage extra
+        // item for fixed-width element types (e.g. i64) whose decode does not fail.
+        // Now items and sequences are distinguished structurally, so propagate a
+        // real decode error with `?` instead of dropping/injecting.
+        let mut items = Vec::with_capacity(read_count.max(0) as usize);
+        let mut in_list = false;
         for f in frames.iter().skip(1) {
-            if f.flags & (BEGIN_DATA_STRUCTURE_FLAG | END_DATA_STRUCTURE_FLAG) != 0 {
+            if f.flags & BEGIN_DATA_STRUCTURE_FLAG != 0 {
+                in_list = true;
                 continue;
             }
-            if f.flags & IS_NULL_FLAG != 0 || f.content.is_empty() {
+            if f.flags & END_DATA_STRUCTURE_FLAG != 0 {
+                if in_list {
+                    break; // end of the items list — the itemSeqs array follows
+                }
                 continue;
             }
-            // NOTE: the lenient decode here is load-bearing and must NOT be turned
-            // into `?`-propagation like the other collection decoders. The
-            // RINGBUFFER_READ_MANY (`ReadResultSet`) response carries trailing
-            // item-sequence frames after the data items; this loop relies on
-            // `decode_value_at` failing on those non-item frames to skip them
-            // (verified: a naive `?` here regresses test_ringbuffer_add_multiple_read_many).
-            // A correct fix must reframe against the ReadResultSet codec (item-list
-            // BEGIN/END markers + a separate seq array) so items and sequences are
-            // distinguished structurally; tracked as an open silent-element-drop
-            // item. (cbdc.)
-            if let Ok(v) = Self::decode_value_at(&f.content) {
-                items.push(v);
+            if !in_list || f.flags & IS_NULL_FLAG != 0 || f.content.is_empty() {
+                continue;
             }
+            items.push(Self::decode_value_at(&f.content)?);
         }
         Ok((items, next_seq))
     }
