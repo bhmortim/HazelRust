@@ -252,23 +252,29 @@ where
 pub enum EntryEventType {
     /// Entry was added to the map.
     Added = 1,
-    /// Entry was updated in the map.
-    Updated = 2,
     /// Entry was removed from the map.
-    Removed = 4,
+    Removed = 2,
+    /// Entry was updated in the map.
+    Updated = 4,
     /// Entry was evicted from the map.
     Evicted = 8,
     /// Entry expired and was removed from the map.
     Expired = 16,
 }
+// NOTE: these bitmask values MUST match `com.hazelcast.core.EntryEventType`
+// (verified live against EE 5.7: ADDED=1, REMOVED=2, UPDATED=4, EVICTED=8,
+// EXPIRED=16). They were previously swapped (Updated=2, Removed=4), so a
+// listener configured with `.on_updated()` actually subscribed to REMOVED
+// (UPDATED events were never delivered) and an UPDATED(4) event decoded as
+// Removed — a money-path defect for observing ledger mutations.
 
 impl EntryEventType {
     /// Creates an event type from its wire format value.
     pub fn from_value(value: i32) -> Option<Self> {
         match value {
             1 => Some(Self::Added),
-            2 => Some(Self::Updated),
-            4 => Some(Self::Removed),
+            2 => Some(Self::Removed),
+            4 => Some(Self::Updated),
             8 => Some(Self::Evicted),
             16 => Some(Self::Expired),
             _ => None,
@@ -785,9 +791,10 @@ mod tests {
 
     #[test]
     fn test_entry_event_type_values() {
+        // Must match com.hazelcast.core.EntryEventType (verified live, EE 5.7).
         assert_eq!(EntryEventType::Added.value(), 1);
-        assert_eq!(EntryEventType::Updated.value(), 2);
-        assert_eq!(EntryEventType::Removed.value(), 4);
+        assert_eq!(EntryEventType::Removed.value(), 2);
+        assert_eq!(EntryEventType::Updated.value(), 4);
         assert_eq!(EntryEventType::Evicted.value(), 8);
         assert_eq!(EntryEventType::Expired.value(), 16);
     }
@@ -795,8 +802,8 @@ mod tests {
     #[test]
     fn test_entry_event_type_from_value() {
         assert_eq!(EntryEventType::from_value(1), Some(EntryEventType::Added));
-        assert_eq!(EntryEventType::from_value(2), Some(EntryEventType::Updated));
-        assert_eq!(EntryEventType::from_value(4), Some(EntryEventType::Removed));
+        assert_eq!(EntryEventType::from_value(2), Some(EntryEventType::Removed));
+        assert_eq!(EntryEventType::from_value(4), Some(EntryEventType::Updated));
         assert_eq!(EntryEventType::from_value(8), Some(EntryEventType::Evicted));
         assert_eq!(
             EntryEventType::from_value(16),
@@ -883,7 +890,8 @@ mod tests {
         assert!(config.on_removed);
         assert!(!config.on_evicted);
         assert!(!config.on_expired);
-        assert_eq!(config.event_flags(), 1 | 4);
+        // ADDED=1, REMOVED=2 (Hazelcast wire values).
+        assert_eq!(config.event_flags(), 1 | 2);
     }
 
     #[test]

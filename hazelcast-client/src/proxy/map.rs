@@ -3116,89 +3116,118 @@ where
         include_value: bool,
     ) -> Result<EntryEvent<K, V>> {
         let frames = message.frames();
-        if frames.len() < 3 {
-            return Err(HazelcastError::Serialization(
-                "insufficient frames for entry event".to_string(),
-            ));
+        if std::env::var("HZ_DEBUG_ENTRY_EVENT").is_ok() {
+            eprintln!(
+                "[entry-event] type={:?} frames={}",
+                message.message_type(),
+                frames.len()
+            );
+            for (i, f) in frames.iter().enumerate() {
+                let hex: String = f
+                    .content
+                    .iter()
+                    .take(48)
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!(
+                    "  frame[{i:02}] flags=0x{:04x} len={:3} {hex}",
+                    f.flags,
+                    f.content.len()
+                );
+            }
         }
 
-        let initial_frame = &frames[0];
-        let mut offset = RESPONSE_HEADER_SIZE;
+        // Authoritative EE 5.7 `MapAddEntryListenerCodec` EVENT_ENTRY layout
+        // (jar-confirmed): the initial frame's fixed block is
+        //   eventType            : i32  @ 16
+        //   uuid                 : 17   @ 20 (1-byte not-null flag + msb:8 LE + lsb:8 LE)
+        //   numberOfAffectedEntries : i32 @ 37   (INITIAL_FRAME_SIZE = 41)
+        // followed by variable frames, in order: key, value, oldValue, mergingValue
+        // (each a nullable `Data` = [partition_hash:i32][type_id:i32][payload]).
+        // The previous code read eventType at offset 13, the uuid as 16 bytes, a
+        // non-existent "timestamp" where numberOfAffectedEntries lives, used the
+        // wrong var-frame indices, and (worst) decoded the `Data` payload from
+        // offset 0 — consuming the 8-byte header as payload — while `.ok()`
+        // silently dropped any value that failed to decode.
+        const EVENT_TYPE_OFFSET: usize = 16;
+        const UUID_OFFSET: usize = 20;
 
-        let event_type_value = if initial_frame.content.len() >= offset + 4 {
-            i32::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-            ])
-        } else {
-            1
-        };
-        offset += 4;
-
+        if frames.is_empty() {
+            return Err(HazelcastError::Serialization(
+                "entry event: no frames".to_string(),
+            ));
+        }
+        let initial = &frames[0].content;
+        if initial.len() < EVENT_TYPE_OFFSET + 4 {
+            return Err(HazelcastError::Serialization(
+                "entry event initial frame too short for eventType".to_string(),
+            ));
+        }
+        let event_type_value = i32::from_le_bytes([
+            initial[EVENT_TYPE_OFFSET],
+            initial[EVENT_TYPE_OFFSET + 1],
+            initial[EVENT_TYPE_OFFSET + 2],
+            initial[EVENT_TYPE_OFFSET + 3],
+        ]);
         let event_type =
             EntryEventType::from_value(event_type_value).unwrap_or(EntryEventType::Added);
 
-        let member_uuid = if initial_frame.content.len() >= offset + 16 {
-            let uuid_bytes: [u8; 16] = initial_frame.content[offset..offset + 16]
-                .try_into()
-                .unwrap_or([0u8; 16]);
-            Uuid::from_bytes(uuid_bytes)
+        let member_uuid = if initial.len() >= UUID_OFFSET + 17 {
+            let msb = u64::from_le_bytes(
+                initial[UUID_OFFSET + 1..UUID_OFFSET + 9]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            let lsb = u64::from_le_bytes(
+                initial[UUID_OFFSET + 9..UUID_OFFSET + 17]
+                    .try_into()
+                    .unwrap_or_default(),
+            );
+            Uuid::from_u64_pair(msb, lsb)
         } else {
             Uuid::nil()
         };
-        offset += 16;
 
-        let timestamp = if initial_frame.content.len() >= offset + 8 {
-            i64::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-                initial_frame.content[offset + 4],
-                initial_frame.content[offset + 5],
-                initial_frame.content[offset + 6],
-                initial_frame.content[offset + 7],
-            ])
-        } else {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0)
+        // EVENT_ENTRY carries no server timestamp (the @37 fixed field is
+        // numberOfAffectedEntries); stamp it client-side.
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        // Decode a nullable `Data` value frame, skipping the 8-byte header and
+        // propagating (never silently dropping) a deserialize failure.
+        let decode_value = |frame: Option<&Frame>| -> Result<Option<V>> {
+            match frame {
+                Some(f) if f.flags & IS_NULL_FLAG == 0 && !f.content.is_empty() => {
+                    if f.content.len() < 8 {
+                        return Err(HazelcastError::Serialization(
+                            "entry-event value frame shorter than 8-byte Data header".to_string(),
+                        ));
+                    }
+                    let mut input = ObjectDataInput::new(&f.content[8..]);
+                    Ok(Some(V::deserialize(&mut input)?))
+                }
+                _ => Ok(None),
+            }
         };
 
-        let key_frame = &frames[2];
-        let key = if !key_frame.content.is_empty() && key_frame.flags & IS_NULL_FLAG == 0 {
-            let mut input = ObjectDataInput::new(&key_frame.content);
-            K::deserialize(&mut input)?
-        } else {
+        // Var frame order: [1] key, [2] value, [3] oldValue, [4] mergingValue.
+        let key_frame = frames.get(1).ok_or_else(|| {
+            HazelcastError::Serialization("entry event missing key frame".to_string())
+        })?;
+        if key_frame.flags & IS_NULL_FLAG != 0 || key_frame.content.len() < 8 {
             return Err(HazelcastError::Serialization(
-                "missing key in entry event".to_string(),
+                "missing or malformed key in entry event".to_string(),
             ));
-        };
+        }
+        let mut key_input = ObjectDataInput::new(&key_frame.content[8..]);
+        let key = K::deserialize(&mut key_input)?;
 
-        let (old_value, new_value) = if include_value && frames.len() >= 5 {
-            let old_value_frame = &frames[3];
-            let old_value = if !old_value_frame.content.is_empty()
-                && old_value_frame.flags & IS_NULL_FLAG == 0
-            {
-                let mut input = ObjectDataInput::new(&old_value_frame.content);
-                V::deserialize(&mut input).ok()
-            } else {
-                None
-            };
-
-            let new_value_frame = &frames[4];
-            let new_value = if !new_value_frame.content.is_empty()
-                && new_value_frame.flags & IS_NULL_FLAG == 0
-            {
-                let mut input = ObjectDataInput::new(&new_value_frame.content);
-                V::deserialize(&mut input).ok()
-            } else {
-                None
-            };
-
+        let (old_value, new_value) = if include_value {
+            let new_value = decode_value(frames.get(2))?; // value
+            let old_value = decode_value(frames.get(3))?; // oldValue
             (old_value, new_value)
         } else {
             (None, None)
