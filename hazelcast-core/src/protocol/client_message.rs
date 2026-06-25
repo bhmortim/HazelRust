@@ -254,6 +254,44 @@ pub fn compute_partition_hash(key: &[u8]) -> i32 {
     murmur_hash3_x86_32(key, 0x01000193)
 }
 
+/// Maps a partition hash to a partition id in `[0, partition_count)`, matching
+/// Hazelcast's `HashUtil.hashToIndex`: `Integer.MIN_VALUE` maps to `0` (because
+/// `Math.abs(MIN_VALUE)` overflows), otherwise `abs(hash) % partition_count`.
+///
+/// Using `i32::abs` directly would **panic in debug builds** (and wrap to a
+/// negative value in release) when `hash == i32::MIN`, yielding a negative or
+/// out-of-range partition id on the wire — this helper makes that impossible.
+pub fn partition_id_for_hash(hash: i32, partition_count: i32) -> i32 {
+    if partition_count <= 0 {
+        return 0;
+    }
+    if hash == i32::MIN {
+        0
+    } else {
+        hash.abs() % partition_count
+    }
+}
+
+/// Computes the Hazelcast partition id for a serialized key `Data`.
+///
+/// A serialized key on the wire is `[partition_hash:i32][type_id:i32][payload]`;
+/// Java's `HeapData.getPartitionHash()` hashes the bytes **after** that 8-byte
+/// header. This skips the header, MurmurHash3-es the body, and maps the result
+/// into `[0, partition_count)` via [`partition_id_for_hash`]. Centralizing this
+/// keeps the IMap key path, the affinity (`*_with_partition_key`) path, and the
+/// public `PartitionService::get_partition` API from drifting apart.
+pub fn partition_id_for_key_data(key_data: &[u8], partition_count: i32) -> i32 {
+    if partition_count <= 0 {
+        return 0;
+    }
+    let body = if key_data.len() > 8 {
+        &key_data[8..]
+    } else {
+        key_data
+    };
+    partition_id_for_hash(compute_partition_hash(body), partition_count)
+}
+
 /// MurmurHash3 x86 32-bit implementation.
 fn murmur_hash3_x86_32(data: &[u8], seed: u32) -> i32 {
     const C1: u32 = 0xcc9e2d51;

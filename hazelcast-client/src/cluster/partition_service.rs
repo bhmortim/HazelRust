@@ -348,8 +348,13 @@ impl PartitionService {
         // Use Hazelcast's MurmurHash3-based partitioning over the SERIALIZED key
         // payload (matching the verified IMap key path), NOT Rust's SipHash —
         // SipHash returns a partition unrelated to where the key actually lives.
+        // `partition_id_for_key_data` skips the 8-byte Data header before hashing
+        // (Java's HeapData.getPartitionHash hashes buffer[8:]) and maps via
+        // hashToIndex; the previous code hashed the full bytes (header included)
+        // and used a panic-prone `abs()`, so this public API returned a partition
+        // id that disagreed with where the IMap entry actually lives.
         let partition_id = match key.to_bytes() {
-            Ok(bytes) => hazelcast_core::compute_partition_hash(&bytes).abs() % partition_count,
+            Ok(bytes) => hazelcast_core::partition_id_for_key_data(&bytes, partition_count),
             Err(_) => 0,
         };
 

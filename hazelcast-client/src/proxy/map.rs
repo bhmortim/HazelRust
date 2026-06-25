@@ -24,9 +24,9 @@ fn partition_index_with_count(key_data: &[u8], partition_count: i32) -> i32 {
     } else {
         DEFAULT_PARTITION_COUNT
     };
-    // Java uses Math.abs(hash) % count, NOT (hash & 0x7FFFFFFF) % count
-    let hash = compute_partition_hash(key_data);
-    hash.abs() % count
+    // Java uses HashUtil.hashToIndex: abs(hash) % count, with Integer.MIN_VALUE
+    // mapped to 0 (a plain `i32::abs` would panic in debug on MIN_VALUE).
+    hazelcast_core::partition_id_for_hash(compute_partition_hash(key_data), count)
 }
 
 /// Compute partition index using default partition count (fallback).
@@ -1161,7 +1161,12 @@ where
         self.stats_tracker.record_get();
         let key_data = Self::serialize_value(key)?;
         let pk_data = Self::serialize_value(partition_key)?;
-        let partition_id = compute_partition_hash(&pk_data);
+        // Affinity routing: normalize the partition-key hash to a real partition
+        // id (skip the 8-byte Data header + abs + %count) exactly like the plain
+        // key path, so a `*_with_partition_key` op co-locates with a plain op on a
+        // key that hashes the same. Previously this sent the raw unbounded hash as
+        // the partition id (could be negative / >= partition_count).
+        let partition_id = self.partition_index_dynamic(&pk_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_GET, partition_id);
 
@@ -1197,7 +1202,12 @@ where
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
         let pk_data = Self::serialize_value(partition_key)?;
-        let partition_id = compute_partition_hash(&pk_data);
+        // Affinity routing: normalize the partition-key hash to a real partition
+        // id (skip the 8-byte Data header + abs + %count) exactly like the plain
+        // key path, so a `*_with_partition_key` op co-locates with a plain op on a
+        // key that hashes the same. Previously this sent the raw unbounded hash as
+        // the partition id (could be negative / >= partition_count).
+        let partition_id = self.partition_index_dynamic(&pk_data);
 
         if let Some(ref cache) = self.near_cache {
             let mut cache_guard = cache
@@ -1240,7 +1250,12 @@ where
         self.stats_tracker.record_remove();
         let key_data = Self::serialize_value(key)?;
         let pk_data = Self::serialize_value(partition_key)?;
-        let partition_id = compute_partition_hash(&pk_data);
+        // Affinity routing: normalize the partition-key hash to a real partition
+        // id (skip the 8-byte Data header + abs + %count) exactly like the plain
+        // key path, so a `*_with_partition_key` op co-locates with a plain op on a
+        // key that hashes the same. Previously this sent the raw unbounded hash as
+        // the partition id (could be negative / >= partition_count).
+        let partition_id = self.partition_index_dynamic(&pk_data);
 
         if let Some(ref cache) = self.near_cache {
             let mut cache_guard = cache
@@ -1271,7 +1286,12 @@ where
         self.check_quorum(true).await?;
         let key_data = Self::serialize_value(key)?;
         let pk_data = Self::serialize_value(partition_key)?;
-        let partition_id = compute_partition_hash(&pk_data);
+        // Affinity routing: normalize the partition-key hash to a real partition
+        // id (skip the 8-byte Data header + abs + %count) exactly like the plain
+        // key path, so a `*_with_partition_key` op co-locates with a plain op on a
+        // key that hashes the same. Previously this sent the raw unbounded hash as
+        // the partition id (could be negative / >= partition_count).
+        let partition_id = self.partition_index_dynamic(&pk_data);
 
         let mut message = ClientMessage::create_for_encode(MAP_CONTAINS_KEY, partition_id);
         // Fixed-size params: threadId (long)

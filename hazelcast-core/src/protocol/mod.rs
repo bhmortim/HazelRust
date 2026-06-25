@@ -8,7 +8,10 @@ mod codec;
 pub mod constants;
 mod frame;
 
-pub use client_message::{compute_partition_hash, next_correlation_id, ClientMessage};
+pub use client_message::{
+    compute_partition_hash, next_correlation_id, partition_id_for_hash, partition_id_for_key_data,
+    ClientMessage,
+};
 pub use codec::ClientMessageCodec;
 pub use constants::*;
 pub use frame::Frame;

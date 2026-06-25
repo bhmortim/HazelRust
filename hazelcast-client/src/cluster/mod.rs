@@ -1,6 +1,7 @@
 //! Cluster management services for Hazelcast client.
 
 mod cluster_service;
+pub(crate) mod cluster_view;
 mod cp_management;
 mod cp_session;
 mod lifecycle_service;

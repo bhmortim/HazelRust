@@ -63,7 +63,10 @@ pub mod serialization;
 
 pub use error::{ErrorCategory, HazelcastError, Result, ServerErrorCode};
 pub use partition_aware::PartitionAware;
-pub use protocol::{compute_partition_hash, ClientMessage, ClientMessageCodec, Frame};
+pub use protocol::{
+    compute_partition_hash, partition_id_for_hash, partition_id_for_key_data, ClientMessage,
+    ClientMessageCodec, Frame,
+};
 pub use serialization::{
     ClassDefinition, Compact, CompactReader, CompactSerializer, CompactWriter, CustomSerializer,
     DataInput, DataOutput, DefaultCompactReader, DefaultCompactWriter, DefaultPortableReader,

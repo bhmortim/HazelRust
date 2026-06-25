@@ -258,6 +258,13 @@ impl HazelcastClient {
         // `connect_to` path and rebuilds the invocation pool (cbdc lead #3).
         connection_manager.spawn_heartbeat_task();
 
+        // Register the cluster-view listener so the member list + partition table
+        // are populated from server events. Without this, smart (partition-aware)
+        // routing is a no-op: both maps stay empty and every op routes to
+        // addresses[0]. Spawned as a task; routing falls back gracefully until the
+        // initial views arrive.
+        connection_manager.register_cluster_view_listener();
+
         // Initialize CP session manager for session-aware CP proxies
         let cp_session_manager = Arc::new(CPSessionManager::new(Arc::clone(&connection_manager)));
         cp_session_manager.start_heartbeat().await;

@@ -20,6 +20,24 @@ use crate::cluster::{MigrationEvent, PartitionLostEvent};
 use crate::config::{ClientConfig, ClientFailoverConfig, Permissions};
 use crate::listener::{DistributedObjectEvent, LifecycleEvent, Member, MemberEvent};
 
+/// Env-gated (`HZ_DEBUG_ROUTING=1`) trace of each partition-routing decision:
+/// which member address an op for `partition_id` was sent to, and whether that
+/// was the partition owner (smart routing engaged) or the `addresses[0]`
+/// fallback. The flag is read once; no cost on the hot path when disabled.
+fn trace_routing(partition_id: i32, address: SocketAddr, is_owner: bool) {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *FLAG.get_or_init(|| std::env::var("HZ_DEBUG_ROUTING").is_ok()) {
+        eprintln!(
+            "[routing] partition {partition_id} -> {address} ({})",
+            if is_owner {
+                "OWNER"
+            } else {
+                "FALLBACK addresses[0]"
+            }
+        );
+    }
+}
+
 /// Events emitted during connection lifecycle.
 #[derive(Debug, Clone)]
 pub enum ConnectionEvent {
@@ -78,6 +96,10 @@ pub struct ConnectionManager {
     /// Fast partition→address cache: indexed by partition_id, zero-lock lookup.
     /// Rebuilt atomically when partition table or member list changes.
     partition_address_cache: std::sync::RwLock<Vec<Option<SocketAddr>>>,
+    /// Addresses with a background connect in flight, so smart routing never
+    /// launches a duplicate (racy, pool-evicting) `connect_to` for the same
+    /// member from the hot path or from concurrent members-view events.
+    connecting: Arc<std::sync::Mutex<std::collections::HashSet<SocketAddr>>>,
     event_sender: broadcast::Sender<ConnectionEvent>,
     membership_sender: broadcast::Sender<MemberEvent>,
     lifecycle_sender: broadcast::Sender<LifecycleEvent>,
@@ -151,6 +173,7 @@ impl ConnectionManager {
             partition_table: Arc::new(RwLock::new(HashMap::new())),
             partition_count: AtomicI32::new(0),
             partition_address_cache: std::sync::RwLock::new(Vec::new()),
+            connecting: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             event_sender,
             membership_sender,
             lifecycle_sender,
@@ -220,6 +243,7 @@ impl ConnectionManager {
             partition_table: Arc::new(RwLock::new(HashMap::new())),
             partition_count: AtomicI32::new(0),
             partition_address_cache: std::sync::RwLock::new(Vec::new()),
+            connecting: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             event_sender,
             membership_sender,
             lifecycle_sender,
@@ -1342,6 +1366,161 @@ impl ConnectionManager {
         }
     }
 
+    /// Registers the `ClientAddClusterViewListener` on a live connection and
+    /// installs a handler that decodes the streamed members-view / partitions-view
+    /// events into the `members` map and `partition_table`. This is what makes
+    /// smart (partition-aware) routing functional in production — without it both
+    /// stay empty and every op falls back to `addresses[0]`. Spawned as a task so
+    /// it can wait for a connection and outlive the bootstrap.
+    pub fn register_cluster_view_listener(self: &Arc<Self>) {
+        let manager = Arc::clone(self);
+        tokio::spawn(async move {
+            // Pick a live connection to host the listener.
+            let address = match manager.invocation.addresses().into_iter().next() {
+                Some(a) => a,
+                None => match manager.connected_addresses().await.into_iter().next() {
+                    Some(a) => a,
+                    None => {
+                        tracing::warn!("cluster-view listener: no connection available");
+                        return;
+                    }
+                },
+            };
+
+            let msg = crate::cluster::cluster_view::encode_add_cluster_view_listener_request();
+            let handler_manager = Arc::clone(&manager);
+            let handler: Arc<dyn Fn(hazelcast_core::ClientMessage) + Send + Sync> = Arc::new(
+                move |event: hazelcast_core::ClientMessage| {
+                    crate::cluster::cluster_view::debug_dump_event(&event);
+                    match event.message_type() {
+                        Some(t) if t == crate::cluster::cluster_view::EVENT_MEMBERS_VIEW => {
+                            match crate::cluster::cluster_view::decode_members_view(&event) {
+                                Ok((version, members)) => {
+                                    let mgr = Arc::clone(&handler_manager);
+                                    tokio::spawn(async move {
+                                        mgr.apply_members_view(version, members).await;
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "failed to decode members-view event")
+                                }
+                            }
+                        }
+                        Some(t) if t == crate::cluster::cluster_view::EVENT_PARTITIONS_VIEW => {
+                            match crate::cluster::cluster_view::decode_partitions_view(&event) {
+                                Ok((version, entries)) => {
+                                    let mgr = Arc::clone(&handler_manager);
+                                    tokio::spawn(async move {
+                                        mgr.apply_partitions_view(version, entries).await;
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "failed to decode partitions-view event")
+                                }
+                            }
+                        }
+                        // 0x000304 member-groups-view / 0x000305 cluster-version are
+                        // not needed for routing; ignore unknown event types.
+                        _ => {}
+                    }
+                },
+            );
+
+            match manager
+                .invocation
+                .invoke_listener(address, msg, handler)
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!(address = %address, "registered cluster-view listener")
+                }
+                Err(e) => {
+                    tracing::warn!(address = %address, error = %e, "failed to register cluster-view listener")
+                }
+            }
+        });
+    }
+
+    /// Applies a decoded members-view event: replaces the member map, rebuilds
+    /// the partition→address cache so owner uuids can resolve to connect
+    /// addresses, and proactively (background) connects to every member not yet
+    /// connected so smart routing can target partition owners directly.
+    pub async fn apply_members_view(
+        self: &Arc<Self>,
+        version: i32,
+        members: Vec<crate::cluster::cluster_view::DecodedMember>,
+    ) {
+        let count = members.len();
+        let addresses: Vec<SocketAddr> = members.iter().map(|m| m.address).collect();
+        let member_objs: Vec<Member> = members
+            .into_iter()
+            .map(|m| {
+                Member::with_attributes(m.uuid, m.address, std::collections::HashMap::new(), m.lite)
+            })
+            .collect();
+        self.set_initial_members(member_objs).await;
+        // Members changed → the partition→address cache must be rebuilt so the
+        // (already known) partition_table can resolve owner uuids to addresses.
+        self.rebuild_partition_address_cache().await;
+        // A smart client must connect to every member to route partition ops to
+        // their owners. Do this in the background (deduped) so the bootstrap (and
+        // single-seed connects) don't block, and so the partition hot path never
+        // has to synchronously connect.
+        for addr in addresses {
+            self.ensure_background_connect(addr);
+        }
+        tracing::info!(version, member_count = count, "applied members-view event");
+    }
+
+    /// Ensures a single background connection to `address` is being established,
+    /// deduped so concurrent callers (the members-view handler and the routing
+    /// hot path) never launch overlapping `connect_to` calls — overlapping
+    /// connects evict each other's freshly-authenticated pools (`connect_to`
+    /// calls `remove_address` first) and strand in-flight ops, which under high
+    /// client parallelism manifests as data-op timeouts. No-op if already
+    /// connected or already connecting.
+    pub fn ensure_background_connect(self: &Arc<Self>, address: SocketAddr) {
+        if self.invocation.has_address(&address) {
+            return;
+        }
+        {
+            let mut connecting = self
+                .connecting
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !connecting.insert(address) {
+                return; // a connect to this address is already in flight
+            }
+        }
+        let manager = Arc::clone(self);
+        tokio::spawn(async move {
+            if !manager.invocation.has_address(&address) {
+                if let Err(e) = manager.connect_to(address).await {
+                    tracing::warn!(address = %address, error = %e, "background connect to member failed");
+                }
+            }
+            manager
+                .connecting
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&address);
+        });
+    }
+
+    /// Applies a decoded partitions-view event: inverts (uuid → [partition_ids])
+    /// into a partition_id → owner_uuid table and installs it.
+    pub async fn apply_partitions_view(&self, version: i32, entries: Vec<(Uuid, Vec<i32>)>) {
+        let table = crate::cluster::cluster_view::invert_partitions(&entries);
+        let partition_count = table.len();
+        self.update_partition_table(table).await;
+        tracing::info!(
+            version,
+            partition_count,
+            owner_count = entries.len(),
+            "applied partitions-view event"
+        );
+    }
+
     /// Fast, zero-lock lookup of partition owner address from the cache.
     /// Returns None if the cache hasn't been built yet or partition is unknown.
     fn get_cached_partition_address(&self, partition_id: i32) -> Option<SocketAddr> {
@@ -1386,17 +1565,24 @@ impl ConnectionManager {
             if let Some(owner_address) = self.get_cached_partition_address(partition_id) {
                 // Verify the address is actually connected (cheap DashMap point lookup)
                 if self.invocation.has_address(&owner_address) {
+                    trace_routing(partition_id, owner_address, true);
                     return Ok(owner_address);
                 }
-                // Owner known but not connected — try to connect
-                if self.connect_to(owner_address).await.is_ok() {
-                    return Ok(owner_address);
-                }
-                tracing::warn!(address = %owner_address, "failed to connect to partition owner");
+                // Owner known but not connected yet (startup window before the
+                // background member connects, kicked off by the members-view
+                // handler, complete). Do NOT connect synchronously here: it is slow
+                // (full auth + pool build + drains) and, under high client
+                // parallelism, races other connects and evicts live pools, which
+                // strands in-flight ops and times them out. Fall through to an
+                // already-connected member — the server forwards the partition op
+                // to its owner — and once the background connect lands, subsequent
+                // ops route directly to the owner.
+                tracing::trace!(address = %owner_address, "partition owner not yet connected; falling back");
             }
             // SLOW PATH: cache miss, fall back to RwLock-based lookup
             if let Some(owner_address) = self.get_partition_owner_address(partition_id).await {
                 if self.invocation.has_address(&owner_address) {
+                    trace_routing(partition_id, owner_address, true);
                     return Ok(owner_address);
                 }
             }
@@ -1404,6 +1590,7 @@ impl ConnectionManager {
 
         let addresses = self.invocation.addresses();
         if !addresses.is_empty() {
+            trace_routing(partition_id, addresses[0], false);
             return Ok(addresses[0]);
         }
         let old_addresses = self.connected_addresses().await;
