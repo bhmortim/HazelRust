@@ -4,6 +4,123 @@
 **Commits:** `dff7058` (correctness/type-id/DoS/secret/lint), `bcfd057` (docs), `fa27761` (CPMap + executor error-surfacing), `231ee6f` (XA framing), `13cdf58` (EntryProcessor framing), `2fba538` (docs pass-2), `3b48ff6` (A4 CP-constant hygiene). All pushed to `origin/main`.
 **Plan:** `CBDC_REMEDIATION_PLAN.md` · **Roadmap:** `PRODUCTION_READINESS_ROADMAP.md` (both in-repo).
 
+---
+
+## Remediation pass 5 — full technical-validation session (branch `cbdc/full-validation`)
+
+**Date:** 2026-06-24. **Base:** `origin/main` `f23dc4e`. Five money-path defect classes
+found and **fixed + verified live against EE 5.7** with before/after evidence (each fix
+has a committed regression test that fails before and passes after). The overall verdict
+is **unchanged — still NO-GO** (the external P3 items and the remaining engineering tracks
+below are not satisfied).
+
+### Fixed & verified live this pass
+
+- **Lead #1 — `partition_count` parsed two bytes early** (`471dd2d`). `connect_to` read
+  the auth-response `partitionCount` at content offset **30**; the real layout after
+  `RESPONSE_HEADER_SIZE=13` is `status@13(1)`, `memberUuid@14(17 — a 1-byte not-null flag
+  + 16-byte value)`, `serialVersion@31(1)`, `partitionCount@32(4)`. Reading `[30..34]`
+  yielded a large garbage value that the `>0 && <100000` check silently rejected, leaving
+  `partition_count` at **0** (masked by a hard-coded 271 fallback; `get_partition` also
+  collapsed every key onto partition 0). **Verified live by hexdumping a real auth
+  response** — `partitionCount@32 = 0x0000010F = 271` — and a new regression test asserts
+  the client now reports 271 (it read 0 before). NB: the handoff's suggested offset **31**
+  was *also* wrong (same 16-vs-17-byte UUID error); the correct offset is **32**, confirmed
+  by the live bytes. *Secondary finding (open):* production never populates the partition
+  table (`update_partition_table`/`set_partition_owner` have only `#[cfg(test)]` callers; no
+  partition-listener/fetch path), so smart routing is non-functional and falls back to
+  `addresses[0]` regardless of this fix.
+
+- **Lead #3 — heartbeat-driven reconnect never rebuilt the invocation pool** (`fe373dd`).
+  The static `attempt_reconnect` opened a raw, **unauthenticated** socket, inserted it into
+  the metadata `connections` map, and never touched the `InvocationService` pool;
+  `register_connection` also only ever *added* to a pool (no eviction). So after a member
+  connection dropped + reconnected, the pool kept only dead write-halves and `send_raw`'s
+  round-robin failed/timed-out every data op until the client was restarted — a severe
+  availability defect. Fixed by routing the heartbeat reconnect through `reconnect ->
+  connect_to` (re-auth + partition parse + fresh pool) via `Arc<Self>`, and adding
+  `InvocationService::remove_address` (called at the top of `connect_to`) to evict the stale
+  pool. **Verified live by fault injection** on a dedicated single-member cluster: `ss -K`
+  kills the client's socket; before the fix data ops never resume (test FAILS at ~26 s),
+  after the fix they resume in ~4.5 s ("resumed at attempt 2"). The existing
+  `failover_integration_test.rs` "reconnect" tests were found to be **vacuous** (they never
+  induce a disconnect).
+
+- **Silent-element-drop — 4 collection decoders** (`941dfb1`). `decode_entries_response`
+  (map `entries`/`get_all`/`entries_with_predicate`), the `DistributedIterator` key/entry
+  fetch (`key_set`/`entry_set`/`values_iter`), `multimap` `decode_collection_response` +
+  `decode_entry_set_response`, and `replicated_map` `decode_entries_response` used
+  `if let Ok(x) = deserialize(..) { push(x) }` and **silently dropped** any element that
+  failed to deserialize (marker/null frames are filtered out first, so the swallow only hid
+  real decode failures). For a ledger a vanished entry is catastrophic and undetectable.
+  Fixed to `?`-propagate. **Verified live by a poison data-effect test**: an `i64` written
+  under a map the reader views as `<String,String>` cannot deserialize as a String; before
+  the fix `entries()`/`entry_set()` silently returned the shortened collection (test FAILS),
+  after the fix they return `Err` (test PASSES). Existing multi-element integration tests
+  still pass (markers still handled). **`ringbuffer::read_many` was reverted + documented**:
+  its lenient decode is *load-bearing* (the `ReadResultSet` response carries trailing
+  item-sequence frames it skips by letting decode fail) — a naive `?` regressed
+  `test_ringbuffer_add_multiple_read_many`; a correct fix needs a ReadResultSet reframe
+  (tracked open).
+
+- **XA `recover()` was non-functional — in-doubt transactions invisible** (`2a6806d`,
+  **new finding, missed by the original audit/leads**). `recover()` decoded the
+  `XATransactionCollectTransactions` response by calling `Xid::from_bytes` on each
+  *individual* frame (the client's concatenated `[formatId][gtridLen][gtrid][bqualLen][bqual]`
+  layout), but the server returns a protocol `List<Xid>` where each Xid spans frames:
+  `BEGIN, [formatId:int(4)], [globalTransactionId:byte[]], [branchQualifier:byte[]], END`.
+  So `from_bytes` matched nothing and `recover()` **silently returned an empty list even
+  when prepared-but-uncommitted (in-doubt) transactions existed** — they could never be
+  discovered or resolved. The prior test only asserted "empty or valid", so it never caught
+  this. Fixed by grouping the non-marker data frames in threes `(formatId, gtrid, bqual)`
+  (erroring on a non-multiple-of-three count — no silent drop). The framing was captured by
+  **hexdumping a real recover response**. **Verified live**
+  (`test_recover_returns_prepared_in_doubt_transaction`): prepare a branch without
+  committing, then `recover()` — before the fix the XID is missing (FAILS), after it is
+  returned (PASSES). Also adds **lead #5** coverage
+  (`test_xa_two_phase_commit_across_two_maps_data_effect`): full `prepare -> commit(onePhase=false)`
+  across two maps; both committed-after-prepare writes are visible to a separate client.
+
+### Method note — prior claims treated as leads, not facts
+
+A read-only multi-agent investigation surfaced **57 "confirmed" findings** (3 critical / 35
+high / 11 medium / 8 low). These were treated as *leads requiring live verification*, not
+ground truth: the investigation's own Lead-#1 analysis concluded offset **31**, which the
+live hexdump **disproved** (it is 32). Cross-referencing against the 166 passing data-effect
+integration tests, most **`data-header-skip`** findings appear to be false positives (the
+decoders are exercised by passing data-effect tests; e.g. `decode_paging_entries_response`
+was flagged but already uses `?`). **Definitive confirmation/refutation of the residual
+decoder findings requires the differential-vs-Java wire harness (Track 2), which was not
+built this session.**
+
+### Open / not done this session (honest)
+
+- **Track 2 — differential-vs-Java byte-diff harness + golden vectors** (the gold standard to
+  resolve the residual decoder findings) — not built.
+- **`ringbuffer::read_many`** ReadResultSet reframe (item-list vs trailing seq array).
+- **Lead #2 — lenient auth-failure arms**: the connection-closed/read-error/timeout arms in
+  `connect_to` are still best-effort (log-only). The A-3 status-byte check + RR-21 already
+  reject a *rejected* auth and fail a dead connection's in-flight ops, so the residual risk
+  is a transport-fault corner, not a live-exploitable path; hardening it requires teaching
+  the in-process unit mocks to send a valid auth-OK frame first. Recommended, not done.
+- **Lead #4 — flaky non-ignored cluster-bound tests** confirmed (and the "failover" tests are
+  vacuous); recommend `#[ignore]` + rewrite. Not changed.
+- **Tracks 3/5/7/8** — continuous fuzz; chaos beyond single-member + exactly-once dedup
+  tokens; full live mTLS negative suite + zeroize + leak-scan; dedicated-hardware perf/soak —
+  not done this session.
+
+### Baselines after pass 5 (no regressions)
+
+- `cargo nextest run --workspace --test-threads 8 --retries 2` → **2184 / 2184** (a few
+  non-ignored cluster-bound tests flake transiently, pass on retry — lead #4).
+- `CLUSTER_ADDRESS=127.0.0.1:5701 cargo nextest run -p hazelcast-client --run-ignored
+  ignored-only --test-threads 1 --no-fail-fast` → **166 pass / 1 fail** (the 1 is
+  `try_lock_with_timeout`, the documented non-defect; the new pass-5 regression tests pass).
+- `cargo clippy --workspace --all-targets` and `--features tls` → **0 errors**;
+  `cargo fmt --all -- --check` clean.
+
+---
+
 ### Disposition of the remaining ignored-suite failures (investigated, not guessed)
 - **9 java_parity = was server-side infra; now CLOSED (pass 4 / A-4).** Deployed the MapStore / EntryProcessor+factory / per-entry-stats / typed (JSON, numeric) values and fixed two latent client decode bugs (missing 8-byte Data-header skip in `decode_entry_processor_results` and `decode_projection_response`). All 9 now pass live. See pass 4 below and `java_parity_infra/`.
 - **`try_lock_with_timeout` = not a client defect** (the only remaining ignored failure). Both `lock` and `try_lock` use `threadId=0`, so re-locking the client's own key is **correctly reentrant**; the test assumes Java multi-threading the single-`threadId` client doesn't model.
