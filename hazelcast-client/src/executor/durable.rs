@@ -206,7 +206,8 @@ impl DurableExecutorService {
         K: Serializable,
     {
         let key_data = key.to_bytes()?;
-        let partition_id = Self::compute_partition_id(&key_data);
+        let partition_id =
+            Self::compute_partition_id(&key_data, self.connection_manager.partition_count());
         self.submit_to_partition(task, partition_id).await
     }
 
@@ -289,15 +290,19 @@ impl DurableExecutorService {
         (hash % 271) as i32
     }
 
-    fn compute_partition_id(key_data: &[u8]) -> i32 {
+    /// Resolves the partition that owns `key_data` (the key's serialized payload
+    /// from `Serializable::to_bytes`). MurmurHash3 over the payload + `hashToIndex`
+    /// with the cluster's real partition count, matching the IMap key path. The
+    /// previous code used a Java `String.hashCode`-style x31 hash and a hardcoded
+    /// 271-partition modulo, so key-affinity tasks ran on the wrong member.
+    fn compute_partition_id(key_data: &[u8], partition_count: i32) -> i32 {
         if key_data.is_empty() {
             return PARTITION_ID_ANY;
         }
-        let mut hash: u32 = 0;
-        for byte in key_data {
-            hash = hash.wrapping_mul(31).wrapping_add(*byte as u32);
-        }
-        (hash % 271) as i32
+        hazelcast_core::partition_id_for_hash(
+            hazelcast_core::compute_partition_hash(key_data),
+            partition_count,
+        )
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
@@ -426,7 +431,7 @@ mod tests {
     #[test]
     fn test_compute_partition_id_empty() {
         assert_eq!(
-            DurableExecutorService::compute_partition_id(&[]),
+            DurableExecutorService::compute_partition_id(&[], 271),
             PARTITION_ID_ANY
         );
     }
@@ -434,10 +439,22 @@ mod tests {
     #[test]
     fn test_compute_partition_id_deterministic() {
         let key = b"test-key";
-        let id1 = DurableExecutorService::compute_partition_id(key);
-        let id2 = DurableExecutorService::compute_partition_id(key);
+        let id1 = DurableExecutorService::compute_partition_id(key, 271);
+        let id2 = DurableExecutorService::compute_partition_id(key, 271);
         assert_eq!(id1, id2);
-        assert!(id1 >= 0);
+        assert!((0..271).contains(&id1));
+    }
+
+    #[test]
+    fn test_compute_partition_id_matches_canonical_routing() {
+        // Same MurmurHash3 + hashToIndex as the IMap key path (not the old x31).
+        let key = b"acct-1";
+        let expected =
+            hazelcast_core::partition_id_for_hash(hazelcast_core::compute_partition_hash(key), 271);
+        assert_eq!(
+            DurableExecutorService::compute_partition_id(key, 271),
+            expected
+        );
     }
 
     #[test]

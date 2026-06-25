@@ -502,7 +502,8 @@ impl ScheduledExecutorService {
         let delay_nanos = delay.as_nanos() as i64;
 
         let key_data = key.to_bytes()?;
-        let partition_id = Self::compute_partition_id(&key_data);
+        let partition_id =
+            Self::compute_partition_id(&key_data, self.connection_manager.partition_count());
 
         let mut message =
             ClientMessage::create_for_encode(SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION, partition_id);
@@ -651,15 +652,19 @@ impl ScheduledExecutorService {
         Frame::with_content(bytes::BytesMut::from(&value.to_le_bytes()[..]))
     }
 
-    fn compute_partition_id(key_data: &[u8]) -> i32 {
+    /// Resolves the partition that owns `key_data` (the key's serialized payload
+    /// from `Serializable::to_bytes`). MurmurHash3 over the payload + `hashToIndex`
+    /// with the cluster's real partition count, matching the IMap key path. The
+    /// previous code used a Java `String.hashCode`-style x31 hash and a hardcoded
+    /// 271-partition modulo, so key-affinity tasks ran on the wrong member.
+    fn compute_partition_id(key_data: &[u8], partition_count: i32) -> i32 {
         if key_data.is_empty() {
             return PARTITION_ID_ANY;
         }
-        let mut hash: u32 = 0;
-        for byte in key_data {
-            hash = hash.wrapping_mul(31).wrapping_add(*byte as u32);
-        }
-        (hash % 271) as i32
+        hazelcast_core::partition_id_for_hash(
+            hazelcast_core::compute_partition_hash(key_data),
+            partition_count,
+        )
     }
 
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {

@@ -251,7 +251,8 @@ impl super::ExecutorService {
                 msg
             }
             ExecutionTarget::KeyOwner(key_data) => {
-                let partition_id = Self::compute_partition_id(key_data);
+                let partition_id =
+                    Self::compute_partition_id(key_data, self.connection_manager.partition_count());
                 let mut msg =
                     ClientMessage::create_for_encode(EXECUTOR_SUBMIT_TO_PARTITION, partition_id);
                 msg.add_frame(Self::string_frame(&self.name));
@@ -401,7 +402,8 @@ impl super::ExecutorService {
                 msg
             }
             ExecutionTarget::KeyOwner(key_data) => {
-                let partition_id = Self::compute_partition_id(key_data);
+                let partition_id =
+                    Self::compute_partition_id(key_data, self.connection_manager.partition_count());
                 let mut msg =
                     ClientMessage::create_for_encode(EXECUTOR_SUBMIT_TO_PARTITION, partition_id);
                 msg.add_frame(Self::string_frame(&self.name));
@@ -457,15 +459,21 @@ impl super::ExecutorService {
         Frame::with_content(bytes::BytesMut::from(data))
     }
 
-    fn compute_partition_id(key_data: &[u8]) -> i32 {
+    /// Resolves the partition that owns `key_data` (the key's serialized payload
+    /// from `Serializable::to_bytes`). Hazelcast hashes a key's `Data` buffer at
+    /// offset 8 (`HeapData.getPartitionHash`); `to_bytes` is exactly that payload
+    /// (no 8-byte header), so MurmurHash3 it directly and map via `hashToIndex`
+    /// with the cluster's real partition count — matching the IMap key path. The
+    /// previous code used a Java `String.hashCode`-style x31 hash and a hardcoded
+    /// 271-partition modulo, so key-affinity tasks ran on the wrong member.
+    fn compute_partition_id(key_data: &[u8], partition_count: i32) -> i32 {
         if key_data.is_empty() {
             return PARTITION_ID_ANY;
         }
-        let mut hash: u32 = 0;
-        for byte in key_data {
-            hash = hash.wrapping_mul(31).wrapping_add(*byte as u32);
-        }
-        (hash % 271) as i32
+        hazelcast_core::partition_id_for_hash(
+            hazelcast_core::compute_partition_hash(key_data),
+            partition_count,
+        )
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
@@ -529,6 +537,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_compute_partition_id_uses_canonical_routing() {
+        // Key's serialized payload (Serializable::to_bytes), e.g. String "acct-1":
+        // [len:i32 BE = 6]["acct-1"] — exactly the bytes Hazelcast hashes for
+        // partitioning (HeapData.getPartitionHash hashes the Data buffer at [8:]).
+        let mut payload = vec![0u8, 0, 0, 6];
+        payload.extend_from_slice(b"acct-1");
+
+        for count in [271, 128, 1009] {
+            let canonical = hazelcast_core::partition_id_for_hash(
+                hazelcast_core::compute_partition_hash(&payload),
+                count,
+            );
+            assert_eq!(
+                super::super::ExecutorService::compute_partition_id(&payload, count),
+                canonical,
+                "key-affinity routing must match IMap's MurmurHash3 + hashToIndex"
+            );
+            assert!((0..count).contains(&canonical));
+        }
+
+        // Empty key routes to any partition.
+        assert_eq!(
+            super::super::ExecutorService::compute_partition_id(&[], 271),
+            PARTITION_ID_ANY
+        );
+
+        // Regression guard: the previous Java String.hashCode-style x31 % 271 hash
+        // produced a DIFFERENT (wrong) partition for this key.
+        let old_x31 = {
+            let mut h: u32 = 0;
+            for b in &payload {
+                h = h.wrapping_mul(31).wrapping_add(*b as u32);
+            }
+            (h % 271) as i32
+        };
+        assert_ne!(
+            super::super::ExecutorService::compute_partition_id(&payload, 271),
+            old_x31,
+            "fix must not reproduce the old String.hashCode-style routing"
+        );
+    }
+
+    #[test]
     fn test_executor_future_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<ExecutorFuture<String>>();
@@ -557,7 +608,7 @@ mod tests {
     #[test]
     fn test_compute_partition_id_empty() {
         assert_eq!(
-            super::super::ExecutorService::compute_partition_id(&[]),
+            super::super::ExecutorService::compute_partition_id(&[], 271),
             PARTITION_ID_ANY
         );
     }
@@ -565,9 +616,9 @@ mod tests {
     #[test]
     fn test_compute_partition_id_deterministic() {
         let key = b"test-key";
-        let id1 = super::super::ExecutorService::compute_partition_id(key);
-        let id2 = super::super::ExecutorService::compute_partition_id(key);
+        let id1 = super::super::ExecutorService::compute_partition_id(key, 271);
+        let id2 = super::super::ExecutorService::compute_partition_id(key, 271);
         assert_eq!(id1, id2);
-        assert!(id1 >= 0);
+        assert!((0..271).contains(&id1));
     }
 }
