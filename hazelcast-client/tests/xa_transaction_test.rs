@@ -284,6 +284,89 @@ async fn test_xa_rollback_data_effect() {
     client.shutdown().await.unwrap();
 }
 
+/// Data-effect assertion for cbdc silent-element-drop in `recover`: a branch that
+/// is prepared but not committed is in-doubt, and `recover()` must RETURN its XID
+/// (never silently drop it — a lost in-doubt transaction leaves money in limbo).
+#[tokio::test]
+#[ignore = "requires running Hazelcast cluster"]
+async fn test_recover_returns_prepared_in_doubt_transaction() {
+    let client = create_test_client().await;
+    // Unique gtrid so we can find exactly our prepared (in-doubt) branch.
+    let gtrid = format!("xa-recover-effect-{}", std::process::id());
+    let xid = Xid::new(0, gtrid.as_bytes(), b"branch-rec-001");
+
+    let mut xa = client.new_xa_transaction(xid.clone());
+    xa.start(XA_TMNOFLAGS).await.unwrap();
+    let m = xa.get_map::<String, String>("xa-recover-map").unwrap();
+    m.put("k".to_string(), "v".to_string()).await.unwrap();
+    xa.end(XA_TMSUCCESS).await.unwrap();
+    xa.prepare().await.unwrap(); // now in-doubt: prepared, not committed
+
+    let recovered = xa.recover(XA_TMNOFLAGS).await.unwrap();
+    let found = recovered
+        .iter()
+        .any(|x| x.global_transaction_id() == gtrid.as_bytes());
+
+    // Clean up the in-doubt branch regardless of the assertion outcome.
+    let _ = xa.commit(false).await;
+    client.shutdown().await.ok();
+
+    assert!(
+        found,
+        "recover() must return the prepared in-doubt transaction; got {} xids",
+        recovered.len()
+    );
+}
+
+/// Lead #5: full two-phase commit (prepare, then commit with onePhase=false)
+/// across TWO maps/resources in one XA branch; a committed-after-prepare write
+/// must be visible to a SEPARATE client for BOTH maps (atomic multi-resource
+/// ledger posting).
+#[tokio::test]
+#[ignore = "requires running Hazelcast cluster"]
+async fn test_xa_two_phase_commit_across_two_maps_data_effect() {
+    let client = create_test_client().await;
+    let suffix = std::process::id();
+    let k1 = format!("xa-2pc-a-{suffix}");
+    let k2 = format!("xa-2pc-b-{suffix}");
+    let gtrid = format!("xa-2pc-2map-{suffix}");
+
+    let xid = Xid::new(0, gtrid.as_bytes(), b"branch-2pc");
+    let mut xa = client.new_xa_transaction(xid);
+    xa.start(XA_TMNOFLAGS).await.unwrap();
+    {
+        let m1 = xa.get_map::<String, String>("xa-2pc-map-1").unwrap();
+        let m2 = xa.get_map::<String, String>("xa-2pc-map-2").unwrap();
+        m1.put(k1.clone(), "alpha".to_string()).await.unwrap();
+        m2.put(k2.clone(), "beta".to_string()).await.unwrap();
+    }
+    xa.end(XA_TMSUCCESS).await.unwrap();
+    let vote = xa.prepare().await.unwrap();
+    assert!(vote == XA_OK || vote == XA_RDONLY);
+    // Two-phase commit (onePhase = false): commit AFTER a successful prepare.
+    xa.commit(false).await.unwrap();
+
+    // A separate client must observe BOTH committed writes.
+    let observer = create_test_client().await;
+    let o1 = observer.get_map::<String, String>("xa-2pc-map-1");
+    let o2 = observer.get_map::<String, String>("xa-2pc-map-2");
+    assert_eq!(
+        o1.get(&k1).await.unwrap(),
+        Some("alpha".to_string()),
+        "committed-after-prepare write to map 1 must be visible to a separate client"
+    );
+    assert_eq!(
+        o2.get(&k2).await.unwrap(),
+        Some("beta".to_string()),
+        "committed-after-prepare write to map 2 must be visible to a separate client"
+    );
+
+    o1.remove(&k1).await.ok();
+    o2.remove(&k2).await.ok();
+    observer.shutdown().await.ok();
+    client.shutdown().await.ok();
+}
+
 // ============================================================================
 // Unit Tests (no cluster required)
 // ============================================================================

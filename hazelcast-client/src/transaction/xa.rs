@@ -572,6 +572,57 @@ impl XATransaction {
         Frame::with_content(BytesMut::from(data))
     }
 
+    /// Decodes the XATransactionCollectTransactions response, a `List<Xid>`.
+    ///
+    /// Each Xid is a custom struct encoded across frames as
+    /// `BEGIN, [formatId:int(4)], [globalTransactionId:byte[]], [branchQualifier:byte[]], END`
+    /// (the BEGIN/END markers carry the data-structure flags with empty content),
+    /// all wrapped in an outer list BEGIN/END. So the non-marker "data" frames come
+    /// in groups of three: (formatId, gtrid, bqual).
+    ///
+    /// The previous implementation called `Xid::from_bytes` on each *individual*
+    /// frame — that expects the client's *concatenated* byte layout
+    /// (`[formatId][gtridLen][gtrid][bqualLen][bqual]`), which never matches the
+    /// per-frame protocol layout, so `recover()` decoded NOTHING and silently
+    /// returned an empty list even when in-doubt transactions existed. For a money
+    /// path that is a serious hazard: in-doubt transactions are invisible to
+    /// recovery, so they can never be resolved. Verified live: with a prepared
+    /// (uncommitted) branch present the fixed decoder returns its Xid; the old one
+    /// returned an empty list. (cbdc XA recovery.)
+    fn decode_recover_response(response: &ClientMessage) -> Result<Vec<Xid>> {
+        let data: Vec<&Frame> = response
+            .frames()
+            .iter()
+            .skip(1)
+            .filter(|f| {
+                f.flags & (BEGIN_DATA_STRUCTURE_FLAG | END_DATA_STRUCTURE_FLAG | IS_NULL_FLAG) == 0
+            })
+            .collect();
+        if data.len() % 3 != 0 {
+            return Err(HazelcastError::Serialization(format!(
+                "XA recover: expected groups of 3 frames per Xid (formatId, gtrid, bqual), \
+                 got {} data frames",
+                data.len()
+            )));
+        }
+        let mut xids = Vec::with_capacity(data.len() / 3);
+        for chunk in data.chunks_exact(3) {
+            if chunk[0].content.len() < 4 {
+                return Err(HazelcastError::Serialization(
+                    "XA recover: formatId frame shorter than 4 bytes".to_string(),
+                ));
+            }
+            let format_id = i32::from_le_bytes([
+                chunk[0].content[0],
+                chunk[0].content[1],
+                chunk[0].content[2],
+                chunk[0].content[3],
+            ]);
+            xids.push(Xid::new(format_id, &chunk[1].content, &chunk[2].content));
+        }
+        Ok(xids)
+    }
+
     /// Appends fixed-size param bytes contiguously into the request's initial frame
     /// (the Hazelcast codec convention for fixed params), after the header.
     fn append_fixed(message: &mut ClientMessage, bytes: &[u8]) {
@@ -758,20 +809,7 @@ impl XAResource for XATransaction {
         message.add_frame(Self::int_frame(flags));
 
         let response = self.invoke(message).await?;
-
-        let frames = response.frames();
-        let mut xids = Vec::new();
-
-        for frame in frames.iter().skip(1) {
-            if frame.flags & IS_NULL_FLAG != 0 || frame.content.is_empty() {
-                continue;
-            }
-            if let Ok(xid) = Xid::from_bytes(&frame.content) {
-                xids.push(xid);
-            }
-        }
-
-        Ok(xids)
+        Self::decode_recover_response(&response)
     }
 
     fn get_transaction_timeout(&self) -> Duration {
