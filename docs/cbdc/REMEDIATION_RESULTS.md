@@ -6,6 +6,150 @@
 
 ---
 
+## Remediation pass 6 — smart routing + connection/auth hardening (branch `cbdc/full-validation`)
+
+**Date:** 2026-06-24. **Base:** `cbdc/full-validation` `980f08e`. **Commits:** `9e72741`
+(smart routing + partition-id correctness), `ecbc81e` (invocation-pool auth status check).
+Verdict **unchanged — still NO-GO** (external P3 items + the residual engineering tracks
+below are not satisfied).
+
+### Fixed & verified live this pass
+
+- **Smart (partition-aware) routing was non-functional — now implemented and proven live**
+  (`9e72741`). The member map and partition table were written **only** by `#[cfg(test)]`
+  callers (`update_partition_table`/`set_partition_owner`/`set_initial_members`), so in
+  production *both stayed empty* and **every** partition op fell back to `addresses[0]`;
+  `PartitionService::get_partition_owner` always returned `None`. `connect_to` authenticated
+  and then `drain_socket()`-discarded the cluster-view events the server streams. Fix: register
+  **`ClientAddClusterViewListener`** (message type `0x000300`) after auth and decode its two
+  streamed events to populate the maps — *members-view* (`0x000302`: `List<MemberInfo>` →
+  uuid+address+lite) and *partitions-view* (`0x000303`: `EntryList<UUID,List<int>>` →
+  partition→owner). Wire layout was extracted from the EE 5.7 jar codecs
+  (`ClientAddClusterViewListenerCodec`/`MemberInfoCodec`/`AddressCodec`/`EntryListUUIDListIntegerCodec`)
+  and **confirmed against a live hexdump** (UUID is the 17-byte fixed form; entry-list encodes
+  *values then keys*; `MemberInfo` = uuid/lite + `AddressCodec` + fast-forward over
+  attributes/version/addressMap; `MemberVersion` `05 07 00` = 5.7.0; ports `45 16`/`47 16` =
+  5701/5703). To make routing actually *reach* owners (not just populate the table), the client
+  now **proactively + deduped background-connects** to every member learned from members-view,
+  and the partition hot path **no longer connects synchronously** — that path (previously dead
+  because the table was always empty) is slow and, under high client parallelism, races
+  concurrent connects and evicts live pools, which stranded in-flight ops and timed them out
+  (it regressed `compute_if_present`/`compute_if_absent` until removed). **Verified live (EE 5.7,
+  3-member dev cluster):** (1) members + partition table populated — 271 partitions across **3
+  distinct member owners** resolving to 5701/5702/5703
+  (`test_partition_table_populated_from_cluster_view`); (2) routing reaches owners — a 400-key
+  put/get burst produced **1200 routing decisions all OWNER (393/396/411 to 5701/5702/5703), 0
+  fallbacks**, and `tcpdump` showed PSH data packets to **all three** member ports
+  (981/949/695) — vs a single-seed run where 807 decisions fell back to 5701
+  (`test_routing_spreads_across_partition_owners`, `HZ_DEBUG_ROUTING=1`).
+
+- **Partition-id correctness — 3 bugs fixed** (`9e72741`, centralized in
+  `hazelcast_core::partition_id_for_hash`/`partition_id_for_key_data`):
+  (a) `i32::MIN` partition hash would **panic in debug** (`i32::abs(MIN)` overflows) / wrap to a
+  negative, out-of-range partition in release — now maps MIN→0 like Java `HashUtil.hashToIndex`;
+  (b) `PartitionService::get_partition` hashed the **full** serialized key (8-byte Data header
+  included), so the public API returned a different partition than where the IMap entry actually
+  lives — now skips the header like the verified IMap key path;
+  (c) the IMap `*_with_partition_key` affinity ops sent the **raw unbounded** MurmurHash as the
+  partition id (could be negative / ≥ partition_count) — now normalized (skip-8 + abs + %count).
+  These ride on the same live evidence: with smart routing active the 400-key burst routed with
+  **0 fallbacks** (so `get_partition`'s predicted owner == the actual routing target), and the
+  full suite is green.
+
+- **Invocation-pool (data-carrying) connections now verify the auth status byte** (`ecbc81e`).
+  `authenticate_connection_inline` accepted **any** response as authenticated — it never
+  inspected the status byte — so a member that rejected a *pool* connection (status 1/2/3) would
+  have that data-carrying socket registered and used for put/get (only the primary metadata auth
+  was hardened in A-3). Now returns `Err(Authentication)` on a non-zero status and `connect_to`
+  skips registering that connection; transport faults stay lenient for the in-process unit mocks
+  (same rationale as the primary path). **Verified live:** wrong-cluster still rejected; normal
+  auth still registers the pool and data ops work (`compute_if_*`, partition-table population);
+  no regression.
+
+### Open / not done this pass — verified in code, precise fixes recorded (NOT yet live-fixed)
+
+A read-only multi-agent investigation (4 parallel investigators) produced a code-grounded ledger
+that was **adversarially cross-checked against the actual source**. The IMap money-path
+bulk-read decoders (`values`/`keys`/`entries`/`projection`/`aggregate`/`entry_processor`) and
+multimap/replicated-map/set/queue/iterator/CPMap/topic are **confirmed correct** (skip the 8-byte
+Data header + `?`-propagate). The residual defects cluster in *listener / paging / event-journal /
+cache / CP-reference* paths that **no passing data-effect test covers**:
+
+- **`decode_entry_event` is broadly mis-framed** (map.rs ~3114). Confirmed against the EE jar
+  `MapAddEntryListenerCodec` `EVENT_ENTRY`: the correct initial-frame layout is `eventType@16(i32)`,
+  `uuid@20(17-byte fixed)`, `numberOfAffectedEntries@37(i32)`, `INITIAL_FRAME_SIZE=41`; then var
+  frames in order **key, value, oldValue, mergingValue** (each a nullable `Data`). The current
+  code reads `eventType@13` (wrong by 3), a **16-byte** uuid (should be 17), treats
+  `numberOfAffectedEntries` as a "timestamp", uses wrong frame indices, **omits the 8-byte
+  Data-header skip** on key/values, and `.ok()`-**silently drops** value decode failures. Needs a
+  full re-derivation + a live entry-listener data-effect test. (Money-path: observing ledger
+  mutations.)
+- **Missing 8-byte Data-header skip + silent drop** (same proven class as pass-5's 4 collection
+  decoders) in: `decode_paging_values_response`/`decode_paging_entries_response` (map.rs ~4503/4589;
+  value loop reads from offset 0), IMap + ICache `decode_event_journal_read_response`
+  (map.rs ~5765 / cache.rs ~1834, `.ok()` drops), ICache `decode_entries_response`/`decode_nullable_response`
+  (cache.rs ~1944/2022, `if let (Ok,Ok)` drops). **ICache + AtomicReference also never *write*
+  the 8-byte Data header** on encode (`serialize_value` = bare `to_bytes()`), so they are
+  self-consistent client-side but mismatched against server Data framing — needs a live EE
+  cross-client round-trip to confirm the exact failure mode.
+- **`ringbuffer::read_many`** ReadResultSet reframe (lenient decode can inject/misread a trailing
+  item-seq frame for fixed-width element types) — documented load-bearing, tracked.
+- **No client-message fragmentation reassembly** (`hazelcast-core` codec only handles a single
+  `BEGIN..IS_FINAL` message) — responses large enough for the server to fragment cannot be
+  reassembled. Design-gap for large result sets / large stored values.
+- **mTLS verifies the server cert against the connection IP, not the configured DNS identity**
+  (connection.rs ~440; `create_connection` passes `server_name = None`). The mechanism is sound
+  (chain validation + SAN check verified live in pass 3 with `sni_hostname` set), but the default
+  binds the IP literal, and `hostname_verification`/`protocol_versions`/`cipher_suites` config
+  knobs are read **nowhere** in the handshake. `allow_invalid_certs` is **inert/dead** (safe, but
+  a misleading API).
+- **No zeroization of credentials/license/token** (the `zeroize` crate is absent; no `Drop`
+  scrubbing). `Credentials`/`TokenCredentials`/`CustomCredentials`/`KerberosCredentials` derive
+  plaintext `Debug` (latent leak; no current `{:?}` site interpolates them in production code).
+- **Test trustworthiness:** `failover_integration_test.rs`'s "reconnect/failover" tests are
+  **vacuous** (no test induces a disconnect — they are happy-path put/get and would pass with the
+  reconnect logic deleted); `HZ_REQUIRE_CLUSTER` is wired but only consulted inside
+  `skip_if_no_cluster`, so CI **must** export it or the integration suite can no-op green.
+- The lenient connection-closed/read-error/timeout arms of the **primary** `connect_to` (lead #2)
+  remain log-only (a member that *closes* the socket on bad auth yields an `Ok` client); pass 6
+  hardened the *pool* path's status byte but not these transport-fault arms.
+
+### Baselines after pass 6 (no regression)
+
+- `cargo nextest run --workspace --test-threads 8 --retries 2` → **2184 / 2184** (transient
+  single-test flakes pass on retry).
+- `CLUSTER_ADDRESS=127.0.0.1:5701 cargo nextest run -p hazelcast-client --run-ignored
+  ignored-only --test-threads 1 --no-fail-fast` → **only `try_lock_with_timeout` fails** (the
+  documented non-defect); the new smart-routing tests pass.
+- `cargo clippy --workspace --all-targets` and `--features tls` → **0 errors**;
+  `cargo fmt --all -- --check` clean.
+
+### Reproduce pass 6 (on the AWS instance, `~/HazelRust`, `source ~/.cargo/env`; dev cluster via `~/start_cluster_a4.sh`)
+
+```sh
+# Smart-routing population + data-effect (single seed is fine for population):
+CLUSTER_ADDRESS=127.0.0.1:5701 cargo nextest run -p hazelcast-client --run-ignored all \
+  -E 'test(test_partition_table_populated_from_cluster_view)'
+
+# Routing-reaches-owner wire proof (connects to all 3 members; HZ_DEBUG_ROUTING shows decisions,
+# tcpdump corroborates packets to all 3 member ports):
+sudo timeout 120 tcpdump -i lo -nn 'tcp and (dst port 5701 or dst port 5702 or dst port 5703) \
+  and (tcp[tcpflags] & tcp-push != 0)' > /tmp/cap.txt 2>/dev/null &
+HZ_DEBUG_ROUTING=1 cargo nextest run -p hazelcast-client --run-ignored all --no-capture \
+  -E 'test(test_routing_spreads_across_partition_owners)'
+grep -oE '127\.0\.0\.1:570[123] \(OWNER\)' <test output> | sort | uniq -c   # 393/396/411, 0 FALLBACK
+grep -oE '> 127\.0\.0\.1\.570[123]:' /tmp/cap.txt | sort | uniq -c          # PSH packets to all 3
+
+# Auth status-byte hardening (no regression on normal auth):
+CLUSTER_ADDRESS=127.0.0.1:5701 cargo nextest run -p hazelcast-client --run-ignored all \
+  -E 'test(test_auth_wrong_cluster_name_is_rejected) + test(test_map_compute_if_absent)'
+
+# Decode the cluster-view wire frames yourself:
+HZ_DEBUG_CLUSTER_VIEW=1 ... --no-capture -E 'test(test_partition_table_populated_from_cluster_view)'
+```
+
+---
+
 ## Remediation pass 5 — full technical-validation session (branch `cbdc/full-validation`)
 
 **Date:** 2026-06-24. **Base:** `origin/main` `f23dc4e`. Five money-path defect classes
