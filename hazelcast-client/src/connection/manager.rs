@@ -605,9 +605,16 @@ impl ConnectionManager {
         for pool_idx in 0..pool_size {
             match self.create_connection(address).await {
                 Ok(mut inv_conn) => {
-                    // Authenticate the invocation connection
-                    self.authenticate_connection_inline(&mut inv_conn, address)
-                        .await;
+                    // Authenticate the invocation connection. A member that rejects
+                    // this auth (non-zero status byte) must not have a data-carrying
+                    // connection registered — skip it.
+                    if let Err(e) = self
+                        .authenticate_connection_inline(&mut inv_conn, address)
+                        .await
+                    {
+                        tracing::warn!(address = %address, error = %e, "invocation connection auth rejected; not registering");
+                        continue;
+                    }
                     // Wait for cluster events to arrive, then drain them
                     // Only do the full drain on the first connection; subsequent ones
                     // use a shorter drain since cluster events are already consumed.
@@ -1894,14 +1901,25 @@ impl ConnectionManager {
         connection.receive().await
     }
 
-    /// Authenticates a connection inline (for invocation connections).
+    /// Authenticates a connection inline (for invocation/pool connections).
+    ///
+    /// Returns `Err(Authentication)` when a real member answers with a non-zero
+    /// auth status byte (1 credentials-failed / 2 serialization-mismatch / 3
+    /// not-allowed-in-cluster) so the caller does **not** register an
+    /// unauthenticated *data-carrying* connection. Transport faults (no response
+    /// / read error / timeout) stay lenient (`Ok`) for the same reason the
+    /// primary `connect_to` does: the in-process unit mock servers don't speak
+    /// the auth handshake, and a dead connection fails its first op anyway
+    /// (RR-21 fails its in-flight ops fast).
     async fn authenticate_connection_inline(
         &self,
         connection: &mut Connection,
         address: SocketAddr,
-    ) {
+    ) -> Result<()> {
         use bytes::{BufMut, BytesMut};
-        use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
+        use hazelcast_core::protocol::constants::{
+            CLIENT_AUTHENTICATION, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+        };
         use hazelcast_core::protocol::Frame;
 
         let cluster_name = self.config.cluster_name().to_string();
@@ -1939,15 +1957,46 @@ impl ConnectionManager {
 
         if let Err(e) = connection.send_raw_bytes(&wire_buf).await {
             tracing::warn!(address = %address, error = %e, "invocation auth send failed");
-            return;
+            return Ok(());
         }
 
         match tokio::time::timeout(std::time::Duration::from_secs(5), connection.receive()).await {
-            Ok(Ok(Some(_))) => {
-                tracing::debug!(address = %address, "invocation connection authenticated");
+            Ok(Ok(Some(response))) => {
+                // Check the authentication status byte (offset RESPONSE_HEADER_SIZE
+                // in the initial frame). A real member that rejects this connection
+                // must not have it registered into the data-op pool.
+                let status = response
+                    .frames()
+                    .first()
+                    .and_then(|f| f.content.get(RESPONSE_HEADER_SIZE).copied());
+                match status {
+                    Some(0) => {
+                        tracing::debug!(address = %address, "invocation connection authenticated");
+                        Ok(())
+                    }
+                    Some(s) => {
+                        let reason = match s {
+                            1 => "credentials failed",
+                            2 => "serialization version mismatch",
+                            3 => "client not allowed in cluster",
+                            _ => "unknown authentication failure",
+                        };
+                        tracing::warn!(address = %address, status = s, reason, "invocation auth rejected");
+                        Err(HazelcastError::Authentication(format!(
+                            "invocation auth to {address} rejected: {reason} (status {s})"
+                        )))
+                    }
+                    None => {
+                        // Too short to contain a status byte (e.g. an in-process
+                        // mock that doesn't speak auth) — stay lenient.
+                        tracing::debug!(address = %address, "invocation auth response had no status byte; accepting leniently");
+                        Ok(())
+                    }
+                }
             }
             _ => {
-                tracing::warn!(address = %address, "invocation auth response failed");
+                tracing::warn!(address = %address, "invocation auth response failed (transport)");
+                Ok(())
             }
         }
     }
