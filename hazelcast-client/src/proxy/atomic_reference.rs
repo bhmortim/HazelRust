@@ -238,8 +238,19 @@ where
 
     /// Serializes a value into a (non-null) `Data` frame.
     fn serialize_value(&self, value: &T) -> Result<Frame> {
-        let bytes = value.to_bytes()?;
-        Ok(Frame::with_content(BytesMut::from(bytes.as_slice())))
+        use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
+        // Hazelcast `Data` is `[partition_hash:i32][type_id:i32][payload]`. The
+        // previous code wrote a bare payload (no header), which is not a valid
+        // server-side Data: a value written by this client could not be read by a
+        // Java client and vice versa (verified live cross-client — a Java-written
+        // value decoded as "" here). Write the header like IMap.
+        let mut output = ObjectDataOutput::new();
+        output.write_int(0)?; // partition_hash placeholder (server recomputes)
+        output.write_int(value.type_id())?;
+        value.serialize(&mut output)?;
+        Ok(Frame::with_content(BytesMut::from(
+            output.into_bytes().as_slice(),
+        )))
     }
 
     /// Serializes an optional value into a nullable `Data` frame: a real `Data` frame
@@ -270,7 +281,15 @@ where
         if content.is_empty() {
             return Ok(None);
         }
-        Ok(Some(T::from_bytes(content)?))
+        // Skip the 8-byte Data header ([partition_hash][type_id]) before
+        // deserializing; the previous code read it as payload (a Java-written
+        // value's zero partition_hash decoded as a zero-length value).
+        if content.len() < 8 {
+            return Err(HazelcastError::Serialization(
+                "AtomicReference value frame shorter than 8-byte Data header".to_string(),
+            ));
+        }
+        Ok(Some(T::from_bytes(&content[8..])?))
     }
 
     fn decode_bool_response(response: &ClientMessage) -> Result<bool> {

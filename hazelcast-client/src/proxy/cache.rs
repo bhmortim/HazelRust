@@ -1892,7 +1892,16 @@ where
     }
 
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
+        use hazelcast_core::serialization::DataOutput;
+        // Hazelcast `Data` is `[partition_hash:i32][type_id:i32][payload]`. ICache
+        // previously wrote a bare payload (no header) and skipped none on decode —
+        // self-consistent for a Rust↔Rust round-trip but not a valid server-side
+        // Data, so a Java/JCache cross-client read mis-decodes it. Write the header
+        // like IMap (whose framing is cross-client verified; AtomicReference's
+        // identical fix is verified live cross-client).
         let mut output = ObjectDataOutput::new();
+        output.write_int(0)?; // partition_hash placeholder (server recomputes)
+        output.write_int(value.type_id())?;
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
     }
@@ -1941,7 +1950,14 @@ where
             return Ok(None);
         }
 
-        let mut input = ObjectDataInput::new(&data_frame.content);
+        // Skip the 8-byte Data header before deserializing (paired with the
+        // header now written in serialize_value).
+        if data_frame.content.len() < 8 {
+            return Err(HazelcastError::Serialization(
+                "cache value frame shorter than 8-byte Data header".to_string(),
+            ));
+        }
+        let mut input = ObjectDataInput::new(&data_frame.content[8..]);
         T::deserialize(&mut input).map(Some)
     }
 
@@ -2019,15 +2035,18 @@ where
                 break;
             }
 
-            let mut key_input = ObjectDataInput::new(&key_frame.content);
-            let mut value_input = ObjectDataInput::new(&value_frame.content);
-
-            if let (Ok(key), Ok(value)) = (
-                K::deserialize(&mut key_input),
-                V::deserialize(&mut value_input),
-            ) {
-                entries.insert(key, value);
+            // Skip the 8-byte Data header on key and value, and propagate a
+            // deserialize failure instead of silently dropping the pair.
+            if key_frame.content.len() < 8 || value_frame.content.len() < 8 {
+                return Err(HazelcastError::Serialization(
+                    "cache entry frame shorter than 8-byte Data header".to_string(),
+                ));
             }
+            let mut key_input = ObjectDataInput::new(&key_frame.content[8..]);
+            let mut value_input = ObjectDataInput::new(&value_frame.content[8..]);
+            let key = K::deserialize(&mut key_input)?;
+            let value = V::deserialize(&mut value_input)?;
+            entries.insert(key, value);
 
             i += 2;
         }
