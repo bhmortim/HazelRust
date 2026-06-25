@@ -4549,7 +4549,16 @@ where
                 continue;
             }
 
-            let mut input = ObjectDataInput::new(&frame.content);
+            // Each page value is a Data (8-byte [partition_hash][type_id] header
+            // + payload); skip the header before deserializing, like the verified
+            // decode_values_response. (Anchors above stay opaque — they are echoed
+            // back to the server for the next page, not deserialized.)
+            if frame.content.len() < 8 {
+                return Err(HazelcastError::Serialization(
+                    "paging value frame shorter than 8-byte Data header".to_string(),
+                ));
+            }
+            let mut input = ObjectDataInput::new(&frame.content[8..]);
             values.push(T::deserialize(&mut input)?);
         }
 
@@ -4635,8 +4644,16 @@ where
                 continue;
             }
 
-            let mut key_input = ObjectDataInput::new(&key_frame.content);
-            let mut value_input = ObjectDataInput::new(&value_frame.content);
+            // Each key/value is a Data with the 8-byte header; skip it (the
+            // previous code read the header as payload, so every paged key/value
+            // decoded wrong/empty).
+            if key_frame.content.len() < 8 || value_frame.content.len() < 8 {
+                return Err(HazelcastError::Serialization(
+                    "paging entry frame shorter than 8-byte Data header".to_string(),
+                ));
+            }
+            let mut key_input = ObjectDataInput::new(&key_frame.content[8..]);
+            let mut value_input = ObjectDataInput::new(&value_frame.content[8..]);
 
             let key = K::deserialize(&mut key_input)?;
             let value = V::deserialize(&mut value_input)?;

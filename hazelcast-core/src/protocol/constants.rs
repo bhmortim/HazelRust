@@ -21,8 +21,11 @@ pub const IS_FINAL_FLAG: u16 = 1 << 13;
 /// Event flag - indicates this is an event message.
 pub const IS_EVENT_FLAG: u16 = 1 << 9;
 
-/// Backup event flag.
-pub const BACKUP_EVENT_FLAG: u16 = 1 << 11;
+/// Backup event flag. Hazelcast protocol value is `1 << 7`; it was previously
+/// `1 << 11`, which collided with [`END_DATA_STRUCTURE_FLAG`]. No decoder
+/// consults this flag today (so the collision was latent), but a shared value
+/// is a trap if backup-event handling is ever added.
+pub const BACKUP_EVENT_FLAG: u16 = 1 << 7;
 
 /// Null frame flag - indicates a null value.
 pub const IS_NULL_FLAG: u16 = 1 << 10;
