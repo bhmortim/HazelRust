@@ -71,16 +71,26 @@ keep the cluster at 5.7 and the Java client at the matching `5.7.x` for protocol
 parity (a separate run with the absolute-latest Java client is allowed only as a
 clearly-labeled secondary data point).
 
-**Suggested order of work:**
-1. Confirm cluster health + pre-warm; record provenance (hardware, governor, MHz,
-   cores, versions, commit).
-2. Write the manifest (start with the **T0 smoke** tier: IMap get/put/set +
+**Locked decisions (from the methodology — do not re-litigate):**
+- **Java client = latest `5.7.x`** (matching the cluster) as the headline
+  comparison; the absolute-latest 5.x only as a labeled secondary point.
+- **Co-located rig** (cluster + client on the one AWS instance) with **disjoint core
+  pinning** (members vs client on separate core sets); state the co-location caveat
+  prominently in the report.
+- **Scope = T0 smoke → T2 full**: validate on T0, then run the entire T2 matrix
+  (no intermediate review gate). Keep T1 as a fast spot-check/repro target.
+
+**Order of work:**
+1. Confirm cluster health + pre-warm; set the `performance` governor + core pinning;
+   record full provenance (hardware, MHz, cores, versions, commit).
+2. Write the manifest, beginning with the **T0 smoke** tier (IMap get/put/set +
    AtomicLong increment at C∈{1,64}, 100 B, 1 trial).
 3. Build both harnesses; get T0 producing valid, schema-matched records from both
-   clients; build the analyzer; validate on T0.
-4. Run **T1 core**, fix any harness asymmetry, sanity-check ratios/variance.
-5. Run **T2 full** overnight with all samplers; analyze; write the report; archive
-   raw results; spot-re-run to confirm reproducibility.
+   clients; build the analyzer; validate it end-to-end on T0.
+4. **Go straight to T2 full** (overnight) with all samplers + GC/JFR + server-side
+   scrape and the A/B/B/A interleave + contamination guard.
+5. Analyze; write `BENCHMARK_REPORT.md`; archive raw results; spot-re-run the T1
+   subset to confirm reproducibility before publishing conclusions.
 
 Build and run the harnesses on the AWS instance (the only place with the Rust
 toolchain, the Java toolchain, and the cluster). Commit per milestone to

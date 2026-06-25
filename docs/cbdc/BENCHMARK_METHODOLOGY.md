@@ -2,6 +2,17 @@
 
 Status: methodology spec (v1). Companion kickoff brief: `BENCHMARK_KICKOFF_PROMPT.md`.
 
+### Locked decisions (v1)
+- **Java client = latest `5.7.x`** (matching the EE 5.7 cluster, for exact protocol
+  parity). The absolute-latest 5.x may be run only as a clearly-labeled *secondary*
+  data point, never as the headline comparison.
+- **Rig = co-located** (cluster + client on the one AWS instance) with **disjoint
+  core pinning** (members on one core set, client on another, OS on the rest). The
+  co-location CPU-contention caveat is stated prominently in every report.
+- **Scope = T0 smoke → T2 full.** Validate the harnesses and analyzer on the T0
+  smoke tier, then run the **entire** T2 matrix (no T1-gate). Keep T1 defined as a
+  fast re-run target for spot checks / reproducibility.
+
 ## 0. Goal & non-goals
 
 **Goal.** Produce a defensible, reproducible, head-to-head performance comparison of
