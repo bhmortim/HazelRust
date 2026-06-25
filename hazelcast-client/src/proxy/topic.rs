@@ -474,7 +474,10 @@ where
         match Self::serialize_value(&self.name) {
             Ok(d) => {
                 let payload = if d.len() > 8 { &d[8..] } else { &d[..] };
-                hazelcast_core::compute_partition_hash(payload).abs() % count
+                hazelcast_core::partition_id_for_hash(
+                    hazelcast_core::compute_partition_hash(payload),
+                    count,
+                )
             }
             Err(_) => 0,
         }

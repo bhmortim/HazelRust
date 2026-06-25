@@ -588,7 +588,7 @@ where
     fn key_partition(&self, key_data: &[u8]) -> i32 {
         let count = self.connection_manager.partition_count();
         let count = if count > 0 { count } else { 271 };
-        compute_partition_hash(Self::skip8(key_data)).abs() % count
+        hazelcast_core::partition_id_for_hash(compute_partition_hash(Self::skip8(key_data)), count)
     }
 
     fn string_frame(s: &str) -> Frame {

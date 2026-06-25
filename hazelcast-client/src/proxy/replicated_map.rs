@@ -716,7 +716,7 @@ where
         let count = self.connection_manager.partition_count();
         let count = if count > 0 { count } else { 271 };
         let h = Self::skip8(key_data);
-        hazelcast_core::compute_partition_hash(h).abs() % count
+        hazelcast_core::partition_id_for_hash(hazelcast_core::compute_partition_hash(h), count)
     }
 
     async fn invoke_on_part(&self, pid: i32, mut message: ClientMessage) -> Result<ClientMessage> {
@@ -759,7 +759,10 @@ where
         let count = self.connection_manager.partition_count();
         let count = if count > 0 { count } else { 271 };
         let pid = match Self::serialize_value(&self.name) {
-            Ok(data) => hazelcast_core::compute_partition_hash(Self::skip8(&data)).abs() % count,
+            Ok(data) => hazelcast_core::partition_id_for_hash(
+                hazelcast_core::compute_partition_hash(Self::skip8(&data)),
+                count,
+            ),
             Err(_) => 0,
         };
         message.set_partition_id(pid);

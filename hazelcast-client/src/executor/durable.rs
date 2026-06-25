@@ -281,13 +281,22 @@ impl DurableExecutorService {
         Self::decode_bool_response(&response)
     }
 
+    /// Picks an arbitrary valid partition for a keyless durable submit. The task
+    /// has no affinity key, so any in-range partition is acceptable — but it MUST
+    /// be `< partition_count` or the member rejects it. The previous code hardcoded
+    /// `% 271`, which produces an out-of-range partition on any cluster not using
+    /// the default 271 partitions.
     fn select_partition(&self) -> i32 {
+        let count = self.connection_manager.partition_count();
+        if count <= 0 {
+            return PARTITION_ID_ANY;
+        }
         let uuid = Uuid::new_v4();
-        let bytes = uuid.as_bytes();
-        let hash = bytes
+        let hash = uuid
+            .as_bytes()
             .iter()
             .fold(0u32, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u32));
-        (hash % 271) as i32
+        (hash % count as u32) as i32
     }
 
     /// Resolves the partition that owns `key_data` (the key's serialized payload
@@ -492,7 +501,13 @@ mod tests {
         };
         for _ in 0..100 {
             let partition = service.select_partition();
-            assert!((0..271).contains(&partition));
+            let count = service.connection_manager.partition_count();
+            if count <= 0 {
+                // Not connected to a cluster: no partition table known yet.
+                assert_eq!(partition, PARTITION_ID_ANY);
+            } else {
+                assert!((0..count).contains(&partition));
+            }
         }
     }
 }

@@ -99,7 +99,10 @@ where
         match Self::value_data(&self.name) {
             Ok(d) => {
                 let h = if d.len() > 8 { &d[8..] } else { &d[..] };
-                hazelcast_core::compute_partition_hash(h).abs() % count
+                hazelcast_core::partition_id_for_hash(
+                    hazelcast_core::compute_partition_hash(h),
+                    count,
+                )
             }
             Err(_) => 0,
         }

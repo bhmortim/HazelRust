@@ -303,7 +303,10 @@ where
                 } else {
                     &data[..]
                 };
-                hazelcast_core::compute_partition_hash(hash_input).abs() % count
+                hazelcast_core::partition_id_for_hash(
+                    hazelcast_core::compute_partition_hash(hash_input),
+                    count,
+                )
             }
             Err(_) => 0,
         }
