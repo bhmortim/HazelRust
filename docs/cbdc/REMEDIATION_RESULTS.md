@@ -572,3 +572,62 @@ cargo nextest run --workspace                 # 2183 passed, 0 failed
 CLUSTER_ADDRESS=127.0.0.1:5701 cargo nextest run -p hazelcast-client \
   --run-ignored ignored-only --test-threads 1 --no-fail-fast   # 140 passed, 18 failed (8 XA honest, 10 java_parity infra/framing)
 ```
+
+---
+
+## Pass 9 — event-journal end-to-end + the partition-computation bug class (2026-06-25)
+
+Head `a88c944` on `cbdc/full-validation` (fast-forwarded to `main`). Commits
+`3880e89` `e552d8e` `ed268b6` `50994ca` `a88c944`.
+
+### Event-journal — now fully functional and live-verified
+`event_journal_dataeffect_test` puts under "acct-1", locates its partition via
+`get_partition`, reads that partition's journal, and asserts the decoded event
+`{type=Added, key="acct-1", new="bal-100"}`. Three layers were broken:
+- **Request framing**: `startSequence:i64@16`, `minSize:i32@24`, `maxSize:i32@28`
+  belong in the initial frame as fixed params (then name + nullable predicate +
+  projection), not as separate frames. Byte-verified on the wire.
+- **Transport**: `read_journal_batch` used raw `send_to`/`receive_from` on an
+  arbitrary first connection (mis-routed + could grab another request's response →
+  server `ArrayIndexOutOfBoundsException`). Now `invoke_on_partition` (routes to
+  the owner, correlation-matched) like subscribe.
+- **Response decode**: events arrive as a `List<Data>` of serialized
+  `InternalEventJournalMapEvent` IDS blobs, not per-field frames. Per the jar
+  `writeData`: `eventType:i32, key:Data, newValue:Data, oldValue:Data` (big-endian)
+  after the IDS header, each nested Data is `IOUtil.writeData` =
+  `[len:i32][8-byte Data header][payload]`. Rewrote the decoder accordingly and
+  exported the public types.
+
+### The partition-computation bug class (swept completely)
+Found via the event-journal test: `get_partition("acct-1")` returned 123 while the
+entry physically lives on partition 198. Root cause and siblings:
+- **`PartitionService::get_partition`**: serialized the key with `to_bytes()`
+  (payload only, no 8-byte Data header) then skipped 8 bytes anyway → hashed the
+  wrong bytes. Fixed to serialize the full Data layout.
+- **Executors** (`IExecutorService`/`Durable`/`Scheduled` `submit_to_key_owner`):
+  a fabricated `hash*31 % 271` (Java `String.hashCode` style, hardcoded 271, no
+  `hashToIndex`) → key-affinity tasks ran on the wrong member. Fixed to canonical
+  MurmurHash3 + `hashToIndex` + live partition count; golden tests added.
+- **8 collection sites** (list/set/queue/topic/ringbuffer/multimap/replicated_map):
+  `compute_partition_hash(x).abs() % count` — `i32::MIN.abs()` overflows (debug
+  panic / negative partition in release). Routed through `partition_id_for_hash`.
+- **11 ICache sites**: used the raw hash as the partition id (no skip-8, no
+  modulo). Fixed to `partition_id_for_key_data` (correct-by-construction; ICache
+  still non-functional pending server-side cache creation).
+- `DurableExecutorService::select_partition`: hardcoded `% 271` → live count.
+
+Sweep is complete: every `compute_partition_hash` is now wrapped in
+`partition_id_for_hash`/`partition_id_for_key_data`; CP/flake/pncounter do not use
+partition-hash routing.
+
+### Regression
+Full hazelcast-client integration **2048/2052** — the 4 failures are known
+transient flakes (`atomic_long_clone`, `replicated_map_values`, `bench_map_get_all_10`)
+plus the `try_lock_with_timeout` non-defect, all passing in isolation. Workspace
+lib 1792/1792; executor unit 6/6; event-journal unit 23/23.
+
+### Verdict: UNCHANGED — still NO-GO
+The external P3 items (independent pen test, Jepsen linearizability, 72h+ soak on
+dedicated hardware, governance sign-off) remain out of scope. This pass reinforces
+that "bug-free" is not certifiable: an entire class of wrong partition routing sat
+under a green suite until a data-effect test exposed it.
