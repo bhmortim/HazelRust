@@ -19,3 +19,6 @@
 /bench-java/build/
 /bench-java/.gradle/
 /bench/manifest.t2.json
+/benchmarks/headline/
+/benchmarks/t0/
+/benchmarks/out_t0smoke/

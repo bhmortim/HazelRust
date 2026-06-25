@@ -8,9 +8,13 @@ plugins {
 repositories { mavenCentral() }
 
 dependencies {
-    // Official Hazelcast OSS client — version-identical to the EE 5.7.0 cluster
-    // (latest 5.7.x on Maven Central is 5.7.0) for exact protocol parity.
-    implementation 'com.hazelcast:hazelcast:5.7.0'
+    // Official Hazelcast ENTERPRISE 5.7.0 client — version-identical to the EE
+    // 5.7.0 cluster. The EE client is REQUIRED for the CP subsystem (Suite B,
+    // the money path): the OSS client's CPSubsystemStubImpl throws
+    // "CP subsystem is an Enterprise feature" against an EE cluster. The EE jar
+    // is self-contained (bundles the base client + CP enterprise impl) and is
+    // staged on the instance (licensed artifact, not on Maven Central).
+    implementation files('/home/ec2-user/hzlib/hazelcast-enterprise-5.7.0.jar')
     implementation 'org.hdrhistogram:HdrHistogram:2.2.2'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
     implementation 'info.picocli:picocli:4.7.6'
@@ -32,13 +36,5 @@ shadowJar {
     mergeServiceFiles()
 }
 
-// Print the resolved Hazelcast client version (recorded in provenance).
-tasks.register('printClientVersion') {
-    doLast {
-        configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.each { a ->
-            if (a.moduleVersion.id.name == 'hazelcast') {
-                println "HZ_CLIENT_VERSION=" + a.moduleVersion.id.version
-            }
-        }
-    }
-}
+// Java client = Hazelcast Enterprise 5.7.0 (local jar; version-identical to the
+// EE 5.7.0 cluster). Recorded as such in provenance.

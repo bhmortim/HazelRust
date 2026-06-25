@@ -40,6 +40,13 @@ TIERS = {
                open_loop=True, c_set=[1, 2, 4, 8, 16, 32, 64, 128, 256],
                value_sizes=[8, 100, 1024, 4096, 16384, 65536, 262144],
                distributions=["uniform", "zipfian"]),
+    # Curated, time-bounded executed matrix (the headline run). Covers the
+    # report's lead suites (J mixed + B CP money-path) + A IMap core across a
+    # C-sweep, a value-size sweep, and a zipfian point, plus open-loop latency.
+    # forks=3 x trials=2 (n=6) is below the methodology's 5x3 ideal — a documented
+    # time/coverage trade-off; the full t2 design remains in this generator.
+    "headline": dict(forks=3, trials=2, warmup_s=15, measure_s=18, min_ops=500_000,
+                     open_loop=True),
 }
 
 # Open-loop target rates as a fraction of the measured closed-loop max
@@ -136,7 +143,67 @@ SUITE_J_MIX = [
 ]
 
 
+def gen_headline():
+    cfg = TIERS["headline"]
+    td = dict(warmup_s=cfg["warmup_s"], measure_s=cfg["measure_s"],
+              forks=cfg["forks"], trials=cfg["trials"], min_ops=cfg["min_ops"])
+    cells = []
+
+    def add(suite, struct, op, variant, c, vs, dist, mix=None, kt="i64", vk="bytes"):
+        cells.append(cell(suite=suite, structure=struct, op=op, variant=variant,
+                          key_type=kt, value_kind=vk, value_size=vs, working_set=ws_for(vs),
+                          concurrency=c, load_model="closed", distribution=dist, mix=mix, **td))
+
+    # Suite A — IMap core: C-sweep + value-size sweep + a zipfian point
+    for op, variant in [("get", "hit"), ("put", "update"), ("set", "default")]:
+        for c in (1, 16, 64, 256):
+            add("A", "imap", op, variant, c, 100, "uniform")
+    for op, variant in [("get", "hit"), ("put", "update")]:
+        for vs in (1024, 16384):
+            add("A", "imap", op, variant, 64, vs, "uniform")
+    add("A", "imap", "get", "hit", 64, 100, "zipfian")
+
+    # Suite B — CP money path (uses i64 values)
+    for op, variant in [("get", "default"), ("increment_and_get", "default"), ("compare_and_set", "success")]:
+        for c in (1, 64):
+            add("B", "atomiclong", op, variant, c, 8, "uniform", vk="i64")
+    for op, variant in [("get", "hit"), ("put", "update")]:
+        for c in (1, 64):
+            add("B", "cpmap", op, variant, c, 8, "uniform", vk="i64")
+
+    # Suite J — realistic mixed (lead suite)
+    for variant, mix in [("ycsb_a", dict(get=0.5, put=0.5)), ("ycsb_b", dict(get=0.95, put=0.05))]:
+        for c in (1, 64, 256):
+            add("J", "imap", "mixed", variant, c, 100, "uniform", mix=mix)
+    add("J", "imap", "mixed", "ycsb_c", 64, 100, "uniform", mix=dict(get=1.0))
+    add("J", "imap", "mixed", "ycsb_f", 64, 100, "uniform", mix=dict(rmw=1.0))
+    add("J", "imap", "mixed", "ycsb_a", 64, 100, "zipfian", mix=dict(get=0.5, put=0.5))
+
+    # Open-loop latency-under-rate for the headline rate groups
+    open_bases = [c for c in cells if c["rate_group"] in {
+        "imap.get.hit.ki64.v100.uniform",
+        "imap.put.update.ki64.v100.uniform",
+        "atomiclong.increment_and_get.default.ki64.v8.uniform",
+        "imap.mixed.ycsb_a.ki64.v100.uniform",
+    }]
+    seen = set()
+    for base in open_bases:
+        if base["rate_group"] in seen:
+            continue
+        seen.add(base["rate_group"])
+        for frac in (0.50, 0.90):
+            cells.append(cell(suite=base["suite"], structure=base["structure"], op=base["op"],
+                              variant=base["variant"], key_type=base["key_type"],
+                              value_kind=base["value_kind"], value_size=base["value_size"],
+                              working_set=base["working_set"], concurrency=256, load_model="open",
+                              rate_group=base["rate_group"], rate_frac=frac,
+                              distribution=base["distribution"], mix=base["mix"], **td))
+    return cells
+
+
 def gen_tier(tier):
+    if tier == "headline":
+        return gen_headline()
     cfg = TIERS[tier]
     cells = []
     tdefaults = dict(warmup_s=cfg["warmup_s"], measure_s=cfg["measure_s"],

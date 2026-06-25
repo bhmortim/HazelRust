@@ -62,6 +62,13 @@ public class Main implements Callable<Integer> {
         cfg.setProperty("hazelcast.client.statistics.enabled", "false"); // stats OFF
         cfg.getMetricsConfig().setEnabled(false);              // near-cache OFF (default)
         cfg.setProperty("hazelcast.logging.type", "none");
+        // EE client requires a license (also gates CP subsystem access). The
+        // orchestrator injects it via env so it is never on the command line /
+        // logs. Read here; never printed.
+        String lic = System.getenv("HZ_LICENSE");
+        if (lic != null && !lic.isBlank()) {
+            cfg.setProperty("hazelcast.enterprise.license.key", lic);
+        }
 
         HazelcastInstance client = HazelcastClient.newHazelcastClient(cfg);
         try {
@@ -147,6 +154,8 @@ public class Main implements Callable<Integer> {
         prov.put("harness_version", "0.1.0");
         prov.put("commit", commit);
         prov.put("hz_client_version", clientVersion);
+        prov.put("hz_edition", "enterprise");
+        prov.put("license_set", System.getenv("HZ_LICENSE") != null);
         prov.put("java_version", System.getProperty("java.version"));
         prov.put("java_vm", System.getProperty("java.vm.name") + " " + System.getProperty("java.vm.version"));
         prov.put("jvm_args", ManagementFactory.getRuntimeMXBean().getInputArguments());
