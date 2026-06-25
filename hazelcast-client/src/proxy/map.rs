@@ -2773,6 +2773,71 @@ where
         Ok(())
     }
 
+    /// Appends a `PagingPredicateHolder` (EE 5.7 `PagingPredicateHolderCodec`) to
+    /// the message: the 5.x paging request expects this structured holder, not the
+    /// single serialized-predicate `Data` blob the old code sent (which made the
+    /// server throw NullPointerException on decode).
+    ///
+    /// Layout: `BEGIN`, initial `{pageSize:i32, page:i32, iterationType:u8}`, then
+    /// `AnchorDataListHolder` (`BEGIN`, empty-initial, `pageList:List<int>`,
+    /// `dataList:EntryList<Data,Data>`, `END`), then nullable `predicate` /
+    /// `comparator` / `partitionKey` `Data` frames, then a nullable
+    /// `partitionKeysData` list, then `END`.
+    fn add_paging_predicate_holder(
+        message: &mut ClientMessage,
+        predicate: &PagingPredicate<K, V>,
+    ) -> Result<()> {
+        use bytes::BufMut;
+        let begin = || Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG);
+        let end = || Frame::with_flags(END_DATA_STRUCTURE_FLAG);
+
+        message.add_frame(begin());
+        let mut init = BytesMut::with_capacity(9);
+        init.put_i32_le(predicate.page_size() as i32);
+        init.put_i32_le(predicate.get_page() as i32);
+        init.put_u8(predicate.iteration_type() as i32 as u8);
+        message.add_frame(Frame::with_content(init));
+
+        // AnchorDataListHolder: BEGIN, pageList, dataList, END — it has NO fixed
+        // initial frame (the codec reads ListInteger immediately after BEGIN).
+        message.add_frame(begin());
+        let mut page_list = BytesMut::with_capacity(predicate.anchors().len() * 4);
+        for a in predicate.anchors() {
+            page_list.put_i32_le(a.page() as i32);
+        }
+        message.add_frame(Frame::with_content(page_list)); // pageList: List<int>
+        message.add_frame(begin()); // dataList keys: List<Data>
+        for a in predicate.anchors() {
+            match a.key_data() {
+                Some(k) => message.add_frame(Self::data_frame(k)),
+                None => message.add_frame(Frame::new_null_frame()),
+            }
+        }
+        message.add_frame(end());
+        message.add_frame(begin()); // dataList values: List<Data>
+        for a in predicate.anchors() {
+            match a.value_data() {
+                Some(v) => message.add_frame(Self::data_frame(v)),
+                None => message.add_frame(Frame::new_null_frame()),
+            }
+        }
+        message.add_frame(end());
+        message.add_frame(end()); // end AnchorDataListHolder
+
+        match predicate.inner_predicate_data()? {
+            Some(d) => message.add_frame(Self::data_frame(&d)),
+            None => message.add_frame(Frame::new_null_frame()),
+        }
+        match predicate.comparator_data() {
+            Some(d) => message.add_frame(Self::data_frame(d)),
+            None => message.add_frame(Frame::new_null_frame()),
+        }
+        message.add_frame(Frame::new_null_frame()); // partitionKey: Data?
+        message.add_frame(Frame::new_null_frame()); // partitionKeysData: list?
+        message.add_frame(end()); // end holder
+        Ok(())
+    }
+
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
         let mut output = ObjectDataOutput::new();
         // Hazelcast Data format: [partition_hash: i32 BE] [type_id: i32 BE] [payload]
@@ -4371,12 +4436,11 @@ where
     ) -> Result<PagingResult<V>> {
         self.check_permission(PermissionAction::Read)?;
         predicate.set_iteration_type(IterationType::Value);
-        let predicate_data = predicate.to_predicate_data()?;
 
         let mut message =
             ClientMessage::create_for_encode(MAP_VALUES_WITH_PAGING_PREDICATE, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&predicate_data));
+        Self::add_paging_predicate_holder(&mut message, predicate)?;
 
         let response = self.invoke_on_random(message).await?;
         let (values, anchors) = Self::decode_paging_values_response::<V>(&response)?;
@@ -4411,12 +4475,11 @@ where
     ) -> Result<PagingResult<K>> {
         self.check_permission(PermissionAction::Read)?;
         predicate.set_iteration_type(IterationType::Key);
-        let predicate_data = predicate.to_predicate_data()?;
 
         let mut message =
             ClientMessage::create_for_encode(MAP_KEYS_WITH_PAGING_PREDICATE, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&predicate_data));
+        Self::add_paging_predicate_holder(&mut message, predicate)?;
 
         let response = self.invoke_on_random(message).await?;
         let (keys, anchors) = Self::decode_paging_values_response::<K>(&response)?;
@@ -4457,12 +4520,11 @@ where
     ) -> Result<PagingResult<(K, V)>> {
         self.check_permission(PermissionAction::Read)?;
         predicate.set_iteration_type(IterationType::Entry);
-        let predicate_data = predicate.to_predicate_data()?;
 
         let mut message =
             ClientMessage::create_for_encode(MAP_ENTRIES_WITH_PAGING_PREDICATE, PARTITION_ID_ANY);
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&predicate_data));
+        Self::add_paging_predicate_holder(&mut message, predicate)?;
 
         let response = self.invoke_on_random(message).await?;
         let (entries, anchors) = Self::decode_paging_entries_response(&response)?;
@@ -4476,190 +4538,156 @@ where
     fn decode_paging_values_response<T: Deserializable>(
         response: &ClientMessage,
     ) -> Result<(Vec<T>, Vec<AnchorEntry>)> {
+        // EE 5.7 MapValuesWithPagingPredicate response: [response header], then
+        // `values: List<Data>`, then `anchorDataList: AnchorDataListHolder`.
         let frames = response.frames();
+        let mut idx = 1usize; // skip the response header frame
+
+        // values: List<Data> — BEGIN, value Data frames (8-byte header), END.
         let mut values = Vec::new();
-        let mut anchors = Vec::new();
-        let mut frame_idx = 1;
-
-        // Read anchor count from initial frame if present
-        let anchor_count =
-            if !frames.is_empty() && frames[0].content.len() >= RESPONSE_HEADER_SIZE + 4 {
-                let offset = RESPONSE_HEADER_SIZE;
-                i32::from_le_bytes([
-                    frames[0].content[offset],
-                    frames[0].content[offset + 1],
-                    frames[0].content[offset + 2],
-                    frames[0].content[offset + 3],
-                ]) as usize
-            } else {
-                0
-            };
-
-        // Read anchors
-        for _ in 0..anchor_count {
-            if frame_idx + 2 >= frames.len() {
-                break;
-            }
-
-            let page_frame = &frames[frame_idx];
-            let page = if page_frame.content.len() >= 4 {
-                i32::from_le_bytes([
-                    page_frame.content[0],
-                    page_frame.content[1],
-                    page_frame.content[2],
-                    page_frame.content[3],
-                ]) as usize
-            } else {
-                0
-            };
-            frame_idx += 1;
-
-            let key_frame = &frames[frame_idx];
-            let key_data = if key_frame.flags & IS_NULL_FLAG == 0 && !key_frame.content.is_empty() {
-                Some(key_frame.content.to_vec())
-            } else {
-                None
-            };
-            frame_idx += 1;
-
-            let value_frame = &frames[frame_idx];
-            let value_data =
-                if value_frame.flags & IS_NULL_FLAG == 0 && !value_frame.content.is_empty() {
-                    Some(value_frame.content.to_vec())
-                } else {
-                    None
-                };
-            frame_idx += 1;
-
-            anchors.push(AnchorEntry::new(page, key_data, value_data));
+        while idx < frames.len() && frames[idx].flags & BEGIN_DATA_STRUCTURE_FLAG == 0 {
+            idx += 1;
         }
-
-        // Read values
-        while frame_idx < frames.len() {
-            let frame = &frames[frame_idx];
-            frame_idx += 1;
-
-            if frame.flags & IS_NULL_FLAG != 0 {
+        idx += 1; // consume the values-list BEGIN
+        while idx < frames.len() && frames[idx].flags & END_DATA_STRUCTURE_FLAG == 0 {
+            let f = &frames[idx];
+            idx += 1;
+            if f.flags & IS_NULL_FLAG != 0 || f.content.is_empty() {
                 continue;
             }
-            if frame.flags & END_FLAG != 0 && frame.content.is_empty() {
-                break;
-            }
-            if frame.content.is_empty() {
-                continue;
-            }
-
-            // Each page value is a Data (8-byte [partition_hash][type_id] header
-            // + payload); skip the header before deserializing, like the verified
-            // decode_values_response. (Anchors above stay opaque — they are echoed
-            // back to the server for the next page, not deserialized.)
-            if frame.content.len() < 8 {
+            if f.content.len() < 8 {
                 return Err(HazelcastError::Serialization(
                     "paging value frame shorter than 8-byte Data header".to_string(),
                 ));
             }
-            let mut input = ObjectDataInput::new(&frame.content[8..]);
+            let mut input = ObjectDataInput::new(&f.content[8..]);
             values.push(T::deserialize(&mut input)?);
         }
+        idx += 1; // consume the values-list END
 
+        let anchors = Self::decode_anchor_data_list_holder(frames, idx);
         Ok((values, anchors))
+    }
+
+    /// Decodes an `AnchorDataListHolder` (BEGIN, `pageList:List<int>`,
+    /// `dataList:EntryList<Data,Data>`, END) starting at `idx`, returning the
+    /// next-page anchors (key/value `Data` kept opaque to echo back).
+    fn decode_anchor_data_list_holder(frames: &[Frame], mut idx: usize) -> Vec<AnchorEntry> {
+        while idx < frames.len() && frames[idx].flags & BEGIN_DATA_STRUCTURE_FLAG == 0 {
+            idx += 1;
+        }
+        idx += 1; // consume holder BEGIN
+
+        // pageList: a single fixed-size int frame.
+        let mut pages = Vec::new();
+        if let Some(f) = frames.get(idx) {
+            if f.flags & (BEGIN_DATA_STRUCTURE_FLAG | END_DATA_STRUCTURE_FLAG | IS_NULL_FLAG) == 0 {
+                for chunk in f.content.chunks_exact(4) {
+                    pages.push(i32::from_le_bytes(chunk.try_into().unwrap()) as usize);
+                }
+                idx += 1;
+            }
+        }
+
+        // dataList: EntryList<Data,Data> as ONE list of interleaved [key, value]
+        // Data frames; the anchor key/value bytes are kept opaque to echo back.
+        let mut anchor_kv: Vec<(Option<Vec<u8>>, Option<Vec<u8>>)> = Vec::new();
+        if frames
+            .get(idx)
+            .is_some_and(|f| f.flags & BEGIN_DATA_STRUCTURE_FLAG != 0)
+        {
+            idx += 1; // BEGIN dataList
+            while frames
+                .get(idx)
+                .is_some_and(|f| f.flags & END_DATA_STRUCTURE_FLAG == 0)
+            {
+                let kf = &frames[idx];
+                idx += 1;
+                let vf = frames
+                    .get(idx)
+                    .filter(|f| f.flags & END_DATA_STRUCTURE_FLAG == 0);
+                if vf.is_some() {
+                    idx += 1;
+                }
+                let k = if kf.flags & IS_NULL_FLAG != 0 || kf.content.is_empty() {
+                    None
+                } else {
+                    Some(kf.content.to_vec())
+                };
+                let v = vf.and_then(|f| {
+                    if f.flags & IS_NULL_FLAG != 0 || f.content.is_empty() {
+                        None
+                    } else {
+                        Some(f.content.to_vec())
+                    }
+                });
+                anchor_kv.push((k, v));
+            }
+        }
+
+        let mut anchors = Vec::with_capacity(pages.len());
+        for (i, &page) in pages.iter().enumerate() {
+            let (k, v) = anchor_kv.get(i).cloned().unwrap_or((None, None));
+            anchors.push(AnchorEntry::new(page, k, v));
+        }
+        anchors
     }
 
     fn decode_paging_entries_response(
         response: &ClientMessage,
     ) -> Result<(Vec<(K, V)>, Vec<AnchorEntry>)> {
+        // EE 5.7 response: [header], entries: EntryList<Data,Data> (a keys
+        // List<Data> then a values List<Data>), then anchorDataList.
         let frames = response.frames();
-        let mut entries = Vec::new();
-        let mut anchors = Vec::new();
-        let mut frame_idx = 1;
-
-        // Read anchor count from initial frame if present
-        let anchor_count =
-            if !frames.is_empty() && frames[0].content.len() >= RESPONSE_HEADER_SIZE + 4 {
-                let offset = RESPONSE_HEADER_SIZE;
-                i32::from_le_bytes([
-                    frames[0].content[offset],
-                    frames[0].content[offset + 1],
-                    frames[0].content[offset + 2],
-                    frames[0].content[offset + 3],
-                ]) as usize
-            } else {
-                0
-            };
-
-        // Read anchors
-        for _ in 0..anchor_count {
-            if frame_idx + 2 >= frames.len() {
-                break;
+        if std::env::var("HZ_DEBUG_PAGING").is_ok() {
+            for (i, f) in frames.iter().enumerate() {
+                eprintln!(
+                    "[paging-entries] frame[{i:02}] flags=0x{:04x} len={}",
+                    f.flags,
+                    f.content.len()
+                );
             }
-
-            let page_frame = &frames[frame_idx];
-            let page = if page_frame.content.len() >= 4 {
-                i32::from_le_bytes([
-                    page_frame.content[0],
-                    page_frame.content[1],
-                    page_frame.content[2],
-                    page_frame.content[3],
-                ]) as usize
-            } else {
-                0
-            };
-            frame_idx += 1;
-
-            let key_frame = &frames[frame_idx];
-            let key_data = if key_frame.flags & IS_NULL_FLAG == 0 && !key_frame.content.is_empty() {
-                Some(key_frame.content.to_vec())
-            } else {
-                None
-            };
-            frame_idx += 1;
-
-            let value_frame = &frames[frame_idx];
-            let value_data =
-                if value_frame.flags & IS_NULL_FLAG == 0 && !value_frame.content.is_empty() {
-                    Some(value_frame.content.to_vec())
-                } else {
-                    None
-                };
-            frame_idx += 1;
-
-            anchors.push(AnchorEntry::new(page, key_data, value_data));
         }
+        let mut idx = 1usize;
 
-        // Read entries (key-value pairs)
-        while frame_idx + 1 < frames.len() {
-            let key_frame = &frames[frame_idx];
-            let value_frame = &frames[frame_idx + 1];
-            frame_idx += 2;
-
-            if key_frame.flags & END_FLAG != 0 && key_frame.content.is_empty() {
+        // entries: EntryList<Data,Data> encoded as a single list of INTERLEAVED
+        // [key, value] Data frames (BEGIN, k0, v0, k1, v1, ..., END).
+        while idx < frames.len() && frames[idx].flags & BEGIN_DATA_STRUCTURE_FLAG == 0 {
+            idx += 1;
+        }
+        idx += 1; // consume BEGIN
+        let mut entries = Vec::new();
+        while frames
+            .get(idx)
+            .is_some_and(|f| f.flags & END_DATA_STRUCTURE_FLAG == 0)
+        {
+            let kf = &frames[idx];
+            idx += 1;
+            let Some(vf) = frames
+                .get(idx)
+                .filter(|f| f.flags & END_DATA_STRUCTURE_FLAG == 0)
+            else {
                 break;
-            }
-
-            if key_frame.flags & IS_NULL_FLAG != 0 || key_frame.content.is_empty() {
+            };
+            idx += 1;
+            if kf.flags & IS_NULL_FLAG != 0 || vf.flags & IS_NULL_FLAG != 0 {
                 continue;
             }
-
-            if value_frame.flags & IS_NULL_FLAG != 0 || value_frame.content.is_empty() {
-                continue;
-            }
-
-            // Each key/value is a Data with the 8-byte header; skip it (the
-            // previous code read the header as payload, so every paged key/value
-            // decoded wrong/empty).
-            if key_frame.content.len() < 8 || value_frame.content.len() < 8 {
+            if kf.content.len() < 8 || vf.content.len() < 8 {
                 return Err(HazelcastError::Serialization(
                     "paging entry frame shorter than 8-byte Data header".to_string(),
                 ));
             }
-            let mut key_input = ObjectDataInput::new(&key_frame.content[8..]);
-            let mut value_input = ObjectDataInput::new(&value_frame.content[8..]);
-
-            let key = K::deserialize(&mut key_input)?;
-            let value = V::deserialize(&mut value_input)?;
-            entries.push((key, value));
+            let mut key_input = ObjectDataInput::new(&kf.content[8..]);
+            let mut value_input = ObjectDataInput::new(&vf.content[8..]);
+            entries.push((
+                K::deserialize(&mut key_input)?,
+                V::deserialize(&mut value_input)?,
+            ));
         }
+        idx += 1; // consume the entries-list END
 
+        let anchors = Self::decode_anchor_data_list_holder(frames, idx);
         Ok((entries, anchors))
     }
 

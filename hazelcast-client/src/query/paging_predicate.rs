@@ -436,6 +436,24 @@ impl<K, V> PagingPredicate<K, V> {
         self.iteration_type
     }
 
+    /// Returns the current anchor list (for `PagingPredicateHolder` encoding).
+    pub fn anchors(&self) -> &[AnchorEntry] {
+        &self.anchors
+    }
+
+    /// Returns the serialized comparator `Data`, if a comparator was set.
+    pub fn comparator_data(&self) -> Option<&[u8]> {
+        self.comparator_data.as_deref()
+    }
+
+    /// Returns the serialized inner predicate `Data`, if an inner predicate was set.
+    pub fn inner_predicate_data(&self) -> Result<Option<Vec<u8>>> {
+        self.inner
+            .as_ref()
+            .map(|p| p.to_predicate_data())
+            .transpose()
+    }
+
     /// Sets the iteration type.
     pub fn set_iteration_type(&mut self, iteration_type: IterationType) {
         self.iteration_type = iteration_type;
