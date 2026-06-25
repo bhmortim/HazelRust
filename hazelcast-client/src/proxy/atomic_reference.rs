@@ -401,9 +401,13 @@ mod tests {
 
         let original = "hello world".to_string();
         let frame = reference.serialize_value(&original).unwrap();
-        assert!(!frame.content.is_empty());
+        // serialize_value writes a Data: [partition_hash:i32][type_id:i32][payload].
+        assert!(frame.content.len() > 8);
+        // partition_hash placeholder is 0; type_id is the String type id.
+        assert_eq!(&frame.content[0..4], &[0, 0, 0, 0]);
 
-        let deserialized = String::from_bytes(&frame.content).unwrap();
+        // The decode path skips the 8-byte header.
+        let deserialized = String::from_bytes(&frame.content[8..]).unwrap();
         assert_eq!(deserialized, original);
     }
 

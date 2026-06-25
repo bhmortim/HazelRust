@@ -6,6 +6,63 @@
 
 ---
 
+## Remediation pass 8 — cross-client + broken-feature fixes (branch `cbdc/full-validation`)
+
+**Date:** 2026-06-24. **Base:** pass 7 `502930c`. **Commits:** `0c41fd1` (AtomicReference),
+`0787401` (ringbuffer), `ad47ee1` (paging). Verdict **unchanged — still NO-GO.** This pass
+unblocked items previously called "blocked" by building the missing verification infra
+(a Java cross-client harness `~/xclient/XClient.java`, a Java paging reference + tcpdump capture).
+
+### Fixed & verified live this pass
+
+- **AtomicReference Data-header — verified live CROSS-CLIENT (Java↔Rust)** (`0c41fd1`). Confirmed
+  the ledger's "needs-harness-to-confirm" finding: a CP `AtomicReference` value written by a stock
+  **Java** client decoded as `Some("")` in Rust, because `serialize_value` wrote a bare payload
+  (no `[partition_hash][type_id]` header) and decode read from offset 0. Fixed to write the header
+  + skip it on decode (like IMap). **Verified both directions:** Rust now reads the Java-written
+  value, and a Java client reads the Rust-written value (`class java.lang.String`). *New finding,
+  recorded open:* **ICache is broken at a deeper level** — its `CACHE_*` message-type constants are
+  sequential placeholders (`CACHE_GET=0x130100`, `CACHE_PUT=0x130300`) **not** the real EE 5.7
+  values (`CacheGet=0x130D00`, `CachePut=0x131300`), so it invokes the wrong server ops
+  (`ArrayIndexOutOfBoundsException` on put); the requests also omit fixed params (`get`,
+  `completionId`) + the `expiryPolicy` frame. ICache needs a full codec re-derivation. (The identical
+  value-header fix was applied to ICache as a correct latent change.)
+
+- **Ringbuffer `read_many` — ReadResultSet reframe** (`0787401`). The old loop read every trailing
+  response frame and relied on `decode_value_at` FAILING on the `itemSeqs` long[] frame to skip it
+  — which silently injected a bogus extra item for fixed-width element types. Reframed against the
+  EE 5.7 codec (readCount@13, nextSeq@17, `List<Data>` items in BEGIN..END, then the separate
+  `itemSeqs`). **Verified live before/after with i64 items:** before → 6 items
+  `[1000,1001,1002,1003,1004, 0x0100000000000000]` (the seq array as a 6th i64); after → exactly 5.
+
+- **Paging fully functional — `PagingPredicateHolder` request + 5.x response decode** (`ad47ee1`).
+  Paging (`values`/`keys`/`entries_with_paging_predicate`) was completely broken: the request sent
+  the predicate as a single `Data` blob, but 5.x expects a structured `PagingPredicateHolder` codec
+  (server `NullPointerException`). Implemented the holder (initial `{pageSize,page,iterationType}`,
+  `AnchorDataListHolder`, nullable `predicate`/`comparator`/`partitionKey` `Data`, nullable
+  `partitionKeysData`) and rewrote the response decoders for the 5.x layout — `values`/`keys` =
+  `List<Data>`, `entries` = `EntryList<Data,Data>` as ONE list of **interleaved** `[key,value]`
+  frames, each followed by an `AnchorDataListHolder` (for next-page navigation). The page-value
+  8-byte skip (pass 7, code-parity) is now actually exercised. **Verified live** (values/keys/entries
+  each return the correct 10 decoded entries), cross-checked against a stock Java paging client +
+  a tcpdump capture of the request framing.
+
+### Still open after pass 8 (large / infra-bound — precise specs in passes 6–7)
+
+- **ICache** — full codec re-derivation (entire `CACHE_*` constant block is wrong + request framing
+  + value header). The wrong-constant problem appears systemic (the CP `ATOMIC_*` constants were
+  likewise mislabeled and locally overridden) — a full `constants.rs` audit vs the EE jar is warranted.
+- **Map + ICache event-journal decoders** — same deep mis-framing class as the entry-listener;
+  needs an event-journal-enabled map/cache + full re-derivation (`CacheEventType` is sequential
+  `CREATED=1,UPDATED=2,REMOVED=3,EXPIRED=4`, not the `EntryEventType` bitmask).
+- **mTLS default-hostname binding** — verify the cert against the configured DNS name by default,
+  and stop silently ignoring `verify_hostname`/`protocol_versions`/`cipher_suites` (the mTLS
+  *security* mechanism is already proven in pass 3 with `sni_hostname`; this is a default-ergonomics
+  + fail-closed hardening, needs a DNS-only cert to verify).
+- **Message-fragmentation reassembly** — large responses the server fragments cannot be reassembled.
+
+---
+
 ## Remediation pass 7 — decoder / security / test hardening (branch `cbdc/full-validation`)
 
 **Date:** 2026-06-24. **Base:** pass 6 `ead30b4`. **Commits:** `076b932` (entry-listener),
