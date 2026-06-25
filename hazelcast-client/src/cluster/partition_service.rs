@@ -336,6 +336,19 @@ impl PartitionService {
     /// # Type Parameters
     ///
     /// - `K`: The key type, must implement `Serializable` and `Hash`
+    /// Serializes `key` into Hazelcast's `Data` layout
+    /// (`[partition_hash:i32][type_id:i32][payload]`), byte-identical to the IMap
+    /// put/get key path (`serialize_value`), so partition computation hashes the
+    /// same payload bytes the cluster used to place the entry.
+    fn key_to_data<K: Serializable>(key: &K) -> hazelcast_core::Result<Vec<u8>> {
+        use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
+        let mut output = ObjectDataOutput::new();
+        output.write_int(0)?; // partition_hash placeholder (cluster recomputes)
+        output.write_int(key.type_id())?; // Hazelcast constant type id
+        key.serialize(&mut output)?; // payload
+        Ok(output.into_bytes())
+    }
+
     pub async fn get_partition<K>(&self, key: &K) -> Partition
     where
         K: Serializable + Hash,
@@ -350,10 +363,14 @@ impl PartitionService {
         // SipHash returns a partition unrelated to where the key actually lives.
         // `partition_id_for_key_data` skips the 8-byte Data header before hashing
         // (Java's HeapData.getPartitionHash hashes buffer[8:]) and maps via
-        // hashToIndex; the previous code hashed the full bytes (header included)
-        // and used a panic-prone `abs()`, so this public API returned a partition
-        // id that disagreed with where the IMap entry actually lives.
-        let partition_id = match key.to_bytes() {
+        // hashToIndex. The key MUST be serialized into the full Data layout
+        // (`[partition_hash:i32][type_id:i32][payload]`) — the same one IMap
+        // put/get use — so the skipped 8 bytes are the real header. The previous
+        // code used `to_bytes()`, which writes ONLY the payload (no header), so
+        // skipping 8 bytes hashed `payload[8:]` and returned a partition that
+        // disagreed with where the entry actually lives (verified live: an entry
+        // put under "acct-1" lands on partition 198 while this returned 123).
+        let partition_id = match Self::key_to_data(key) {
             Ok(bytes) => hazelcast_core::partition_id_for_key_data(&bytes, partition_count),
             Err(_) => 0,
         };

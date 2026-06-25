@@ -43,7 +43,10 @@ pub use flake_id::{FlakeIdGenerator, IdBatch};
 pub use interceptor::MapInterceptor;
 pub use list::IList;
 pub use local_stats::{LatencyStats, LatencyTracker};
-pub use map::{EntryView, IMap, IndexConfig, IndexConfigBuilder, IndexType};
+pub use map::{
+    EntryView, EventJournalConfig, EventJournalEventType, EventJournalMapEvent, EventJournalStream,
+    IMap, IndexConfig, IndexConfigBuilder, IndexType,
+};
 pub use map_stats::LocalMapStats;
 pub use multimap::MultiMap;
 pub use pipeline::Pipelining;

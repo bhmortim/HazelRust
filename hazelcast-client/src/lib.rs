@@ -220,9 +220,10 @@ pub use metrics::{
 };
 pub use pipeline::InvocationPipeline;
 pub use proxy::{
-    AtomicReference, EntryView, ExpiryPolicy, IList, IMap, IQueue, ISet, ITopic, MultiMap,
-    Offloadable, Pipelining, ReadOnly, TopicMessage, VectorCollection, VectorCollectionConfig,
-    VectorDocument, VectorIndexConfig, VectorMetric, VectorSearchResult, VectorValue,
+    AtomicReference, EntryView, EventJournalConfig, EventJournalEventType, EventJournalMapEvent,
+    EventJournalStream, ExpiryPolicy, IList, IMap, IQueue, ISet, ITopic, MultiMap, Offloadable,
+    Pipelining, ReadOnly, TopicMessage, VectorCollection, VectorCollectionConfig, VectorDocument,
+    VectorIndexConfig, VectorMetric, VectorSearchResult, VectorValue,
 };
 pub use query::{
     AndPredicate, BetweenPredicate, EqualPredicate, FalsePredicate, GreaterThanPredicate,

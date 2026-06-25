@@ -54,7 +54,7 @@ use hazelcast_core::protocol::constants::{
     PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_core::serialization::{DataInput, ObjectDataInput, ObjectDataOutput};
 use hazelcast_core::{
     compute_partition_hash, ClientMessage, Deserializable, HazelcastError, Result, Serializable,
 };
@@ -5662,6 +5662,12 @@ where
             config.start_sequence.max(oldest_sequence)
         };
 
+        if std::env::var("HZ_DEBUG_EVENT_JOURNAL").is_ok() {
+            eprintln!(
+                "[ej-sub ] partition={partition_id} oldest={oldest_sequence} newest={_newest_sequence} start={start_sequence}"
+            );
+        }
+
         let (tx, rx) = mpsc::channel(config.max_size as usize);
 
         let connection_manager = Arc::clone(&self.connection_manager);
@@ -5739,20 +5745,30 @@ where
         message.add_frame(Frame::new_null_frame()); // predicate = null
         message.add_frame(Frame::new_null_frame()); // projection = null
 
-        let addresses = connection_manager.connected_addresses().await;
-        let address = addresses
-            .into_iter()
-            .next()
-            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))?;
+        if std::env::var("HZ_DEBUG_EVENT_JOURNAL").is_ok() {
+            for (i, f) in message.frames().iter().enumerate() {
+                let hex: String = f
+                    .content
+                    .iter()
+                    .take(48)
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                eprintln!(
+                    "[ej-req ] frame[{i:02}] flags=0x{:04x} len={:3} {hex}",
+                    f.flags,
+                    f.content.len()
+                );
+            }
+        }
 
-        connection_manager.send_to(address, message).await?;
+        // Route to the partition OWNER and use the correlation-matched invocation
+        // path (like subscribe). The previous raw send_to/receive_from on an
+        // arbitrary first connection both mis-routed the read and could pick up a
+        // response meant for another in-flight request.
         let response = connection_manager
-            .receive_from(address)
-            .await?
-            .ok_or_else(|| {
-                HazelcastError::Connection("connection closed unexpectedly".to_string())
-            })?;
-        let response = crate::connection::invocation::check_response(response)?;
+            .invoke_on_partition(partition_id, message)
+            .await?;
 
         if std::env::var("HZ_DEBUG_EVENT_JOURNAL").is_ok() {
             for (i, f) in response.frames().iter().enumerate() {
@@ -5818,102 +5834,70 @@ where
             return Ok(Vec::new());
         }
 
+        // Response header frame: readCount (i32 LE) @ RESPONSE_HEADER_SIZE, then
+        // nextSeq (i64 LE). The events follow as a List<Data> of serialized
+        // InternalEventJournalMapEvent IDS blobs, then a fixed-size List<Long> of
+        // per-partition item sequences. Frame layout after the header:
+        //   [1]            BEGIN_DATA_STRUCTURE (items list)
+        //   [2 .. 2+count] one Data blob per event
+        //   [2+count]      END_DATA_STRUCTURE
+        //   [2+count+1]    itemSeqs (fixed List<Long>, count*8 bytes LE)
         let initial_frame = &frames[0];
-        let mut offset = RESPONSE_HEADER_SIZE;
-
-        // Read count of events
-        let count = if initial_frame.content.len() >= offset + 4 {
-            i32::from_le_bytes([
-                initial_frame.content[offset],
-                initial_frame.content[offset + 1],
-                initial_frame.content[offset + 2],
-                initial_frame.content[offset + 3],
-            ])
-        } else {
+        let off = RESPONSE_HEADER_SIZE;
+        if initial_frame.content.len() < off + 4 {
             return Ok(Vec::new());
-        };
-        offset += 4;
+        }
+        let read_count = i32::from_le_bytes(
+            initial_frame.content[off..off + 4]
+                .try_into()
+                .unwrap_or([0u8; 4]),
+        )
+        .max(0) as usize;
 
-        // Read next sequence
-        let _next_sequence = if initial_frame.content.len() >= offset + 8 {
-            i64::from_le_bytes(
-                initial_frame.content[offset..offset + 8]
-                    .try_into()
-                    .unwrap_or([0u8; 8]),
-            )
-        } else {
-            0
-        };
+        let item_start = 2; // header(0) + BEGIN(1)
+        let seqs_idx = item_start + read_count + 1; // after items + END
+        let seqs: Vec<i64> = frames
+            .get(seqs_idx)
+            .map(|f| {
+                f.content
+                    .chunks_exact(8)
+                    .map(|c| i64::from_le_bytes(c.try_into().unwrap_or([0u8; 8])))
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        let mut events = Vec::with_capacity(count as usize);
-        let mut frame_idx = 1;
-
-        for _ in 0..count {
-            if frame_idx + 4 >= frames.len() {
+        let mut events = Vec::with_capacity(read_count);
+        for i in 0..read_count {
+            let Some(item) = frames.get(item_start + i) else {
                 break;
-            }
-
-            // Read event type
-            let event_type_frame = &frames[frame_idx];
-            let event_type_value = if event_type_frame.content.len() >= 4 {
-                i32::from_le_bytes([
-                    event_type_frame.content[0],
-                    event_type_frame.content[1],
-                    event_type_frame.content[2],
-                    event_type_frame.content[3],
-                ])
-            } else {
-                1
             };
-            frame_idx += 1;
-
+            // Each item is a Data: [partition_hash:4][type_id:4=-2][IDS payload].
+            // IDS payload (big-endian): [identified:1][factory:i32][class:i32]
+            //   [eventType:i32][key:Data][newValue:Data][oldValue:Data]
+            // (writeData order per InternalEventJournalMapEvent.writeData). Each
+            // nested Data is IOUtil.writeData-encoded: [len:i32][Data buffer], and
+            // the Data buffer itself carries the 8-byte [partition_hash][type_id]
+            // header before the payload.
+            if item.content.len() < 8 {
+                continue;
+            }
+            let mut input = ObjectDataInput::new(&item.content[8..]);
+            let _identified = input.read_bool();
+            let _factory_id = input.read_int();
+            let _class_id = input.read_int();
+            let event_type_value = input.read_int().unwrap_or(1);
             let event_type = EventJournalEventType::from_value(event_type_value)
                 .unwrap_or(EventJournalEventType::Added);
 
-            // Read sequence
-            let sequence_frame = &frames[frame_idx];
-            let sequence = if sequence_frame.content.len() >= 8 {
-                i64::from_le_bytes(sequence_frame.content[..8].try_into().unwrap_or([0u8; 8]))
-            } else {
-                0
-            };
-            frame_idx += 1;
+            let key = Self::read_journal_data::<K>(&mut input);
+            let new_value = Self::read_journal_data::<V>(&mut input);
+            let old_value = Self::read_journal_data::<V>(&mut input);
 
-            // Read key
-            let key_frame = &frames[frame_idx];
-            let key = if !key_frame.content.is_empty() && key_frame.flags & IS_NULL_FLAG == 0 {
-                let mut input = ObjectDataInput::new(&key_frame.content);
-                K::deserialize(&mut input)?
-            } else {
-                frame_idx += 3;
-                continue;
-            };
-            frame_idx += 1;
+            let sequence = seqs.get(i).copied().unwrap_or(0);
 
-            // Read old value
-            let old_value_frame = &frames[frame_idx];
-            let old_value = if !old_value_frame.content.is_empty()
-                && old_value_frame.flags & IS_NULL_FLAG == 0
-            {
-                let mut input = ObjectDataInput::new(&old_value_frame.content);
-                V::deserialize(&mut input).ok()
-            } else {
-                None
+            let Some(key) = key else {
+                continue; // a journal event without a decodable key is unusable
             };
-            frame_idx += 1;
-
-            // Read new value
-            let new_value_frame = &frames[frame_idx];
-            let new_value = if !new_value_frame.content.is_empty()
-                && new_value_frame.flags & IS_NULL_FLAG == 0
-            {
-                let mut input = ObjectDataInput::new(&new_value_frame.content);
-                V::deserialize(&mut input).ok()
-            } else {
-                None
-            };
-            frame_idx += 1;
-
             events.push(EventJournalMapEvent {
                 event_type,
                 key,
@@ -5924,6 +5908,23 @@ where
         }
 
         Ok(events)
+    }
+
+    /// Reads one `IOUtil.writeData`-encoded nested `Data` (`[len:i32][buffer]`,
+    /// big-endian length) from `input` and deserializes a `T` from its payload,
+    /// skipping the inner 8-byte `[partition_hash][type_id]` Data header. Returns
+    /// `None` for a null field (len < 0) or on any decode error.
+    fn read_journal_data<T: Deserializable>(input: &mut ObjectDataInput) -> Option<T> {
+        let len = input.read_int().ok()?;
+        if len < 0 {
+            return None;
+        }
+        let buf = input.read_bytes(len as usize).ok()?;
+        if buf.len() < 8 {
+            return None;
+        }
+        let mut data_input = ObjectDataInput::new(&buf[8..]);
+        T::deserialize(&mut data_input).ok()
     }
 
     /// Triggers loading of specific keys from the configured MapLoader.
