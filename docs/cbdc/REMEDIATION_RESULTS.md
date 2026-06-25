@@ -119,6 +119,32 @@ built this session.**
 - `cargo clippy --workspace --all-targets` and `--features tls` → **0 errors**;
   `cargo fmt --all -- --check` clean.
 
+### Reproduce pass 5 (on the AWS instance, `~/HazelRust`, `source ~/.cargo/env`)
+
+```sh
+# dev (3 members + A-4 infra, ~/start_cluster_a4.sh) and the TLS member are standard.
+# The L3 reconnect test additionally needs a single-member cluster "solo" on :5710:
+#   ~/hz/hz-solo.yaml = { cluster-name: solo, network.port 5710 (auto-increment off),
+#   join.tcp-ip member-list [127.0.0.1:5710], license-key $(cat ~/hz/license.key) }
+sudo docker run -d --name hzsolo --network host \
+  -v ~/hz/hz-solo.yaml:/opt/hazelcast/hz.yaml \
+  -e JAVA_OPTS="-Dhazelcast.config=/opt/hazelcast/hz.yaml -Xms256m -Xmx512m" \
+  hazelcast/hazelcast-enterprise:5.7.0      # wait for "Members {size:1" in docker logs hzsolo
+
+# Baselines
+cargo nextest run --workspace --test-threads 8 --retries 2                    # 2184/2184
+CLUSTER_ADDRESS=127.0.0.1:5701 cargo nextest run -p hazelcast-client \
+  --run-ignored ignored-only --test-threads 1 --no-fail-fast                  # 166 pass / 1 fail (try_lock non-defect)
+
+# Pass-5 live data-effect tests (offset/silent-drop/XA recovery/2PC)
+CLUSTER_ADDRESS=127.0.0.1:5701 cargo nextest run -p hazelcast-client --run-ignored all --test-threads 1 \
+  -E 'test(test_partition_count_parsed_from_auth_response) + test(test_entries_propagates_undeserializable_element) + test(test_entry_set_iterator_propagates_undeserializable_element) + test(test_recover_returns_prepared_in_doubt_transaction) + test(test_xa_two_phase_commit_across_two_maps_data_effect)'
+
+# L3 fault injection: kills the client's TCP socket to the solo member, asserts ops resume
+HZ_FAULT_INJECTION=1 CLUSTER_ADDRESS=127.0.0.1:5710 cargo nextest run -p hazelcast-client \
+  --run-ignored all --test-threads 1 -E 'test(test_data_ops_resume_after_member_reconnect)'
+```
+
 ---
 
 ### Disposition of the remaining ignored-suite failures (investigated, not guessed)
