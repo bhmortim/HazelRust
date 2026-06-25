@@ -674,7 +674,15 @@ impl HazelcastClient {
         K: Serializable + Deserializable + Send + Sync,
         V: Serializable + Deserializable + Send + Sync,
     {
-        ICache::new(name.to_string(), Arc::clone(&self.connection_manager))
+        // A Hazelcast cache's distributed-object name is the full JCache name
+        // "/hz/<name>" (managerPrefix + simple name); cache operations target it.
+        // create_config strips the prefix back off for the CacheConfigHolder.
+        let full_name = if name.starts_with("/hz/") {
+            name.to_string()
+        } else {
+            format!("/hz/{name}")
+        };
+        ICache::new(full_name, Arc::clone(&self.connection_manager))
     }
 
     /// Returns a distributed vector collection proxy for the given name.

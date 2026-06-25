@@ -2021,11 +2021,11 @@ where
         init.put_u8(0); // disablePerEntryInvalidationEvents = false
         message.add_frame(Frame::with_content(init));
 
-        // Hazelcast caches carry a manager prefix; the holder `name` is the FULL
-        // name (prefix + simple name) and `managerPrefix` is the prefix. A null
-        // prefix with an unprefixed name makes the member's name handling fault.
-        let full_name = format!("/hz/{name}");
-        message.add_frame(Self::string_frame(&full_name)); // name (full)
+        // Matching a stock Java client (verified via the member's "Added cache
+        // config" log): the holder `name` is the SIMPLE cache name and
+        // `managerPrefix` is "/hz/". The cache's distributed-object full name is
+        // then managerPrefix + name = "/hz/<name>", which cache OPERATIONS target.
+        message.add_frame(Self::string_frame(name)); // name (simple)
         message.add_frame(Self::string_frame("/hz/")); // managerPrefix
         message.add_frame(Frame::new_null_frame()); // uriString: String?
         message.add_frame(Self::string_frame("BINARY")); // inMemoryFormat
@@ -2048,8 +2048,26 @@ where
         message.add_frame(Frame::new_null_frame()); // cacheLoaderFactory: Data?
         message.add_frame(Frame::new_null_frame()); // cacheWriterFactory: Data?
         message.add_frame(Self::data_frame(&Self::expiry_policy_factory_data())); // expiryPolicyFactory: Data (non-null)
-        message.add_frame(Frame::new_null_frame()); // hotRestartConfig
-        message.add_frame(Frame::new_null_frame()); // eventJournalConfig
+
+        // hotRestartConfig: BEGIN [enabled:u8, fsync:u8] END — must be NON-NULL
+        // (the member's holder->CacheConfig conversion faults on a null; matches a
+        // stock Java client's default disabled config).
+        message.add_frame(begin());
+        let mut hr = BytesMut::with_capacity(2);
+        hr.put_u8(0); // enabled = false
+        hr.put_u8(0); // fsync = false
+        message.add_frame(Frame::with_content(hr));
+        message.add_frame(end());
+
+        // eventJournalConfig: BEGIN [enabled:u8, capacity:i32, ttlSeconds:i32] END
+        message.add_frame(begin());
+        let mut ej = BytesMut::with_capacity(9);
+        ej.put_u8(0); // enabled = false
+        ej.put_i32_le(10000); // capacity (default)
+        ej.put_i32_le(0); // timeToLiveSeconds
+        message.add_frame(Frame::with_content(ej));
+        message.add_frame(end());
+
         message.add_frame(Frame::new_null_frame()); // splitBrainProtectionName: String?
         message.add_frame(Frame::new_null_frame()); // listenerConfigurations: List?
 
@@ -2063,8 +2081,19 @@ where
         ));
         message.add_frame(end());
 
-        message.add_frame(Frame::new_null_frame()); // cachePartitionLostListenerConfigs: List?
-        message.add_frame(Frame::new_null_frame()); // merkleTreeConfig
+        // cachePartitionLostListenerConfigs: an EMPTY list (BEGIN..END), not null.
+        message.add_frame(begin());
+        message.add_frame(end());
+
+        // merkleTreeConfig: BEGIN [enabled:u8, depth:i32, +1 byte] END — non-null,
+        // matching a stock Java client's default (bytes 00 0a000000 00).
+        message.add_frame(begin());
+        let mut mt = BytesMut::with_capacity(6);
+        mt.put_u8(0); // enabled = false
+        mt.put_i32_le(10); // depth (default)
+        mt.put_u8(0);
+        message.add_frame(Frame::with_content(mt));
+        message.add_frame(end());
 
         // dataPersistenceConfig: BEGIN [enabled:u8, fsync:u8] END
         message.add_frame(begin());
@@ -2081,9 +2110,9 @@ where
 
     /// Creates this cache's configuration on the cluster (JCache `createCache`
     /// semantics). Required before cache operations work — the member otherwise
-    /// throws `CacheNotExistsException`. Sends `CacheCreateConfig` (createAlsoOnOthers
-    /// = true) with a default [`encode_cache_config_holder`] config. Idempotent: a
-    /// repeat create returns the existing config.
+    /// throws `CacheNotExistsException`. Sends `CacheCreateConfig` with a default
+    /// [`encode_cache_config_holder`] config. Idempotent: a repeat create returns
+    /// the existing config.
     pub async fn create_config(&self) -> Result<()> {
         use bytes::BufMut;
         let mut message = ClientMessage::create_for_encode_any_partition(CACHE_CREATE_CONFIG);
@@ -2091,7 +2120,10 @@ where
         if let Some(initial) = message.frames_mut().first_mut() {
             initial.content.put_u8(1);
         }
-        Self::encode_cache_config_holder(&mut message, &self.name);
+        // `self.name` is the full distributed-object name ("/hz/<simple>"); the
+        // holder carries the SIMPLE name (the member re-applies managerPrefix).
+        let simple = self.name.strip_prefix("/hz/").unwrap_or(&self.name);
+        Self::encode_cache_config_holder(&mut message, simple);
         if std::env::var("HZ_DEBUG_CACHE").is_ok() {
             for (i, f) in message.frames().iter().enumerate() {
                 let hex: String = f
