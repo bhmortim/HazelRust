@@ -591,10 +591,10 @@ pub const CP_MAP_DELETE: i32 = 0x230500;
 pub const CP_MAP_COMPARE_AND_SET: i32 = 0x230600;
 
 /// SQL execute request.
-pub const SQL_EXECUTE: i32 = 0x210100;
+pub const SQL_EXECUTE: i32 = 0x210400;
 
 /// SQL fetch request.
-pub const SQL_FETCH: i32 = 0x210200;
+pub const SQL_FETCH: i32 = 0x210500;
 
 /// SQL close request.
 pub const SQL_CLOSE: i32 = 0x210300;
@@ -690,37 +690,37 @@ pub const EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x080500;
 pub const EXECUTOR_SUBMIT_TO_MEMBER: i32 = 0x080600;
 
 /// Scheduled executor submit to partition request.
-pub const SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x1A0100;
+pub const SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x1A0200;
 
 /// Scheduled executor submit to member request.
-pub const SCHEDULED_EXECUTOR_SUBMIT_TO_MEMBER: i32 = 0x1A0200;
+pub const SCHEDULED_EXECUTOR_SUBMIT_TO_MEMBER: i32 = 0x1A0300;
 
 /// Scheduled executor shutdown request.
-pub const SCHEDULED_EXECUTOR_SHUTDOWN: i32 = 0x1A0400;
+pub const SCHEDULED_EXECUTOR_SHUTDOWN: i32 = 0x1A0100;
 
 /// Scheduled executor dispose request.
 pub const SCHEDULED_EXECUTOR_DISPOSE: i32 = 0x1A0500;
 
 /// Scheduled executor cancel from partition request.
-pub const SCHEDULED_EXECUTOR_CANCEL_FROM_PARTITION: i32 = 0x1A0600;
+pub const SCHEDULED_EXECUTOR_CANCEL_FROM_PARTITION: i32 = 0x1A0900;
 
 /// Scheduled executor cancel from member request.
-pub const SCHEDULED_EXECUTOR_CANCEL_FROM_MEMBER: i32 = 0x1A0700;
+pub const SCHEDULED_EXECUTOR_CANCEL_FROM_MEMBER: i32 = 0x1A0A00;
 
 /// Scheduled executor is done from partition request.
-pub const SCHEDULED_EXECUTOR_IS_DONE_FROM_PARTITION: i32 = 0x1A0800;
+pub const SCHEDULED_EXECUTOR_IS_DONE_FROM_PARTITION: i32 = 0x1A0D00;
 
 /// Scheduled executor is done from member request.
-pub const SCHEDULED_EXECUTOR_IS_DONE_FROM_MEMBER: i32 = 0x1A0900;
+pub const SCHEDULED_EXECUTOR_IS_DONE_FROM_MEMBER: i32 = 0x1A0E00;
 
 /// Scheduled executor get delay from partition request.
-pub const SCHEDULED_EXECUTOR_GET_DELAY_FROM_PARTITION: i32 = 0x1A0A00;
+pub const SCHEDULED_EXECUTOR_GET_DELAY_FROM_PARTITION: i32 = 0x1A0700;
 
 /// Scheduled executor get delay from member request.
-pub const SCHEDULED_EXECUTOR_GET_DELAY_FROM_MEMBER: i32 = 0x1A0B00;
+pub const SCHEDULED_EXECUTOR_GET_DELAY_FROM_MEMBER: i32 = 0x1A0800;
 
 /// Scheduled executor get result from partition request.
-pub const SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION: i32 = 0x1A0C00;
+pub const SCHEDULED_EXECUTOR_GET_RESULT_FROM_PARTITION: i32 = 0x1A0F00;
 
 /// Scheduled executor is shutdown request.
 pub const SCHEDULED_EXECUTOR_IS_SHUTDOWN: i32 = 0x1A0E00;
@@ -810,28 +810,28 @@ pub const XA_TXN_COLLECT_TRANSACTIONS: i32 = 0x140200;
 pub const XA_TXN_FINALIZE: i32 = 0x140300;
 
 /// Durable executor submit to partition request.
-pub const DURABLE_EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x180100;
+pub const DURABLE_EXECUTOR_SUBMIT_TO_PARTITION: i32 = 0x180300;
 
 /// Durable executor retrieve result request.
-pub const DURABLE_EXECUTOR_RETRIEVE_RESULT: i32 = 0x180200;
+pub const DURABLE_EXECUTOR_RETRIEVE_RESULT: i32 = 0x180400;
 
 /// Durable executor dispose result request.
-pub const DURABLE_EXECUTOR_DISPOSE_RESULT: i32 = 0x180300;
+pub const DURABLE_EXECUTOR_DISPOSE_RESULT: i32 = 0x180500;
 
 /// Durable executor retrieve and dispose result request.
-pub const DURABLE_EXECUTOR_RETRIEVE_AND_DISPOSE_RESULT: i32 = 0x180400;
+pub const DURABLE_EXECUTOR_RETRIEVE_AND_DISPOSE_RESULT: i32 = 0x180600;
 
 /// Durable executor shutdown request.
-pub const DURABLE_EXECUTOR_SHUTDOWN: i32 = 0x180500;
+pub const DURABLE_EXECUTOR_SHUTDOWN: i32 = 0x180100;
 
 /// Durable executor is shutdown request.
-pub const DURABLE_EXECUTOR_IS_SHUTDOWN: i32 = 0x180600;
+pub const DURABLE_EXECUTOR_IS_SHUTDOWN: i32 = 0x180200;
 
 /// CardinalityEstimator add request.
-pub const CARDINALITY_ESTIMATOR_ADD: i32 = 0x160100;
+pub const CARDINALITY_ESTIMATOR_ADD: i32 = 0x190100;
 
 /// CardinalityEstimator estimate request.
-pub const CARDINALITY_ESTIMATOR_ESTIMATE: i32 = 0x160200;
+pub const CARDINALITY_ESTIMATOR_ESTIMATE: i32 = 0x190200;
 
 /// Map add interceptor request.
 pub const MAP_ADD_INTERCEPTOR: i32 = 0x011400;
@@ -852,49 +852,49 @@ pub const MAP_ADD_PARTITION_LOST_LISTENER: i32 = 0x011B00;
 pub const MAP_REMOVE_PARTITION_LOST_LISTENER: i32 = 0x011C00;
 
 /// Cache get request.
-pub const CACHE_GET: i32 = 0x130100;
+pub const CACHE_GET: i32 = 0x130D00;
 
 /// Cache get all request.
-pub const CACHE_GET_ALL: i32 = 0x130200;
+pub const CACHE_GET_ALL: i32 = 0x130900;
 
 /// Cache put request.
-pub const CACHE_PUT: i32 = 0x130300;
+pub const CACHE_PUT: i32 = 0x131300;
 
 /// Cache put all request.
-pub const CACHE_PUT_ALL: i32 = 0x130400;
+pub const CACHE_PUT_ALL: i32 = 0x131B00;
 
 /// Cache put if absent request.
-pub const CACHE_PUT_IF_ABSENT: i32 = 0x130500;
+pub const CACHE_PUT_IF_ABSENT: i32 = 0x131200;
 
 /// Cache remove request.
-pub const CACHE_REMOVE: i32 = 0x130600;
+pub const CACHE_REMOVE: i32 = 0x131600;
 
 /// Cache remove all request.
-pub const CACHE_REMOVE_ALL: i32 = 0x130700;
+pub const CACHE_REMOVE_ALL: i32 = 0x130400;
 
 /// Cache clear request.
-pub const CACHE_CLEAR: i32 = 0x130800;
+pub const CACHE_CLEAR: i32 = 0x130200;
 
 /// Cache replace request.
-pub const CACHE_REPLACE: i32 = 0x130900;
+pub const CACHE_REPLACE: i32 = 0x131700;
 
 /// Cache replace if same request.
 pub const CACHE_REPLACE_IF_SAME: i32 = 0x130A00;
 
 /// Cache contains key request.
-pub const CACHE_CONTAINS_KEY: i32 = 0x130B00;
+pub const CACHE_CONTAINS_KEY: i32 = 0x130500;
 
 /// Cache get and put request.
 pub const CACHE_GET_AND_PUT: i32 = 0x130C00;
 
 /// Cache get and remove request.
-pub const CACHE_GET_AND_REMOVE: i32 = 0x130D00;
+pub const CACHE_GET_AND_REMOVE: i32 = 0x130A00;
 
 /// Cache get and replace request.
-pub const CACHE_GET_AND_REPLACE: i32 = 0x130E00;
+pub const CACHE_GET_AND_REPLACE: i32 = 0x130B00;
 
 /// Cache size request.
-pub const CACHE_SIZE: i32 = 0x130F00;
+pub const CACHE_SIZE: i32 = 0x131800;
 
 /// Cache invoke request (entry processor).
 pub const CACHE_INVOKE: i32 = 0x131300;
@@ -903,16 +903,16 @@ pub const CACHE_INVOKE: i32 = 0x131300;
 pub const CACHE_INVOKE_ALL: i32 = 0x131400;
 
 /// Cache event journal subscribe request.
-pub const CACHE_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x131500;
+pub const CACHE_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x131F00;
 
 /// Cache event journal read request.
-pub const CACHE_EVENT_JOURNAL_READ: i32 = 0x131600;
+pub const CACHE_EVENT_JOURNAL_READ: i32 = 0x132000;
 
 /// Cache add entry listener request.
-pub const CACHE_ADD_ENTRY_LISTENER: i32 = 0x131700;
+pub const CACHE_ADD_ENTRY_LISTENER: i32 = 0x130100;
 
 /// Cache remove entry listener request.
-pub const CACHE_REMOVE_ENTRY_LISTENER: i32 = 0x131800;
+pub const CACHE_REMOVE_ENTRY_LISTENER: i32 = 0x131400;
 
 // Jet operations
 
@@ -929,22 +929,22 @@ pub const JET_GET_JOB_STATUS: i32 = 0xFE0300;
 pub const JET_GET_JOB_IDS: i32 = 0xFE0400;
 
 /// Jet get job submission time request.
-pub const JET_GET_JOB_SUBMISSION_TIME: i32 = 0xFE0500;
+pub const JET_GET_JOB_SUBMISSION_TIME: i32 = 0xFE0700;
 
 /// Jet get job config request.
-pub const JET_GET_JOB_CONFIG: i32 = 0xFE0600;
+pub const JET_GET_JOB_CONFIG: i32 = 0xFE0800;
 
 /// Jet resume job request.
-pub const JET_RESUME_JOB: i32 = 0xFE0700;
+pub const JET_RESUME_JOB: i32 = 0xFE0900;
 
 /// Jet export snapshot request.
-pub const JET_EXPORT_SNAPSHOT: i32 = 0xFE0800;
+pub const JET_EXPORT_SNAPSHOT: i32 = 0xFE0A00;
 
 /// Jet get job metrics request.
-pub const JET_GET_JOB_METRICS: i32 = 0xFE0900;
+pub const JET_GET_JOB_METRICS: i32 = 0xFE0D00;
 
 /// Jet get job summary list request.
-pub const JET_GET_JOB_SUMMARY_LIST: i32 = 0xFE0A00;
+pub const JET_GET_JOB_SUMMARY_LIST: i32 = 0xFE0B00;
 
 /// Map event journal subscribe request.
 pub const MAP_EVENT_JOURNAL_SUBSCRIBE: i32 = 0x014100;
@@ -1080,7 +1080,7 @@ pub const CONTINUOUS_QUERY_CACHE_SET_READ_CURSOR: i32 = 0x140200;
 pub const CONTINUOUS_QUERY_CACHE_DESTROY: i32 = 0x140300;
 
 /// Continuous query cache add listener request.
-pub const CONTINUOUS_QUERY_ADD_LISTENER: i32 = 0x140400;
+pub const CONTINUOUS_QUERY_ADD_LISTENER: i32 = 0x160400;
 
 /// Continuous query cache remove listener request.
 pub const CONTINUOUS_QUERY_REMOVE_LISTENER: i32 = 0x140500;

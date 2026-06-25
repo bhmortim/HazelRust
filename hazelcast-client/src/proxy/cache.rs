@@ -1173,11 +1173,17 @@ where
             }
         }
 
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
+        // CacheGet request: name, key, then a nullable expiryPolicy Data
+        // (null = use the cache's default). The previous code omitted it.
         let mut message = ClientMessage::create_for_encode(CACHE_GET, partition_id);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
+        message.add_frame(Frame::new_null_frame());
 
         let response = self.invoke_on_cluster(message).await?;
         let result: Option<V> = Self::decode_nullable_response(&response)?;
@@ -1227,7 +1233,10 @@ where
     pub async fn put(&self, key: K, value: V) -> Result<()> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         // Invalidate near cache
         if let Some(ref near_cache) = self.near_cache {
@@ -1238,12 +1247,26 @@ where
         }
 
         let mut message = ClientMessage::create_for_encode(CACHE_PUT, partition_id);
+        // CachePut initial-frame fixed params: get(bool)@16, completionId(int)@17.
+        if let Some(initial) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial.content.put_u8(0); // get = false (don't return the old value)
+            initial.content.put_i32_le(Self::next_completion_id());
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Frame::new_null_frame()); // expiryPolicy = null
 
         self.invoke_on_cluster(message).await?;
         Ok(())
+    }
+
+    /// A monotonically increasing JCache completion id for `CachePut`-style ops.
+    fn next_completion_id() -> i32 {
+        use std::sync::atomic::{AtomicI32, Ordering};
+        static COMPLETION_ID: AtomicI32 = AtomicI32::new(1);
+        COMPLETION_ID.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Puts all entries from the given map into this cache.
