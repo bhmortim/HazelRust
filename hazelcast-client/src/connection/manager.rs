@@ -463,8 +463,9 @@ impl ConnectionManager {
             initial_content.put_u8(0); // padding
             auth_msg.add_frame(Frame::new(initial_content, 0xC100));
             auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
-            auth_msg.add_frame(Frame::new_null_frame());
-            auth_msg.add_frame(Frame::new_null_frame());
+            let (user_frame, pass_frame) = self.auth_credential_frames();
+            auth_msg.add_frame(user_frame);
+            auth_msg.add_frame(pass_frame);
             auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
             auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
             auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
@@ -706,8 +707,9 @@ impl ConnectionManager {
         }
 
         auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
-        auth_msg.add_frame(Frame::new_null_frame());
-        auth_msg.add_frame(Frame::new_null_frame());
+        let (user_frame, pass_frame) = self.auth_credential_frames();
+        auth_msg.add_frame(user_frame);
+        auth_msg.add_frame(pass_frame);
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
@@ -1875,6 +1877,36 @@ impl ConnectionManager {
     }
 
     /// Sends a message to a specific address.
+    /// Builds the (username, password) credential frames for a
+    /// `ClientAuthentication` request from the configured `SecurityConfig`. The EE
+    /// jar's `ClientAuthenticationCodec` encodes `clusterName`, then a nullable
+    /// `username`, then a nullable `password` — these two frames occupy exactly
+    /// those slots. Sends the configured username/password as string frames, or a
+    /// null frame when unset (anonymous auth — unchanged for the no-security path).
+    ///
+    /// NOTE: token/custom credentials require `ClientAuthenticationCustom` (a
+    /// different message type), which is not yet wired — a configured token still
+    /// authenticates anonymously here.
+    fn auth_credential_frames(
+        &self,
+    ) -> (
+        hazelcast_core::protocol::Frame,
+        hazelcast_core::protocol::Frame,
+    ) {
+        use bytes::BytesMut;
+        use hazelcast_core::protocol::Frame;
+        let sec = self.config.security();
+        let user = match sec.username() {
+            Some(u) => Frame::with_content(BytesMut::from(u.as_bytes())),
+            None => Frame::new_null_frame(),
+        };
+        let pass = match sec.password() {
+            Some(p) => Frame::with_content(BytesMut::from(p.as_bytes())),
+            None => Frame::new_null_frame(),
+        };
+        (user, pass)
+    }
+
     pub async fn send_to(
         &self,
         address: SocketAddr,
@@ -1942,8 +1974,9 @@ impl ConnectionManager {
         }
 
         auth_msg.add_frame(Frame::with_content(BytesMut::from(cluster_name.as_bytes())));
-        auth_msg.add_frame(Frame::new_null_frame());
-        auth_msg.add_frame(Frame::new_null_frame());
+        let (user_frame, pass_frame) = self.auth_credential_frames();
+        auth_msg.add_frame(user_frame);
+        auth_msg.add_frame(pass_frame);
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
@@ -2105,6 +2138,33 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn test_auth_credential_frames_sends_configured_credentials() {
+        // With credentials configured, username/password go on the wire as the
+        // two ClientAuthentication nullable-string slots — previously hardcoded
+        // to null frames, so configured credentials were silently never sent.
+        let config = ClientConfigBuilder::new()
+            .credentials("ledger-admin", "s3cret")
+            .build()
+            .unwrap();
+        let cm = ConnectionManager::from_config(config);
+        let (user, pass) = cm.auth_credential_frames();
+        assert!(
+            !user.is_null_frame(),
+            "username must not be a null frame when configured"
+        );
+        assert_eq!(user.content.as_ref(), &b"ledger-admin"[..]);
+        assert!(!pass.is_null_frame());
+        assert_eq!(pass.content.as_ref(), &b"s3cret"[..]);
+
+        // Without credentials, both are null frames (anonymous auth — the prior
+        // behavior, preserved for the no-security path).
+        let config2 = ClientConfigBuilder::new().build().unwrap();
+        let cm2 = ConnectionManager::from_config(config2);
+        let (user2, pass2) = cm2.auth_credential_frames();
+        assert!(user2.is_null_frame() && pass2.is_null_frame());
+    }
 
     async fn create_mock_server() -> (TcpListener, SocketAddr) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -9,8 +9,13 @@ use std::hash::Hash;
 
 pub use generic_record::{GenericRecord, GenericRecordBuilder};
 
-/// Type identifier for Compact serialization.
-pub const COMPACT_TYPE_ID: i32 = -2;
+/// Type identifier for Compact serialization. Hazelcast 5.7's
+/// `SerializationConstants.TYPE_COMPACT` is `-55` (`-56` for compact-with-schema);
+/// `-2` is `CONSTANT_TYPE_DATA_SERIALIZABLE`. The previous `-2` would have made a
+/// member route a Compact `Data` to the IdentifiedDataSerializable deserializer.
+/// Latent today (no write path emits this header yet), but a public constant must
+/// not collide with another serializer's id.
+pub const COMPACT_TYPE_ID: i32 = -55;
 
 /// Rabin fingerprint initial value (matches Java implementation).
 const RABIN_FINGERPRINT_INIT: u64 = 0xc15d213aa4d7a795;
