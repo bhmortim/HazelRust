@@ -27,9 +27,7 @@ use hazelcast_core::protocol::constants::{
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{
-    compute_partition_hash, ClientMessage, Deserializable, HazelcastError, Result, Serializable,
-};
+use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
 use crate::cache::NearCache;
 use crate::connection::ConnectionManager;
@@ -1300,7 +1298,10 @@ where
     pub async fn put_if_absent(&self, key: K, value: V) -> Result<bool> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         let mut message = ClientMessage::create_for_encode(CACHE_PUT_IF_ABSENT, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1317,7 +1318,10 @@ where
     /// `false` otherwise.
     pub async fn remove(&self, key: &K) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         let mut message = ClientMessage::create_for_encode(CACHE_REMOVE, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1344,7 +1348,10 @@ where
     pub async fn replace(&self, key: K, value: V) -> Result<bool> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         let mut message = ClientMessage::create_for_encode(CACHE_REPLACE, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1364,7 +1371,10 @@ where
         let key_data = Self::serialize_value(key)?;
         let old_value_data = Self::serialize_value(old_value)?;
         let new_value_data = Self::serialize_value(&new_value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         let mut message = ClientMessage::create_for_encode(CACHE_REPLACE_IF_SAME, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1379,7 +1389,10 @@ where
     /// Returns `true` if this cache contains a mapping for the specified key.
     pub async fn contains_key(&self, key: &K) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         let mut message = ClientMessage::create_for_encode(CACHE_CONTAINS_KEY, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1433,7 +1446,10 @@ where
     pub async fn get_and_put(&self, key: K, value: V) -> Result<Option<V>> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         let mut message = ClientMessage::create_for_encode(CACHE_GET_AND_PUT, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1450,7 +1466,10 @@ where
     /// Returns `None` if there was no mapping for the key.
     pub async fn get_and_remove(&self, key: &K) -> Result<Option<V>> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         let mut message = ClientMessage::create_for_encode(CACHE_GET_AND_REMOVE, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1467,7 +1486,10 @@ where
     pub async fn get_and_replace(&self, key: K, value: V) -> Result<Option<V>> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         let mut message = ClientMessage::create_for_encode(CACHE_GET_AND_REPLACE, partition_id);
         message.add_frame(Self::string_frame(&self.name));
@@ -1499,7 +1521,10 @@ where
     ) -> Result<()> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         // Invalidate near cache
         if let Some(ref near_cache) = self.near_cache {
@@ -1540,7 +1565,10 @@ where
     ) -> Result<Option<V>> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         // Invalidate near cache
         if let Some(ref near_cache) = self.near_cache {
@@ -1590,7 +1618,10 @@ where
         P::Output: Deserializable,
     {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = compute_partition_hash(&key_data);
+        let partition_id = hazelcast_core::partition_id_for_key_data(
+            &key_data,
+            self.connection_manager.partition_count(),
+        );
 
         let mut processor_output = ObjectDataOutput::new();
         processor.serialize(&mut processor_output)?;
