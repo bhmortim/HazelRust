@@ -1,4 +1,14 @@
-//! Integration tests for failover and reconnection scenarios.
+//! Happy-path data-operation smoke tests for the client.
+//!
+//! HONESTY NOTE (cbdc): these tests do **not** induce a disconnect, kill a
+//! socket, or restart a member — they are plain put/get/clear smoke tests that
+//! happen to run while a cluster is up. They were previously named as
+//! "reconnect"/"after disconnect"/"cluster restart" tests, which falsely implied
+//! reconnect coverage: every one of them would pass identically with the
+//! reconnect logic deleted. Renamed to reflect what they actually exercise.
+//! **Real fault-injection reconnect coverage lives in `reconnect_pool_test.rs`**
+//! (it kills the client socket with `ss -K` and asserts data ops resume; gated
+//! on `HZ_FAULT_INJECTION=1`).
 
 mod common;
 
@@ -10,7 +20,7 @@ use hazelcast_client::{ClientConfigBuilder, HazelcastClient};
 use crate::common::{skip_if_no_cluster, unique_name, wait_for_cluster_ready};
 
 #[tokio::test]
-async fn test_client_reconnects_after_brief_disconnect() {
+async fn test_data_ops_basic_smoke() {
     if skip_if_no_cluster() {
         return;
     }
@@ -43,7 +53,7 @@ async fn test_client_reconnects_after_brief_disconnect() {
 }
 
 #[tokio::test]
-async fn test_operations_succeed_after_connection_restored() {
+async fn test_data_ops_after_clear_smoke() {
     if skip_if_no_cluster() {
         return;
     }
@@ -79,7 +89,7 @@ async fn test_operations_succeed_after_connection_restored() {
 }
 
 #[tokio::test]
-async fn test_concurrent_operations_during_reconnect() {
+async fn test_concurrent_data_ops_smoke() {
     if skip_if_no_cluster() {
         return;
     }
@@ -185,7 +195,7 @@ async fn test_transaction_survives_brief_delay() {
 }
 
 #[tokio::test]
-async fn test_near_cache_survives_reconnect() {
+async fn test_near_cache_data_ops_smoke() {
     if skip_if_no_cluster() {
         return;
     }
@@ -226,7 +236,7 @@ async fn test_near_cache_survives_reconnect() {
 }
 
 #[tokio::test]
-async fn test_multiple_data_structures_after_reconnect() {
+async fn test_multiple_data_structures_smoke() {
     if skip_if_no_cluster() {
         return;
     }
@@ -309,7 +319,7 @@ async fn test_retry_config_backoff() {
 }
 
 #[tokio::test]
-async fn test_client_handles_cluster_restart_gracefully() {
+async fn test_client_lifecycle_smoke() {
     if skip_if_no_cluster() {
         return;
     }
