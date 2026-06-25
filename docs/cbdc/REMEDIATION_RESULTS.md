@@ -6,6 +6,91 @@
 
 ---
 
+## Remediation pass 7 — decoder / security / test hardening (branch `cbdc/full-validation`)
+
+**Date:** 2026-06-24. **Base:** pass 6 `ead30b4`. **Commits:** `076b932` (entry-listener),
+`3933d96` (paging + flag), `d22cbfc` (credential redaction/zeroize), `1bac34c` (failover tests).
+Continuation of pass 6 working the open decoder/security/test ledger. Verdict **unchanged — still NO-GO**.
+
+### Fixed & verified live this pass
+
+- **IMap entry-listener: two real money-path defects, found by a new live data-effect test**
+  (`076b932`). The existing `map_listener_test.rs` listener tests never assert the callback
+  fired, so they passed **vacuously even when no event was delivered**. A new test
+  (`test_entry_listener_delivers_correct_key_and_value`) asserts the data effect and exposed:
+  (1) **`decode_entry_event` was broadly mis-framed** vs the EE 5.7 `MapAddEntryListenerCodec`
+  EVENT_ENTRY layout (jar + live hexdump): it read `eventType@13` (correct **16**), the source
+  uuid as **16** bytes (correct **17-byte** fixed uuid @20), a non-existent "timestamp" where
+  `numberOfAffectedEntries@37` lives, used the wrong var-frame indices, decoded each `Data`
+  payload **from offset 0** (consuming the 8-byte header as payload), and `.ok()`-**silently
+  dropped** value decode failures — rewritten against the authoritative layout (key/value/oldValue
+  in order, 8-byte skip, `?`). (2) **`EntryEventType` had `Updated` and `Removed` swapped**
+  (`Updated=2, Removed=4`) vs `com.hazelcast.core.EntryEventType` (verified live: `ADDED=1,
+  REMOVED=2, UPDATED=4, EVICTED=8, EXPIRED=16`) — so `.on_updated()` actually subscribed to
+  **REMOVED** (UPDATED events never arrived) and an UPDATED event decoded as Removed. Fixed the
+  enum + `from_value` (also fixes multimap/replicated-map, which share it). **Before/after:**
+  without the key skip-8 the "correct key" assertion fails; with the swapped enum the UPDATE event
+  is never delivered (timeout). The test now asserts ADD (key+value), a second distinct ADD, and
+  UPDATE (key + new + old value) all correct.
+
+- **Credential redaction + zeroize-on-drop** (`d22cbfc`). `Credentials`/`TokenCredentials`/
+  `CustomCredentials` all `#[derive(Debug)]`, so any `{:?}` / `tracing::debug!(?creds)` leaked
+  the password/token/secret-attributes in clear. Added redacting `Debug` impls (verified by
+  `test_credentials_debug_redacts_secrets`) and `zeroize`-on-drop for `TokenCredentials`,
+  `CustomCredentials`, and `SecurityConfig` (password/token). (The `Credentials` *enum* keeps no
+  `Drop` — several sites move its inner `String`s out by value, which Rust forbids on a `Drop`
+  type; its inline secrets are protected by the redacted `Debug`. A full inline scrub would use
+  `zeroize::Zeroizing<String>`.)
+
+- **`BACKUP_EVENT_FLAG` value** (`3933d96`) corrected from `1<<11` (which collided with
+  `END_DATA_STRUCTURE_FLAG`) to the protocol value `1<<7`. Latent (no decoder consulted it).
+
+- **Test honesty** (`1bac34c`): the six vacuous `failover_integration_test.rs` "reconnect"/
+  "cluster-restart" tests (which induce no disconnect and would pass with the reconnect logic
+  deleted) were renamed to `*_smoke` with a module note pointing to `reconnect_pool_test.rs` for
+  the real `ss -K` fault-injection coverage.
+
+### Code-parity fix (correct-by-construction, live-exercise blocked)
+
+- **Paging Data-header skip** (`3933d96`). `decode_paging_values_response`/
+  `decode_paging_entries_response` read each page `Data` from offset 0; fixed to skip the 8-byte
+  header (+ bounds check) — **identical to the cross-client-verified `decode_values_response`/
+  `decode_entries_response`**. The decode cannot be live-exercised yet because the paging
+  **REQUEST** is separately mis-framed: the 5.x protocol expects a `PagingPredicateHolder`
+  structured codec, not a single `Data` blob, so the server throws `NullPointerException`
+  ("initialFrame is null") before any response. The decode fix is correct by parity; the
+  request-framing fix is recorded open below.
+
+### Still open (verified-in-code; blocked by infra / cross-client / larger scope — precise specs)
+
+- **Paging REQUEST framing** — re-encode the predicate as a `PagingPredicateHolder` custom codec
+  (AnchorDataListHolder + predicate `Data` + comparator `Data` + pageSize/page/iterationType +
+  partitionKeyData), not a single `Data` frame. (Blocks the paging decode fix above from being
+  live-exercised.)
+- **Map + ICache `decode_event_journal_read_response`** — the same deep multi-bug pattern as
+  `decode_entry_event` (initial-frame fixed-field offsets, a likely-wrong `EventJournal*EventType`
+  enum — `CacheEventType` is sequential `CREATED=1,UPDATED=2,REMOVED=3,EXPIRED=4,...`, not the
+  `EntryEventType` bitmask — plus the 8-byte skip and `.ok()` drops). Needs full re-derivation
+  **and** an event-journal-enabled map/cache on the cluster (dev has none). Use `decode_entry_event`
+  as the proven template; do not ship a skip-8-only partial fix.
+- **ICache + AtomicReference Data-header on encode/decode** — `serialize_value` writes a bare
+  payload (no `[partition_hash][type_id]` header) and decode skips none. Self-consistent for a
+  Rust↔Rust round-trip but not a valid server-side `Data` (so a Java/JCache cross-client read
+  mis-decodes). The fix is objective (write the header like IMap, whose framing is cross-client
+  verified) but **confirming it requires a Java cross-client read** (Rust writes → Java reads),
+  which was not built this pass; do not "fix" code that currently round-trips without that
+  evidence.
+- **mTLS verify against configured DNS identity** — `create_connection` passes `server_name =
+  None`, so rustls verifies the cert SAN against the connection **IP**, not the configured
+  hostname (and `hostname_verification`/`protocol_versions`/`cipher_suites` knobs are read
+  nowhere). The mTLS *security* properties are already proven (pass 3: valid chain + SAN match
+  succeeds, wrong host / untrusted CA rejected — via `sni_hostname`); the residual is binding the
+  configured hostname by default, which needs a DNS-only (no-IP-SAN) cert to verify the change.
+- **`ringbuffer::read_many` ReadResultSet reframe** and **client-message fragmentation reassembly**
+  (`BEGIN_FRAGMENT`/`END_FRAGMENT` + 8-byte fragmentation id) — unchanged from pass 6; larger.
+
+---
+
 ## Remediation pass 6 — smart routing + connection/auth hardening (branch `cbdc/full-validation`)
 
 **Date:** 2026-06-24. **Base:** `cbdc/full-validation` `980f08e`. **Commits:** `9e72741`
