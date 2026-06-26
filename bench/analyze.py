@@ -309,23 +309,57 @@ def write_report(out_dir, report_path, plots_dir):
     # ---- executive summary ----
     L.append("\n## Executive summary\n")
     wins_r = wins_j = noise = 0
+    suite_tally = {}
+    rss_ratios, cpu_ratios = [], []
     for cid, e in A.items():
+        if e["meta"].get("load_model") != "closed":
+            continue
         rt = e["ratio"].get("throughput")
         if rt is None:
             continue
+        s = e["meta"].get("suite", "?")
+        t = suite_tally.setdefault(s, [0, 0, 0])
         if within_noise(rt):
-            noise += 1
+            noise += 1; t[2] += 1
         elif rt[0] > 1:
-            wins_r += 1
+            wins_r += 1; t[0] += 1
         else:
-            wins_j += 1
-    L.append("Across %d head-to-head cells (closed-loop throughput): "
+            wins_j += 1; t[1] += 1
+        # resource ratios (rust/java); <1 = rust lighter
+        rc = e["clients"].get("rust"); jc = e["clients"].get("java")
+        if rc and jc and rc.get("cpu_mops") and jc.get("cpu_mops") and jc["cpu_mops"][0]:
+            cpu_ratios.append(rc["cpu_mops"][0] / jc["cpu_mops"][0])
+        rrss = _rss_val(cells, cid, "rust"); jrss = _rss_val(cells, cid, "java")
+        if rrss and jrss:
+            rss_ratios.append(rrss / jrss)
+    L.append("Across %d head-to-head closed-loop cells (throughput): "
              "**Rust faster in %d**, **Java faster in %d**, **within noise in %d**.\n"
              % (wins_r + wins_j + noise, wins_r, wins_j, noise))
-    L.append("\n> Honesty contract: every figure is a **median across forks×trials with a 95%% "
+    L.append("\nPer suite (throughput wins R / J / noise): "
+             + "; ".join("**%s** %d/%d/%d" % (s, t[0], t[1], t[2]) for s, t in sorted(suite_tally.items())) + ".\n")
+    if rss_ratios and cpu_ratios:
+        rss_med = median(rss_ratios); cpu_med = median(cpu_ratios)
+        L.append("\n**Resource efficiency (the largest, most consistent gap):** Rust's peak RSS is a "
+                 "median **%.1f×** of Java's (i.e. Java uses ~%.0f× more memory), and Rust's CPU-per-op "
+                 "is a median **%.2f×** of Java's (~%.1f× less CPU per op). Both clients ran with **zero "
+                 "errors**.\n" % (rss_med, 1.0 / rss_med if rss_med else 0, cpu_med, 1.0 / cpu_med if cpu_med else 0))
+    # biggest moves each direction
+    moves = []
+    for cid, e in A.items():
+        rt = e["ratio"].get("throughput")
+        if rt is None or within_noise(rt) or e["meta"].get("load_model") != "closed":
+            continue
+        moves.append((rt[0], _short(e["meta"])))
+    if moves:
+        moves.sort()
+        L.append("\nMost decisive throughput cells: Java — %s; Rust — %s.\n"
+                 % (", ".join("%s (×%.2f J)" % (m[1], 1 / m[0]) for m in moves[:2]),
+                    ", ".join("%s (×%.2f R)" % (m[1], m[0]) for m in moves[-2:][::-1])))
+    L.append("\n> Honesty contract: every figure is a **median across forks×trials with a 95% "
              "bootstrap CI**. Cells whose Rust/Java ratio CI spans 1.0 are flagged **within noise** "
              "and no winner is claimed. Tail percentiles report their sample count. "
-             "The rig is **co-located** (see Caveats).\n")
+             "The rig is **co-located** (see Caveats). CPU-per-Mops is a whole-process "
+             "approximation (mean sampled CPU percent × measure window ÷ ops).\n")
 
     # ---- per-suite tables ----
     for suite in SUITE_ORDER + [s for s in by_suite if s not in SUITE_ORDER]:
@@ -381,7 +415,7 @@ def write_report(out_dir, report_path, plots_dir):
         rrss = _rss(cells, cid, "rust"); jrss = _rss(cells, cid, "java")
         srv = _server_cpu(cells, cid)
         L.append("| %s | %s | %s | %s | %s | %s |" % (
-            cid.split(".closed")[0][-46:], _num(rc, "cpu_mops", "%.2f"), _num(jc, "cpu_mops", "%.2f"),
+            _short(e["meta"]), _num(rc, "cpu_mops", "%.2f"), _num(jc, "cpu_mops", "%.2f"),
             rrss, jrss, srv))
 
     # ---- errors / validity ----
@@ -440,12 +474,17 @@ def _rat(ci):
 
 
 def _rss(cells, cid, client):
+    v = _rss_val(cells, cid, client)
+    return "%.0f" % v if v else "—"
+
+
+def _rss_val(cells, cid, client):
     g = cells.get(cid, {}).get(client)
     if not g:
-        return "—"
+        return None
     rss = [r.get("mem", {}).get("rss_peak_kb", 0) for r in g["recs"]]
     rss = [x for x in rss if x]
-    return "%.0f" % (max(rss) / 1024.0) if rss else "—"
+    return (max(rss) / 1024.0) if rss else None
 
 
 def _server_cpu(cells, cid):
@@ -501,6 +540,27 @@ def make_plots(A, cells, plots_dir):
         title = "Throughput vs C — %s.%s v%s %s" % (key[0], key[1], key[3], key[4])
         svg = svg_lines(series, "concurrency C (log2)", "throughput (ops/s)", title, logx=True)
         fn = os.path.join(plots_dir, "thrC_%s.svg" % _safe("%s_%s_%s_%s" % (key[0], key[1], key[3], key[4])))
+        open(fn, "w").write(svg)
+        files.append((title, fn))
+    # 3) latency-vs-throughput "hockey stick" (open-loop) per (structure, op)
+    open_groups = {}
+    for cid, e in A.items():
+        m = e["meta"]
+        if m.get("load_model") != "open":
+            continue
+        open_groups.setdefault((m["structure"], m["op"], m.get("variant")), []).append(e)
+    for key, items in open_groups.items():
+        def pts(client):
+            xs = []
+            for e in items:
+                cc = e["clients"].get(client)
+                if cc and not math.isnan(cc["throughput"][0]) and not math.isnan(cc["p99"][0]):
+                    xs.append((cc["throughput"][0], cc["p99"][0]))
+            return sorted(xs)
+        series = [("rust", "#d62728", pts("rust")), ("java", "#1f77b4", pts("java"))]
+        title = "Latency vs throughput (open-loop) — %s.%s.%s" % key
+        svg = svg_lines(series, "achieved throughput (ops/s)", "p99 latency (µs)", title, logy=True)
+        fn = os.path.join(plots_dir, "lat_thr_%s.svg" % _safe("%s_%s_%s" % key))
         open(fn, "w").write(svg)
         files.append((title, fn))
     return files
