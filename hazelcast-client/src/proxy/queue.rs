@@ -2,6 +2,7 @@
 
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,6 +23,10 @@ use crate::listener::ListenerId;
 pub struct IQueue<T> {
     name: String,
     connection_manager: Arc<ConnectionManager>,
+    /// Cached partition id for this queue's name (-1 = not yet computed). A queue
+    /// lives on a single partition derived from its immutable name, so this is
+    /// computed once instead of re-serializing the name on every op.
+    cached_partition: AtomicI32,
     _phantom: PhantomData<fn() -> T>,
 }
 
@@ -31,6 +36,7 @@ impl<T> IQueue<T> {
         Self {
             name,
             connection_manager,
+            cached_partition: AtomicI32::new(-1),
             _phantom: PhantomData,
         }
     }
@@ -485,9 +491,16 @@ where
     }
 
     fn name_partition_id(&self) -> i32 {
-        let count = self.connection_manager.partition_count();
-        let count = if count > 0 { count } else { 271 };
-        match Self::serialize_value(&self.name) {
+        // Fast path: the partition never changes once known, so reuse the cached
+        // value and skip the per-op name serialization + hash + allocations.
+        let cached = self.cached_partition.load(Ordering::Relaxed);
+        if cached >= 0 {
+            return cached;
+        }
+        let raw_count = self.connection_manager.partition_count();
+        let known = raw_count > 0;
+        let count = if known { raw_count } else { 271 };
+        let pid = match Self::serialize_value(&self.name) {
             Ok(data) => {
                 let hash_input = if data.len() > 8 {
                     &data[8..]
@@ -500,7 +513,13 @@ where
                 )
             }
             Err(_) => 0,
+        };
+        // Only cache once the real partition count is known (not the 271 fallback
+        // used before the partition table has loaded).
+        if known {
+            self.cached_partition.store(pid, Ordering::Relaxed);
         }
+        pid
     }
 
     async fn invoke(&self, mut message: ClientMessage) -> Result<ClientMessage> {
@@ -626,6 +645,7 @@ impl<T> Clone for IQueue<T> {
         Self {
             name: self.name.clone(),
             connection_manager: Arc::clone(&self.connection_manager),
+            cached_partition: AtomicI32::new(self.cached_partition.load(Ordering::Relaxed)),
             _phantom: PhantomData,
         }
     }
