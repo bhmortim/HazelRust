@@ -31,6 +31,35 @@ Everything else is low-risk plumbing that can land in small PRs.
 
 ---
 
+## Measured outcomes (implemented + benchmarked live)
+
+The top three were implemented and A/B-tested on the live 3-node EE 5.7 cluster
+(pinned, quiesced, 0 errors). Results corrected two of the audit's own hypotheses —
+which is exactly why they were gated on measurement:
+
+- **W1 (pool size) — REFUTED by measurement; default kept at 1.** A `pool_size`
+  sweep (1/2/4) showed **pool=1 is optimal**, not a limiter: put C64 154k/143k/140k,
+  put C256 238k/223k/210k, mixed C256 277k/270k/257k (higher pools also worsened
+  tails). On this co-located loopback rig the writer `Mutex` is held only for a
+  near-instant `write_all` (the socket is always writable, never yields), so it is
+  not a contention point; more sockets just add reader tasks and cache pressure. A
+  real-LAN deployment with network backpressure should re-measure. (A `HZ_POOL_SIZE`
+  knob was added to the harness for this sweep.)
+- **W2 (writer-task + vectored write) — SKIPPED (condition not met).** It was gated on
+  the pool sweep showing the per-member write path is the ceiling; it isn't, so the
+  risky refactor was correctly not pursued on this rig.
+- **C1 (per-write triple-copy removal) — IMPLEMENTED, +~14% at large values.** Added
+  `ObjectDataOutput::into_buffer() -> BytesMut` (move, no `to_vec`) and a
+  `serialize_buf` helper; `IMap::put`/`set` now serialize key/value into `BytesMut`
+  and **move** them into the frames (`Frame::with_content`) instead of
+  `into_bytes().to_vec()` + `data_frame(BytesMut::from(..))`. Measured (put,
+  backup-ack on): **v16384 C64 24,975 → 28,600 ops/s median (+14%)**, p50 1075µs →
+  ~995µs, p99 21.3ms → ~14ms; **v100 unchanged** (copy negligible at 100 B, as
+  expected). Unit tests 1489/0 + 306/0, 0 errors, wire bytes byte-identical. The same
+  pattern extends cleanly to `put_if_absent`/`replace`/`get_and_put` (follow-up).
+
+---
+
 ## Correction to the automated synthesis (ground-truthed)
 
 The automated report claimed the per-write payload double/triple-copy was

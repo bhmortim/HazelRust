@@ -66,6 +66,14 @@ impl ObjectDataOutput {
         self.buffer.to_vec()
     }
 
+    /// Consumes the output and returns the underlying buffer by MOVE (no copy).
+    /// Prefer this over [`into_bytes`](Self::into_bytes) on the hot path when the
+    /// bytes are about to be moved into a protocol `Frame` — it avoids the
+    /// `to_vec()` reallocation+memcpy of a payload the buffer already owns.
+    pub fn into_buffer(self) -> bytes::BytesMut {
+        self.buffer
+    }
+
     /// Returns the number of bytes written.
     pub fn len(&self) -> usize {
         self.buffer.len()

@@ -90,6 +90,13 @@ async fn main() -> Result<()> {
     // is OFF (RPO-0 safe); HZ_NO_BACKUP_ACK=1 disables it here for the A/B.
     let backup_ack = std::env::var("HZ_NO_BACKUP_ACK").as_deref() != Ok("1");
     builder = builder.network(move |n| n.backup_ack_to_client_enabled(backup_ack));
+    // Sweep knob: per-member connection pool size (engages the round-robin writer
+    // pool). Default unset = library default.
+    if let Ok(ps) = std::env::var("HZ_POOL_SIZE") {
+        if let Ok(n) = ps.parse::<usize>() {
+            builder = builder.connection_pool_size(n);
+        }
+    }
     let config: ClientConfig = builder.build().context("building client config")?;
 
     let client = Arc::new(

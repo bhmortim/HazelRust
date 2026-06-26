@@ -729,18 +729,22 @@ where
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
         self.stats_tracker.record_put();
-        let key_data = Self::serialize_value(&key)?;
-        let value_data = Self::serialize_value(&value)?;
+        // C1: serialize into owned BytesMut and MOVE into the frames (avoids the
+        // serialize-buffer -> Vec -> frame double-copy of the payload). Routing
+        // borrows the buffers first.
+        let key_buf = Self::serialize_buf(&key)?;
+        let value_buf = Self::serialize_buf(&value)?;
 
-        // Invalidate near-cache before remote operation
+        // Invalidate near-cache before remote operation (off by default; only
+        // here do we materialize a Vec key).
         if let Some(ref cache) = self.near_cache {
             let mut cache_guard = cache
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache_guard.invalidate(&key_buf.to_vec());
         }
 
-        let partition_id = self.partition_index_dynamic(&key_data);
+        let partition_id = self.partition_index_dynamic(&key_buf);
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
 
@@ -751,10 +755,10 @@ where
             initial_frame.content.put_i64_le(-1i64); // ttl = -1 (no expiry)
         }
 
-        // Variable-size params: name, key, value
+        // Variable-size params: name, key, value (key/value moved in, no copy)
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Frame::with_content(key_buf));
+        message.add_frame(Frame::with_content(value_buf));
 
         let response = self
             .invoke_on_partition_mutating(partition_id, message)
@@ -1394,18 +1398,19 @@ where
         self.check_permission(PermissionAction::Put)?;
         self.check_quorum(false).await?;
         self.stats_tracker.record_put();
-        let key_data = Self::serialize_value(&key)?;
-        let value_data = Self::serialize_value(&value)?;
+        // C1: serialize into owned BytesMut and MOVE into the frames (no copy).
+        let key_buf = Self::serialize_buf(&key)?;
+        let value_buf = Self::serialize_buf(&value)?;
 
         // Invalidate near-cache before remote operation
         if let Some(ref cache) = self.near_cache {
             let mut cache_guard = cache
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache_guard.invalidate(&key_buf.to_vec());
         }
 
-        let partition_id = self.partition_index_dynamic(&key_data);
+        let partition_id = self.partition_index_dynamic(&key_buf);
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
 
@@ -1418,12 +1423,10 @@ where
         }
 
         // Variable-size params as separate frames in protocol-defined order:
-        // 1. name (String)
-        // 2. key (Data)
-        // 3. value (Data)
+        // 1. name (String)  2. key (Data)  3. value (Data) — key/value moved in.
         message.add_frame(Self::string_frame(&self.name));
-        message.add_frame(Self::data_frame(&key_data));
-        message.add_frame(Self::data_frame(&value_data));
+        message.add_frame(Frame::with_content(key_buf));
+        message.add_frame(Frame::with_content(value_buf));
 
         self.invoke_on_partition_mutating(partition_id, message)
             .await?;
@@ -2848,6 +2851,21 @@ where
         output.write_int(value.type_id())?; // Hazelcast constant type id
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
+    }
+
+    /// Like [`serialize_value`](Self::serialize_value) but returns the serialized
+    /// `Data` as an owned `BytesMut` (no `to_vec` copy), so it can be MOVED
+    /// straight into a `Frame` via `Frame::with_content`. Used on the write hot
+    /// path to avoid copying the (potentially large) value payload twice
+    /// (serialize buffer -> Vec -> frame BytesMut). The same bytes can still be
+    /// borrowed (`&buf`) for partition routing before the move.
+    fn serialize_buf<T: Serializable>(value: &T) -> Result<BytesMut> {
+        let mut output = ObjectDataOutput::new();
+        use hazelcast_core::serialization::DataOutput;
+        output.write_int(0)?; // partition_hash placeholder
+        output.write_int(value.type_id())?; // Hazelcast constant type id
+        value.serialize(&mut output)?;
+        Ok(output.into_buffer())
     }
 
     /// Serializes an entry processor for an `execute_on_*` request. When the
