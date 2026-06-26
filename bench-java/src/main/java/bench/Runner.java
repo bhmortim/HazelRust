@@ -128,6 +128,21 @@ public final class Runner {
         return rr;
     }
 
+    /** Busy-wait to `scheduled` with µs accuracy: parkNanos the bulk, spin the
+     * last ~1 ms — avoids the Thread.sleep ~1 ms burst artifact. */
+    static void preciseWaitUntil(long scheduled) {
+        while (true) {
+            long now = System.nanoTime();
+            if (now >= scheduled) return;
+            long rem = scheduled - now;
+            if (rem > 1_500_000L) {
+                java.util.concurrent.locks.LockSupport.parkNanos(rem - 1_000_000L);
+            } else {
+                Thread.onSpinWait();
+            }
+        }
+    }
+
     public static RunResult runOpen(HazelcastInstance client, Manifest.Cell cell, long seed,
                                     long warmupNs, long measureNs, double targetRate) throws InterruptedException {
         int c = Math.max(1, cell.concurrency);
@@ -146,22 +161,17 @@ public final class Runner {
         long warmupNsAbs = warmupNs;
         long totalNs = warmupNs + measureNs;
         long k = 0;
-        double maxLagNs = 0;
 
         while (true) {
             double schedOff = k * intervalNs;
             if (schedOff >= totalNs) break;
             long scheduled = start + (long) schedOff;
-            long now = System.nanoTime();
-            if (scheduled > now) {
-                long sleep = scheduled - now;
-                try { Thread.sleep(sleep / 1_000_000L, (int) (sleep % 1_000_000L)); } catch (InterruptedException ignored) {}
-            } else {
-                double lag = now - scheduled;
-                if (lag > maxLagNs) maxLagNs = lag;
-            }
+            preciseWaitUntil(scheduled);
             boolean measuring = schedOff >= warmupNsAbs;
-            sem.acquire();
+            // Acquire an outstanding-op permit; spin if none. A transient wait
+            // (e.g. a GC pause) is a latency event captured in the histogram —
+            // not saturation. Sustained inability shows as wall-clock overrun.
+            while (!sem.tryAcquire()) { Thread.onSpinWait(); }
             final Ops.Handles h = lanes[(int) (k % c)];
             final Ops.Plan p = planner.plan();
             final long sched = scheduled;
@@ -178,16 +188,17 @@ public final class Runner {
             });
             k++;
         }
+        double overrunNs = (System.nanoTime() - start) - totalNs;
         pool.shutdown();
-        // drain outstanding
-        sem.acquire(c);
+        sem.acquire(c); // drain outstanding
 
         RunResult rr = new RunResult();
         rr.hist = hist;
         rr.ops = ops.get();
         rr.errors = errors;
         rr.measureSecs = measureNs / 1e9;
-        rr.saturated = maxLagNs > Math.max(intervalNs * 5.0, 50_000_000.0);
+        // Saturated only if the generator finished materially behind the schedule.
+        rr.saturated = overrunNs > Math.max(totalNs * 0.05, 100_000_000.0);
         return rr;
     }
 

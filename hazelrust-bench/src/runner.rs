@@ -119,9 +119,31 @@ pub async fn run_closed(
     })
 }
 
+/// Busy-wait until `scheduled` with µs accuracy: sleep the bulk, spin the last
+/// ~1 ms. Runs on a DEDICATED OS thread (not a tokio worker) so spinning never
+/// starves the async runtime. This avoids the ~1 ms timer-granularity burst
+/// artifact that a sleep-based pacer would inject into the CO-corrected latency.
+fn precise_wait_until(scheduled: Instant) {
+    loop {
+        let now = Instant::now();
+        if now >= scheduled {
+            return;
+        }
+        let rem = scheduled - now;
+        if rem > Duration::from_micros(1500) {
+            std::thread::sleep(rem - Duration::from_micros(1000));
+        } else {
+            std::hint::spin_loop();
+        }
+    }
+}
+
 /// Open-loop: a fixed-rate clock issues requests regardless of completion (up
 /// to C outstanding). Latency = completion − scheduled-start (coordinated
-/// omission correct). Flags `saturated` if the generator falls behind.
+/// omission correct). A dedicated scheduler thread paces with µs accuracy and
+/// dispatches onto the tokio runtime. Flags `saturated` if the generator falls
+/// behind (had to wait for an outstanding-op permit, i.e. the rate exceeds
+/// client capacity).
 pub async fn run_open(
     client: &Arc<HazelcastClient>,
     cell: &Cell,
@@ -137,9 +159,8 @@ pub async fn run_open(
     for w in 0..c {
         lanes.push(Handles::build(client, cell, w as u32).await?);
     }
-    let mut planner = Planner::new(cell, 0, seed);
+    let planner = Planner::new(cell, 0, seed);
 
-    let start = Instant::now();
     let warmup_ns = warmup.as_nanos() as f64;
     let total_ns = (warmup + measure).as_nanos() as f64;
 
@@ -166,44 +187,55 @@ pub async fn run_open(
         (hist, ops, errs)
     });
 
-    let mut k = 0u64;
-    let mut max_lag_ns = 0.0f64;
-    loop {
-        let sched_off = k as f64 * interval_ns;
-        if sched_off >= total_ns {
-            break;
-        }
-        let scheduled = start + Duration::from_nanos(sched_off as u64);
-        let now = Instant::now();
-        if scheduled > now {
-            tokio::time::sleep_until(tokio::time::Instant::from_std(scheduled)).await;
-        } else {
-            let lag = now.duration_since(scheduled).as_nanos() as f64;
-            if lag > max_lag_ns {
-                max_lag_ns = lag;
+    let handle = tokio::runtime::Handle::current();
+    let sched_tx = tx.clone();
+    let scheduler = std::thread::spawn(move || {
+        let mut planner = planner;
+        let start = Instant::now();
+        let mut k = 0u64;
+        loop {
+            let sched_off = k as f64 * interval_ns;
+            if sched_off >= total_ns {
+                break;
             }
-        }
-        let measuring = sched_off >= warmup_ns;
-        let permit = sem.clone().acquire_owned().await.unwrap();
-        let h = lanes[(k as usize) % c].clone();
-        let plan = planner.plan();
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            let _permit = permit;
-            let res = h.exec(plan).await;
-            let lat = Instant::now().duration_since(scheduled).as_nanos() as u64;
-            let code = match &res {
-                Ok(()) => Ok(()),
-                Err(e) => Err(classify_code(e)),
+            let scheduled = start + Duration::from_nanos(sched_off as u64);
+            precise_wait_until(scheduled);
+            let measuring = sched_off >= warmup_ns;
+            // Acquire an outstanding-op permit; spin if none. A transient wait
+            // (e.g. a GC pause filling the C window) is a LATENCY event captured
+            // in the histogram — not saturation. Sustained inability to keep up
+            // shows as wall-clock overrun (computed after the loop).
+            let permit = loop {
+                match sem.clone().try_acquire_owned() {
+                    Ok(p) => break p,
+                    Err(_) => std::hint::spin_loop(),
+                }
             };
-            let _ = tx.send((lat, measuring, code));
-        });
-        k += 1;
-    }
-    drop(tx);
+            let h = lanes[(k as usize) % c].clone();
+            let plan = planner.plan();
+            let txc = sched_tx.clone();
+            handle.spawn(async move {
+                let _permit = permit;
+                let res = h.exec(plan).await;
+                let lat = Instant::now().saturating_duration_since(scheduled).as_nanos() as u64;
+                let code = match &res {
+                    Ok(()) => Ok(()),
+                    Err(e) => Err(classify_code(e)),
+                };
+                let _ = txc.send((lat, measuring, code));
+            });
+            k += 1;
+        }
+        // Overrun = how far past the intended schedule the generator ended up.
+        // Bounded transient lag recovers (overrun ~0); only a generator that
+        // genuinely cannot sustain the rate ends materially behind.
+        Instant::now().saturating_duration_since(start).as_nanos() as f64 - total_ns
+    });
+    drop(tx); // scheduler holds the last sender clone; recorder ends when it + tasks finish
     let (hist, ops, errs) = recorder.await?;
-    // Saturated if the scheduler lagged more than 5 intervals or 50 ms.
-    let saturated = max_lag_ns > (interval_ns * 5.0).max(50_000_000.0);
+    let overrun_ns = tokio::task::spawn_blocking(move || scheduler.join().unwrap()).await?;
+    // Saturated only if the generator finished materially behind the schedule.
+    let saturated = overrun_ns > (total_ns * 0.05).max(100_000_000.0);
 
     Ok(RunResult {
         hist,

@@ -78,7 +78,7 @@ def collect_provenance(args, hz_client_version):
     _, rustc, _ = sh("rustc --version")
     _, javav, _ = sh("java -version 2>&1 | head -1")
     _, model, _ = sh("lscpu | grep -i 'model name' | head -1")
-    _, nproc, _ = sh("nproc")
+    _, nproc, _ = sh("nproc --all")  # --all: true machine count, not the pinned affinity
     member_cpuset = {}
     for m in MEMBERS:
         _, cs, _ = sh("sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' %s" % m)
