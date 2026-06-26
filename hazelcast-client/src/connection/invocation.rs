@@ -16,7 +16,7 @@ use std::time::Duration;
 use bytes::BytesMut;
 use dashmap::DashMap;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
@@ -35,10 +35,16 @@ type BoxedRead = Box<dyn AsyncRead + Send + Unpin>;
 /// of it on a single connection's break would wrongly abort other members' ops.
 type InFlight = Arc<DashMap<i64, ()>>;
 
-/// A single pooled connection: its write half plus the set of correlation ids
-/// it has dispatched and is still awaiting responses for.
+/// A single pooled connection: a sender to its dedicated writer task plus the
+/// set of correlation ids it has dispatched and is still awaiting responses for.
 struct PooledConn {
-    writer: Arc<Mutex<BoxedWrite>>,
+    /// Requests are pushed here; one writer task per connection drains the
+    /// channel and coalesces all immediately-available buffers into a single
+    /// socket write (batched IO, like the Java client's IO thread), instead of
+    /// each op locking a shared writer and issuing its own write syscall. This
+    /// is what lets a single connection (e.g. a single-partition IQueue/ISet)
+    /// pipeline efficiently under high concurrency.
+    outbound: mpsc::UnboundedSender<BytesMut>,
     inflight: InFlight,
 }
 
@@ -184,15 +190,18 @@ impl InvocationService {
         read_half: BoxedRead,
         write_half: BoxedWrite,
     ) {
-        let write = Arc::new(Mutex::new(write_half));
         let inflight: InFlight = Arc::new(DashMap::new());
+        // Channel feeding this connection's dedicated writer task. Unbounded is
+        // safe: outstanding depth is bounded by the client's concurrency (each
+        // in-flight op has at most one queued buffer).
+        let (outbound, write_rx) = mpsc::unbounded_channel::<BytesMut>();
 
         // Add connection to pool (create pool if first connection for this address)
         match self.pools.entry(address) {
             dashmap::mapref::entry::Entry::Occupied(mut entry) => {
                 let pool = entry.get_mut();
                 pool.add(PooledConn {
-                    writer: write,
+                    outbound: outbound.clone(),
                     inflight: Arc::clone(&inflight),
                 });
                 tracing::info!(
@@ -203,11 +212,18 @@ impl InvocationService {
             }
             dashmap::mapref::entry::Entry::Vacant(entry) => {
                 entry.insert(ConnectionPool::new(PooledConn {
-                    writer: write,
+                    outbound: outbound.clone(),
                     inflight: Arc::clone(&inflight),
                 }));
             }
         }
+
+        // Spawn the dedicated writer task (owns the write half + the receiver).
+        // It exits when the pool entry — and thus the last `outbound` sender — is
+        // dropped (reconnect/shutdown), or when the socket write fails.
+        tokio::spawn(async move {
+            Self::writer_loop(address, write_half, write_rx).await;
+        });
 
         // Spawn background reader
         let pending = Arc::clone(&self.pending_ops);
@@ -233,6 +249,52 @@ impl InvocationService {
                 address = %address,
                 "evicted stale connection pool (reconnect or teardown)"
             );
+        }
+    }
+
+    /// Per-connection writer task: drains the outbound channel and coalesces all
+    /// immediately-available request buffers into a single `write_all`, matching
+    /// the Java client's batched IO thread. Under low concurrency each buffer is
+    /// written on its own (no added latency); under high concurrency on a single
+    /// hot connection (e.g. a single-partition IQueue/ISet/Topic) many requests
+    /// collapse into one syscall, which is where the previous lock-and-write-per-op
+    /// path serialized. Exits when all senders drop (pool removed) or a write fails;
+    /// the reader loop fails this connection's in-flight ops on teardown.
+    async fn writer_loop(
+        address: SocketAddr,
+        mut write: BoxedWrite,
+        mut rx: mpsc::UnboundedReceiver<BytesMut>,
+    ) {
+        // Cap a coalesced batch so a burst of large payloads can't build an
+        // unbounded buffer (bounds memory + per-write latency).
+        const MAX_BATCH_BYTES: usize = 1 << 20; // 1 MiB
+        let mut batch = BytesMut::new();
+        while let Some(first) = rx.recv().await {
+            // Fast path: nothing else queued — write the single buffer directly,
+            // avoiding a copy into the batch.
+            match rx.try_recv() {
+                Err(_) => {
+                    if let Err(e) = write.write_all(&first).await {
+                        tracing::warn!(address = %address, error = %e, "writer I/O error");
+                        break;
+                    }
+                }
+                Ok(second) => {
+                    batch.clear();
+                    batch.extend_from_slice(&first);
+                    batch.extend_from_slice(&second);
+                    while batch.len() < MAX_BATCH_BYTES {
+                        match rx.try_recv() {
+                            Ok(more) => batch.extend_from_slice(&more),
+                            Err(_) => break,
+                        }
+                    }
+                    if let Err(e) = write.write_all(&batch).await {
+                        tracing::warn!(address = %address, error = %e, "writer I/O error");
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -504,12 +566,12 @@ impl InvocationService {
         corr_id: i64,
         message: &mut ClientMessage,
     ) -> Result<()> {
-        let (writer, inflight) = {
+        let (outbound, inflight) = {
             let pool_ref = self.pools.get(&address).ok_or_else(|| {
                 HazelcastError::Connection(format!("no connection to {}", address))
             })?;
             let conn = pool_ref.select();
-            (conn.writer.clone(), conn.inflight.clone())
+            (conn.outbound.clone(), conn.inflight.clone())
         }; // Release DashMap shard lock before awaiting
 
         inflight.insert(corr_id, ());
@@ -525,12 +587,14 @@ impl InvocationService {
         let mut buf = BytesMut::with_capacity(message.wire_size());
         message.write_to(&mut buf);
 
-        let mut w = writer.lock().await;
-        if let Err(e) = w.write_all(&buf).await {
+        // Hand the buffer to the connection's writer task, which coalesces it
+        // with any other queued buffers into one socket write. Send only fails
+        // if the writer task is gone (connection torn down).
+        if outbound.send(buf).is_err() {
             inflight.remove(&corr_id);
             return Err(HazelcastError::Connection(format!(
-                "failed to write to {}: {}",
-                address, e
+                "connection to {} closed before send",
+                address
             )));
         }
         Ok(())
@@ -569,12 +633,12 @@ impl InvocationService {
         corr_id: i64,
         message: &mut ClientMessage,
     ) -> Result<()> {
-        let (writer, inflight) = {
+        let (outbound, inflight) = {
             let pool_ref = self.pools.get(&address).ok_or_else(|| {
                 HazelcastError::Connection(format!("no connection to {}", address))
             })?;
             let conn = pool_ref.first();
-            (conn.writer.clone(), conn.inflight.clone())
+            (conn.outbound.clone(), conn.inflight.clone())
         };
         inflight.insert(corr_id, ());
         if let Some(mut e) = self.pending_ops.get_mut(&corr_id) {
@@ -582,12 +646,13 @@ impl InvocationService {
         }
         let mut buf = BytesMut::with_capacity(message.wire_size());
         message.write_to(&mut buf);
-        let mut w = writer.lock().await;
-        if let Err(e) = w.write_all(&buf).await {
+        // Pinned ops (transactions) go to the first connection's writer task; the
+        // channel preserves FIFO order, so the txn's request sequence is kept.
+        if outbound.send(buf).is_err() {
             inflight.remove(&corr_id);
             return Err(HazelcastError::Connection(format!(
-                "failed to write to {}: {}",
-                address, e
+                "connection to {} closed before send",
+                address
             )));
         }
         Ok(())
