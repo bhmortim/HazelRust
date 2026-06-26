@@ -57,6 +57,36 @@ which is exactly why they were gated on measurement:
   ~995µs, p99 21.3ms → ~14ms; **v100 unchanged** (copy negligible at 100 B, as
   expected). Unit tests 1489/0 + 306/0, 0 errors, wire bytes byte-identical. The same
   pattern extends cleanly to `put_if_absent`/`replace`/`get_and_put` (follow-up).
+- **Low-risk wins batch (Top-actions #3–#7) — IMPLEMENTED, no regression.** A set of
+  zero-/near-zero-risk refinements landed together, gated on the unit-test suite plus a
+  live regression spot-check:
+  - **#7 borrowing permission predicate (P10, universal).** Added `is_permitted(action)`
+    on `SecurityConfig`/`ConnectionManager`; all 9 proxies that gate on a
+    `check_permission` (map, cp_map, atomic_long, atomic_reference, list, queue, set,
+    topic, vector_collection) now call it instead of `effective_permissions()`, which
+    **cloned the entire `Permissions` set on every operation**.
+  - **#7 borrow `RaftGroupId` (P5-CP).** `CPMap`/`AtomicLong` `resolve_group()` now
+    returns `&RaftGroupId` and `encode_group_id` borrows it — removes a per-CP-op clone
+    of the group (`String` name + id).
+  - **#3 dead `Vec<SocketAddr>` precheck removed.** `CPMap::invoke` no longer calls
+    `get_connection_address()` (an `RwLock` read + `Vec<SocketAddr>` allocation whose
+    result was discarded); the helper was deleted.
+  - **#4 send buffer presized from `wire_size()`** (was a fixed 256 B), so large frames
+    don't reallocate mid-encode.
+  - **#5 `corr_id` threaded into `send_raw`** instead of re-reading it from the message
+    header.
+  - **#6 collection-decode `Vec` presized** (`with_capacity(frames − 1)`) in multimap,
+    queue, set, replicated_map.
+  Live spot re-measure (3-node EE 5.7, backup-ack on): put C64 v100 ≈ 153–159k ops/s,
+  get ≈ 266–270k ops/s, **0 errors** across forks — at/above the post-opt baseline, i.e.
+  **no regression**. These are allocation/CPU-cycle savings below throughput-measurement
+  noise, justified on efficiency grounds rather than a headline number. Unit tests
+  **1489/0 + 306/0** (local and on the instance, release).
+- **Deferred (documented; higher-touch or lower-reward):** #8 collection-name
+  partition-routing cache (P4 — needs care around runtime `partition_count`); P3 "build
+  `PendingOp` complete" invoke restructure (reordering risk on the just-stabilized
+  inflight back-patch); R1 codec frame double-parse; P8 semaphore `try_acquire`
+  (non-default path).
 
 ---
 

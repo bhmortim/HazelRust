@@ -452,8 +452,8 @@ impl InvocationService {
         let (tx, rx) = oneshot::channel();
         self.pending_ops.insert(corr_id, PendingOp::new(tx));
 
-        // Send the message
-        if let Err(e) = self.send_raw(address, &mut message).await {
+        // Send the message (corr_id already parsed — passed down, not re-read)
+        if let Err(e) = self.send_raw(address, corr_id, &mut message).await {
             self.pending_ops.remove(&corr_id);
             return Err(e);
         }
@@ -498,8 +498,12 @@ impl InvocationService {
     /// contention on any single write Mutex. The correlation id is recorded in
     /// the selected connection's in-flight set so its reader can fail it on
     /// teardown.
-    async fn send_raw(&self, address: SocketAddr, message: &mut ClientMessage) -> Result<()> {
-        let corr_id = message.correlation_id().unwrap_or(0);
+    async fn send_raw(
+        &self,
+        address: SocketAddr,
+        corr_id: i64,
+        message: &mut ClientMessage,
+    ) -> Result<()> {
         let (writer, inflight) = {
             let pool_ref = self.pools.get(&address).ok_or_else(|| {
                 HazelcastError::Connection(format!("no connection to {}", address))
@@ -516,7 +520,9 @@ impl InvocationService {
             e.inflight = Some(inflight.clone());
         }
 
-        let mut buf = BytesMut::with_capacity(256);
+        // Pre-size from the exact encoded size (avoids the mid-serialize realloc
+        // that BytesMut::with_capacity(256) hits for any payload over ~250 B).
+        let mut buf = BytesMut::with_capacity(message.wire_size());
         message.write_to(&mut buf);
 
         let mut w = writer.lock().await;
@@ -541,7 +547,7 @@ impl InvocationService {
         let corr_id = message.correlation_id().unwrap_or(0);
         let (tx, rx) = oneshot::channel();
         self.pending_ops.insert(corr_id, PendingOp::new(tx));
-        if let Err(e) = self.send_raw_pinned(address, &mut message).await {
+        if let Err(e) = self.send_raw_pinned(address, corr_id, &mut message).await {
             self.pending_ops.remove(&corr_id);
             return Err(e);
         }
@@ -560,9 +566,9 @@ impl InvocationService {
     async fn send_raw_pinned(
         &self,
         address: SocketAddr,
+        corr_id: i64,
         message: &mut ClientMessage,
     ) -> Result<()> {
-        let corr_id = message.correlation_id().unwrap_or(0);
         let (writer, inflight) = {
             let pool_ref = self.pools.get(&address).ok_or_else(|| {
                 HazelcastError::Connection(format!("no connection to {}", address))
@@ -574,7 +580,7 @@ impl InvocationService {
         if let Some(mut e) = self.pending_ops.get_mut(&corr_id) {
             e.inflight = Some(inflight.clone());
         }
-        let mut buf = BytesMut::with_capacity(256);
+        let mut buf = BytesMut::with_capacity(message.wire_size());
         message.write_to(&mut buf);
         let mut w = writer.lock().await;
         if let Err(e) = w.write_all(&buf).await {

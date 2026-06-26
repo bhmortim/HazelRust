@@ -89,8 +89,7 @@ where
     }
 
     fn check_permission(&self, action: PermissionAction) -> Result<()> {
-        let permissions = self.connection_manager.effective_permissions();
-        if !permissions.is_permitted(action) {
+        if !self.connection_manager.is_permitted(action) {
             return Err(HazelcastError::Authorization(format!(
                 "atomic reference '{}' operation denied: requires {:?} permission",
                 self.name, action

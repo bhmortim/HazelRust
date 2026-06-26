@@ -668,7 +668,7 @@ where
 
     fn decode_collection_response<T: Deserializable>(response: &ClientMessage) -> Result<Vec<T>> {
         let frames = response.frames();
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(frames.len().saturating_sub(1));
 
         for frame in frames.iter().skip(1) {
             if frame.flags & IS_NULL_FLAG != 0 {

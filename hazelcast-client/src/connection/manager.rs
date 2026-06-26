@@ -1228,6 +1228,12 @@ impl ConnectionManager {
         self.config.security().effective_permissions()
     }
 
+    /// Borrowing per-op permission check — avoids cloning `Permissions` on every
+    /// operation (see `SecurityConfig::is_permitted`).
+    pub fn is_permitted(&self, action: crate::config::PermissionAction) -> bool {
+        self.config.security().is_permitted(action)
+    }
+
     /// Checks if quorum is present for the given data structure and operation type.
     ///
     /// Returns `Ok(())` if:

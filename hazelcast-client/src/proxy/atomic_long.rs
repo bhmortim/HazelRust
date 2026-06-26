@@ -78,8 +78,7 @@ impl AtomicLong {
     }
 
     fn check_permission(&self, action: PermissionAction) -> Result<()> {
-        let permissions = self.connection_manager.effective_permissions();
-        if !permissions.is_permitted(action) {
+        if !self.connection_manager.is_permitted(action) {
             return Err(HazelcastError::Authorization(format!(
                 "atomic long '{}' operation denied: requires {:?} permission",
                 self.name, action
@@ -147,7 +146,8 @@ impl AtomicLong {
     /// Builds a CP request: initial frame (header + the fixed `long` params), then
     /// the `groupId` data structure, then the object name.
     async fn build_request(&self, msg_type: i32, fixed_longs: &[i64]) -> Result<ClientMessage> {
-        let group = self.resolve_group().await?.clone();
+        // Borrow the cached group (never changes) instead of cloning its String.
+        let group = self.resolve_group().await?;
         let mut message = ClientMessage::create_for_encode_any_partition(msg_type);
         // Append fixed params to the initial frame (after the request header).
         if let Some(initial) = message.frames_mut().first_mut() {
@@ -155,7 +155,7 @@ impl AtomicLong {
                 initial.content.extend_from_slice(&v.to_le_bytes());
             }
         }
-        Self::encode_group_id(&mut message, &group);
+        Self::encode_group_id(&mut message, group);
         message.add_frame(Self::string_frame(self.object_name()));
         Ok(message)
     }

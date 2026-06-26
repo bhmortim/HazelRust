@@ -1,7 +1,6 @@
 //! Distributed CP Map proxy implementation.
 
 use std::marker::PhantomData;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::BytesMut;
@@ -79,9 +78,10 @@ where
 
     /// Resolves (and caches) the Raft `groupId` for this CP map's group via
     /// `CPGroupCreateCPGroup` (0x1E0100), matching the AtomicLong CP path.
-    async fn resolve_group(&self) -> Result<RaftGroupId> {
-        let g = self
-            .group_id
+    async fn resolve_group(&self) -> Result<&RaftGroupId> {
+        // Borrow the cached group (it never changes) instead of cloning its
+        // `name: String` on every op.
+        self.group_id
             .get_or_try_init(|| async {
                 let mut request =
                     ClientMessage::create_for_encode_any_partition(CP_GROUP_CREATE_CP_GROUP);
@@ -89,8 +89,7 @@ where
                 let response = self.connection_manager.invoke_on_random(request).await?;
                 Self::decode_group_id(&response)
             })
-            .await?;
-        Ok(g.clone())
+            .await
     }
 
     fn decode_group_id(response: &ClientMessage) -> Result<RaftGroupId> {
@@ -128,7 +127,7 @@ where
     async fn build_request(&self, msg_type: i32, data_params: &[&[u8]]) -> Result<ClientMessage> {
         let group = self.resolve_group().await?;
         let mut message = ClientMessage::create_for_encode_any_partition(msg_type);
-        Self::encode_group_id(&mut message, &group);
+        Self::encode_group_id(&mut message, group);
         message.add_frame(Self::string_frame(self.object_name()));
         for d in data_params {
             message.add_frame(Self::data_frame(d));
@@ -142,8 +141,7 @@ where
     }
 
     fn check_permission(&self, action: PermissionAction) -> Result<()> {
-        let permissions = self.connection_manager.effective_permissions();
-        if !permissions.is_permitted(action) {
+        if !self.connection_manager.is_permitted(action) {
             return Err(HazelcastError::Authorization(format!(
                 "CPMap '{}' operation denied: requires {:?} permission",
                 self.name, action
@@ -343,16 +341,11 @@ where
     }
 
     async fn invoke(&self, message: ClientMessage) -> Result<ClientMessage> {
-        let _address = self.get_connection_address().await?;
+        // invoke_on_random selects a live connection (and errors if none), so the
+        // previous get_connection_address() liveness precheck — which took a
+        // RwLock read and collected ALL cluster addresses into a Vec just to
+        // discard them — was pure per-op waste and is removed.
         self.connection_manager.invoke_on_random(message).await
-    }
-
-    async fn get_connection_address(&self) -> Result<SocketAddr> {
-        let addresses = self.connection_manager.connected_addresses().await;
-        addresses
-            .into_iter()
-            .next()
-            .ok_or_else(|| HazelcastError::Connection("no connections available".to_string()))
     }
 
     fn decode_optional_value_response(response: &ClientMessage) -> Result<Option<V>> {

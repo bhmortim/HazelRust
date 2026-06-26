@@ -39,8 +39,7 @@ impl<T> ISet<T> {
     }
 
     fn check_permission(&self, action: PermissionAction) -> Result<()> {
-        let permissions = self.connection_manager.effective_permissions();
-        if !permissions.is_permitted(action) {
+        if !self.connection_manager.is_permitted(action) {
             return Err(HazelcastError::Authorization(format!(
                 "set '{}' operation denied: requires {:?} permission",
                 self.name, action
@@ -264,7 +263,7 @@ where
 
     fn decode_data_list_response(response: &ClientMessage) -> Result<Vec<T>> {
         use hazelcast_core::serialization::ObjectDataInput;
-        let mut items = Vec::new();
+        let mut items = Vec::with_capacity(response.frames().len().saturating_sub(1));
         for frame in response.frames().iter().skip(1) {
             if frame.flags & (BEGIN_DATA_STRUCTURE_FLAG | END_DATA_STRUCTURE_FLAG) != 0 {
                 continue;

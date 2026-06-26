@@ -41,8 +41,7 @@ impl<T> IQueue<T> {
     }
 
     fn check_permission(&self, action: PermissionAction) -> Result<()> {
-        let permissions = self.connection_manager.effective_permissions();
-        if !permissions.is_permitted(action) {
+        if !self.connection_manager.is_permitted(action) {
             return Err(HazelcastError::Authorization(format!(
                 "queue '{}' operation denied: requires {:?} permission",
                 self.name, action
@@ -581,7 +580,7 @@ where
     }
 
     fn decode_list_response<V: Deserializable>(response: &ClientMessage) -> Result<Vec<V>> {
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(response.frames().len().saturating_sub(1));
         for frame in response.frames().iter().skip(1) {
             if frame.flags & (BEGIN_DATA_STRUCTURE_FLAG | END_DATA_STRUCTURE_FLAG) != 0 {
                 continue;

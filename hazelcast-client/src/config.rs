@@ -1796,6 +1796,15 @@ impl SecurityConfig {
         self.permissions.clone().unwrap_or_else(Permissions::all)
     }
 
+    /// Borrowing permission check — avoids cloning the `Permissions` struct on the
+    /// per-op hot path. Default-allow when no permissions are configured (matches
+    /// `effective_permissions` returning `Permissions::all`).
+    pub fn is_permitted(&self, action: PermissionAction) -> bool {
+        self.permissions
+            .as_ref()
+            .map_or(true, |p| p.is_permitted(action))
+    }
+
     /// Returns the credential provider if configured.
     ///
     /// When a credential provider is set, the client will call it to obtain

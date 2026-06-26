@@ -237,8 +237,7 @@ impl<T> ITopic<T> {
     }
 
     fn check_permission(&self, action: PermissionAction) -> Result<()> {
-        let permissions = self.connection_manager.effective_permissions();
-        if !permissions.is_permitted(action) {
+        if !self.connection_manager.is_permitted(action) {
             return Err(HazelcastError::Authorization(format!(
                 "topic '{}' operation denied: requires {:?} permission",
                 self.name, action
