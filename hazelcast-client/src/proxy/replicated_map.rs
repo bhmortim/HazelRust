@@ -227,7 +227,9 @@ where
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_random(message).await?;
+        // Route by the KEY's partition so put(K)/get(K) share a member (per-key
+        // read-your-writes) while load spreads across the replica members.
+        let response = self.invoke_on_part(pid, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -241,14 +243,14 @@ where
         let value_data = Self::serialize_value(&value)?;
         let ttl_millis = ttl.as_millis() as i64;
 
-        let mut message =
-            ClientMessage::create_for_encode(REPLICATED_MAP_PUT, self.key_partition(&key_data));
+        let pid = self.key_partition(&key_data);
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_PUT, pid);
         Self::put_long(&mut message, ttl_millis);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
 
-        let response = self.invoke_on_random(message).await?;
+        let response = self.invoke_on_part(pid, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -292,7 +294,10 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_random(message).await?;
+        // Route by the KEY's partition (not the map name): spreads reads across all
+        // members that hold the replica, and keeps per-key read-your-writes since put
+        // for the same key routes to the same member. (Was funneled to one member.)
+        let response = self.invoke_on_part(pid, message).await?;
         let result: Option<V> = Self::decode_nullable_response(&response)?;
         self.stats.record_get(result.is_some());
         Ok(result)
@@ -310,7 +315,7 @@ where
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_random(message).await?;
+        let response = self.invoke_on_part(pid, message).await?;
         Self::decode_nullable_response(&response)
     }
 
@@ -318,14 +323,12 @@ where
     pub async fn contains_key(&self, key: &K) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
 
-        let mut message = ClientMessage::create_for_encode(
-            REPLICATED_MAP_CONTAINS_KEY,
-            self.key_partition(&key_data),
-        );
+        let pid = self.key_partition(&key_data);
+        let mut message = ClientMessage::create_for_encode(REPLICATED_MAP_CONTAINS_KEY, pid);
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
 
-        let response = self.invoke_on_random(message).await?;
+        let response = self.invoke_on_part(pid, message).await?;
         Self::decode_bool_response(&response)
     }
 
@@ -753,9 +756,11 @@ where
     }
 
     async fn invoke_on_random(&self, mut message: ClientMessage) -> Result<ClientMessage> {
-        // Route every op for this ReplicatedMap to the partition owner of the map
-        // name so writes and reads hit the same member (replication is asynchronous,
-        // so read-your-writes requires a consistent target).
+        // Used only by NON-keyed / whole-map ops (put_all, size, values, keySet,
+        // clear, contains_value): route them to the map-name partition owner so they
+        // hit a consistent member. Keyed ops (get/put/remove/contains_key) route by
+        // the KEY's partition instead (see invoke_on_part) to spread load across the
+        // replica members while preserving per-key read-your-writes.
         let count = self.connection_manager.partition_count();
         let count = if count > 0 { count } else { 271 };
         let pid = match Self::serialize_value(&self.name) {
