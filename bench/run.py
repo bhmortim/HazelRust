@@ -307,9 +307,11 @@ def preseed(args, cells, out_dir):
     """Seed each distinct shared-data shape once (with the Rust harness)."""
     shapes = {}
     for c in cells:
-        if c["structure"] in ("imap", "cpmap"):
-            key = (c["structure"], c["value_size"], c["working_set"], c["op"], c["variant"])
-            # only need one seeding cell per (structure,value_size,ws)
+        if c["structure"] in ("imap", "cpmap", "replicatedmap"):
+            # only need one seeding cell per (structure,value_size,ws); prefer a
+            # non-miss cell so ensure_seeded actually populates the shape.
+            if c["op"] == "get" and c["variant"] == "miss":
+                continue
             shapes.setdefault((c["structure"], c["value_size"], c["working_set"]), c)
     print("pre-seeding %d data shapes ..." % len(shapes))
     for (struct, vs, ws), c in shapes.items():

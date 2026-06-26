@@ -47,6 +47,12 @@ TIERS = {
     # time/coverage trade-off; the full t2 design remains in this generator.
     "headline": dict(forks=3, trials=2, warmup_s=15, measure_s=18, min_ops=500_000,
                      open_loop=True),
+    # Fresh head-to-head run: broad subsystem variety (IMap, CP money-path,
+    # Collections) x a C-sweep x value-size sweep x mixed YCSB, closed + open
+    # loop. n = forks x trials = 3 x 2 = 6 (documented time/coverage trade-off vs
+    # the 5x3 ideal); warmup is kept >=12 s so the Java JIT reaches steady state.
+    "h2h": dict(forks=3, trials=2, warmup_s=12, measure_s=12, min_ops=300_000,
+                open_loop=True),
 }
 
 # Open-loop target rates as a fraction of the measured closed-loop max
@@ -201,9 +207,80 @@ def gen_headline():
     return cells
 
 
+def gen_h2h():
+    """Fresh head-to-head matrix — broad subsystem variety, both load models."""
+    cfg = TIERS["h2h"]
+    td = dict(warmup_s=cfg["warmup_s"], measure_s=cfg["measure_s"],
+              forks=cfg["forks"], trials=cfg["trials"], min_ops=cfg["min_ops"])
+    cells = []
+
+    def add(suite, struct, op, variant, c, vs, dist, mix=None, kt="i64", vk="bytes", ws=None):
+        wsv = ws if ws is not None else ws_for(vs)
+        cells.append(cell(suite=suite, structure=struct, op=op, variant=variant,
+                          key_type=kt, value_kind=vk, value_size=vs, working_set=wsv,
+                          concurrency=c, load_model="closed", distribution=dist, mix=mix, **td))
+
+    # Suite A — IMap: C-sweep @100B + value-size sweep @C64 + a zipfian point
+    for op, variant in [("get", "hit"), ("put", "update")]:
+        for c in (1, 64, 256):
+            add("A", "imap", op, variant, c, 100, "uniform")
+        for vs in (1024, 16384):
+            add("A", "imap", op, variant, 64, vs, "uniform")
+    for c in (1, 64):
+        add("A", "imap", "set", "default", c, 1024, "uniform")
+    add("A", "imap", "get", "hit", 64, 100, "zipfian")
+
+    # Suite B — CP money path (i64 values, small coordination state)
+    for op, variant, cs in [("get", "default", (64,)),
+                            ("increment_and_get", "default", (1, 64, 256)),
+                            ("compare_and_set", "success", (64,))]:
+        for c in cs:
+            add("B", "atomiclong", op, variant, c, 8, "uniform", vk="i64", ws=WORKING_SET_SMALL)
+    for op, variant, cs in [("get", "hit", (64,)), ("put", "update", (1, 64))]:
+        for c in cs:
+            add("B", "cpmap", op, variant, c, 8, "uniform", vk="i64", ws=WORKING_SET_SMALL)
+    add("B", "atomicref", "set", "default", 64, 8, "uniform", vk="i64", ws=WORKING_SET_SMALL)
+
+    # Suite C — Collections (offer+poll / add+remove pairs; replicated put/get)
+    for c in (1, 64):
+        add("C", "iqueue", "offer_poll", "default", c, 100, "uniform", ws=WORKING_SET_SMALL)
+        add("C", "iset", "add_remove", "default", c, 100, "uniform", ws=WORKING_SET_SMALL)
+    add("C", "replicatedmap", "put", "update", 64, 100, "uniform", ws=WORKING_SET_SMALL)
+    add("C", "replicatedmap", "get", "hit", 64, 100, "uniform", ws=WORKING_SET_SMALL)
+
+    # Suite J — realistic mixed (lead suite)
+    for variant, mix, cs in [("ycsb_a", dict(get=0.5, put=0.5), (1, 64, 256)),
+                            ("ycsb_b", dict(get=0.95, put=0.05), (64,))]:
+        for c in cs:
+            add("J", "imap", "mixed", variant, c, 1024, "uniform", mix=mix)
+
+    # Open-loop latency-under-rate for the headline groups (CO-corrected)
+    open_groups = {
+        "imap.get.hit.ki64.v100.uniform",
+        "imap.put.update.ki64.v100.uniform",
+        "atomiclong.increment_and_get.default.ki64.v8.uniform",
+        "imap.mixed.ycsb_a.ki64.v1024.uniform",
+    }
+    bases = {}
+    for c in cells:
+        if c["rate_group"] in open_groups and c["rate_group"] not in bases:
+            bases[c["rate_group"]] = c
+    for g, base in bases.items():
+        for frac in (0.50, 0.90):
+            cells.append(cell(suite=base["suite"], structure=base["structure"], op=base["op"],
+                              variant=base["variant"], key_type=base["key_type"],
+                              value_kind=base["value_kind"], value_size=base["value_size"],
+                              working_set=base["working_set"], concurrency=256, load_model="open",
+                              rate_group=base["rate_group"], rate_frac=frac,
+                              distribution=base["distribution"], mix=base["mix"], **td))
+    return cells
+
+
 def gen_tier(tier):
     if tier == "headline":
         return gen_headline()
+    if tier == "h2h":
+        return gen_h2h()
     cfg = TIERS[tier]
     cells = []
     tdefaults = dict(warmup_s=cfg["warmup_s"], measure_s=cfg["measure_s"],

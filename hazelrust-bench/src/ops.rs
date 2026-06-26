@@ -10,7 +10,7 @@
 //! set stays [0,ws) and never grows. Destructive ops are excluded from the run.
 
 use anyhow::Result;
-use hazelcast_client::proxy::{AtomicLong, CPMap};
+use hazelcast_client::proxy::{AtomicLong, CPMap, IQueue, ISet, ReplicatedMap};
 use hazelcast_client::{AtomicReference, HazelcastClient, IMap};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,6 +29,15 @@ pub fn al_name(worker: u32) -> String {
 }
 pub fn aref_name(worker: u32) -> String {
     format!("bench-aref-{worker}")
+}
+pub fn queue_name(value_size: u32) -> String {
+    format!("bench-queue-v{value_size}")
+}
+pub fn set_name(value_size: u32) -> String {
+    format!("bench-set-v{value_size}")
+}
+pub fn repmap_name(value_size: u32, ws: u64) -> String {
+    format!("bench-repmap-v{value_size}-ws{ws}")
 }
 
 /// Seed a shared IMap with `ws` entries of `value_size` bytes if not already
@@ -68,6 +77,33 @@ pub async fn ensure_cpmap_seeded(client: &HazelcastClient, ws: u64) -> Result<CP
     Ok(cpmap)
 }
 
+/// Seed a shared ReplicatedMap with `ws` entries of `value_size` bytes if not
+/// already populated. Idempotent (checks size first); batched put_all.
+pub async fn ensure_repmap_seeded(
+    client: &HazelcastClient,
+    value_size: u32,
+    ws: u64,
+    seed: u64,
+) -> Result<ReplicatedMap<i64, Vec<u8>>> {
+    let rep: ReplicatedMap<i64, Vec<u8>> =
+        client.get_replicated_map(&repmap_name(value_size, ws));
+    if rep.size().await? as u64 >= ws {
+        return Ok(rep);
+    }
+    let batch = 1000u64;
+    let mut i = 0u64;
+    while i < ws {
+        let end = (i + batch).min(ws);
+        let mut entries: HashMap<i64, Vec<u8>> = HashMap::with_capacity((end - i) as usize);
+        for idx in i..end {
+            entries.insert(key_i64(idx), value_bytes(idx, value_size as usize, seed));
+        }
+        rep.put_all(entries).await?;
+        i = end;
+    }
+    Ok(rep)
+}
+
 /// A fully-resolved single operation (no RNG state). Cheap to move into a task.
 #[derive(Clone)]
 pub enum Plan {
@@ -92,6 +128,10 @@ pub enum Plan {
     ArefGet,
     ArefSet(i64),
     ArefCas,
+    QueueOfferPoll(Vec<u8>),
+    SetAddRemove(Vec<u8>),
+    RepPut(i64, Vec<u8>),
+    RepGet(i64),
 }
 
 /// Advances the deterministic key-stream and produces resolved `Plan`s.
@@ -207,6 +247,23 @@ impl Planner {
             ("atomicref", "get") => Plan::ArefGet,
             ("atomicref", "set") => Plan::ArefSet(self.rng.next_u64() as i64),
             ("atomicref", "compare_and_set") => Plan::ArefCas,
+            ("iqueue", "offer_poll") => {
+                let i = self.idx();
+                Plan::QueueOfferPoll(value_bytes(i, vs, seed))
+            }
+            ("iset", "add_remove") => {
+                let i = self.idx();
+                Plan::SetAddRemove(value_bytes(i, vs, seed))
+            }
+            ("replicatedmap", "put") | ("replicatedmap", "get_and_put") => {
+                let i = self.idx();
+                Plan::RepPut(key_i64(i), value_bytes(i, vs, seed))
+            }
+            ("replicatedmap", "get") => {
+                let i = self.idx();
+                let k = if self.cell.variant == "miss" { i + self.ws } else { i };
+                Plan::RepGet(key_i64(k))
+            }
             (s, o) => panic!("planner: unsupported op {s}.{o}"),
         }
     }
@@ -220,6 +277,9 @@ pub struct Handles {
     cpmap: Option<CPMap<i64, i64>>,
     al: Option<AtomicLong>,
     aref: Option<AtomicReference<i64>>,
+    queue: Option<IQueue<Vec<u8>>>,
+    set: Option<ISet<Vec<u8>>>,
+    rep: Option<ReplicatedMap<i64, Vec<u8>>>,
 }
 
 impl Handles {
@@ -236,6 +296,9 @@ impl Handles {
             cpmap: None,
             al: None,
             aref: None,
+            queue: None,
+            set: None,
+            rep: None,
         };
         match cell.structure.as_str() {
             "imap" => h.imap = Some(client.get_map(&imap_name(cell.value_size, ws))),
@@ -249,6 +312,11 @@ impl Handles {
                 let aref = client.get_atomic_reference(&aref_name(worker_id));
                 aref.set(Some(0)).await?;
                 h.aref = Some(aref);
+            }
+            "iqueue" => h.queue = Some(client.get_queue(&queue_name(cell.value_size))),
+            "iset" => h.set = Some(client.get_set(&set_name(cell.value_size))),
+            "replicatedmap" => {
+                h.rep = Some(client.get_replicated_map(&repmap_name(cell.value_size, ws)))
             }
             other => anyhow::bail!("unsupported structure: {other}"),
         }
@@ -325,6 +393,22 @@ impl Handles {
                     .compare_and_set(cur.as_ref(), Some(cur.unwrap_or(0) + 1))
                     .await?;
             }
+            Plan::QueueOfferPoll(v) => {
+                let q = self.queue.as_ref().unwrap();
+                let _ = q.offer(v).await?;
+                let _ = q.poll().await?;
+            }
+            Plan::SetAddRemove(v) => {
+                let s = self.set.as_ref().unwrap();
+                let _ = s.add(v.clone()).await?;
+                let _ = s.remove(&v).await?;
+            }
+            Plan::RepPut(k, v) => {
+                let _ = self.rep.as_ref().unwrap().put(k, v).await?;
+            }
+            Plan::RepGet(k) => {
+                let _ = self.rep.as_ref().unwrap().get(&k).await?;
+            }
         }
         Ok(())
     }
@@ -344,6 +428,15 @@ pub async fn ensure_seeded(client: &Arc<HazelcastClient>, cell: &Cell, seed: u64
                 ensure_cpmap_seeded(client, cell.working_set.max(1)).await?;
             }
         }
+        "replicatedmap" => {
+            // get(miss) needs no seed; get(hit)/put read/update [0,ws).
+            if !(cell.op == "get" && cell.variant == "miss") {
+                ensure_repmap_seeded(client, cell.value_size, cell.working_set.max(1), seed)
+                    .await?;
+            }
+        }
+        // iqueue (offer+poll) and iset (add+remove) are self-balancing and need
+        // no pre-seed; their per-op state returns to baseline.
         _ => {}
     }
     Ok(())

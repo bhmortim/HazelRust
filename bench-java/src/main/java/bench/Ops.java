@@ -1,10 +1,13 @@
 package bench;
 
+import com.hazelcast.collection.IQueue;
+import com.hazelcast.collection.ISet;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.cp.CPMap;
 import com.hazelcast.cp.IAtomicLong;
 import com.hazelcast.cp.IAtomicReference;
 import com.hazelcast.map.IMap;
+import com.hazelcast.replicatedmap.ReplicatedMap;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -22,6 +25,9 @@ public final class Ops {
     public static String cpmapName(long ws) { return "bench-cpmap-ws" + ws; }
     public static String alName(int worker) { return "bench-al-" + worker; }
     public static String arefName(int worker) { return "bench-aref-" + worker; }
+    public static String queueName(int valueSize) { return "bench-queue-v" + valueSize; }
+    public static String setName(int valueSize) { return "bench-set-v" + valueSize; }
+    public static String repmapName(int valueSize, long ws) { return "bench-repmap-v" + valueSize + "-ws" + ws; }
 
     public static IMap<Long, byte[]> ensureImapSeeded(HazelcastInstance c, int valueSize, long ws, long seed) {
         IMap<Long, byte[]> map = c.getMap(imapName(valueSize, ws));
@@ -47,6 +53,22 @@ public final class Ops {
         return cpmap;
     }
 
+    public static ReplicatedMap<Long, byte[]> ensureRepmapSeeded(HazelcastInstance c, int valueSize, long ws, long seed) {
+        ReplicatedMap<Long, byte[]> rep = c.getReplicatedMap(repmapName(valueSize, ws));
+        if (rep.size() >= ws) return rep;
+        long batch = 1000;
+        for (long i = 0; i < ws; ) {
+            long end = Math.min(i + batch, ws);
+            Map<Long, byte[]> entries = new HashMap<>();
+            for (long idx = i; idx < end; idx++) {
+                entries.put(Data.keyI64(idx), Data.valueBytes(idx, valueSize, seed));
+            }
+            rep.putAll(entries);
+            i = end;
+        }
+        return rep;
+    }
+
     public static void ensureSeeded(HazelcastInstance c, Manifest.Cell cell, long seed) {
         switch (cell.structure) {
             case "imap":
@@ -59,6 +81,11 @@ public final class Ops {
                     ensureCpmapSeeded(c, Math.max(1, cell.working_set));
                 }
                 break;
+            case "replicatedmap":
+                if (!(cell.op.equals("get") && cell.variant.equals("miss"))) {
+                    ensureRepmapSeeded(c, cell.value_size, Math.max(1, cell.working_set), seed);
+                }
+                break;
             default:
                 break;
         }
@@ -68,7 +95,8 @@ public final class Ops {
         IMAP_GET, IMAP_PUT, IMAP_SET, IMAP_CONTAINS, IMAP_PIA, IMAP_REMOVE, IMAP_GETALL, IMAP_PUTALL,
         CP_GET, CP_PUT, CP_SET, CP_CAS,
         AL_GET, AL_SET, AL_INCR, AL_ADD, AL_GETADD, AL_CAS,
-        AREF_GET, AREF_SET, AREF_CAS
+        AREF_GET, AREF_SET, AREF_CAS,
+        QUEUE_OFFERPOLL, SET_ADDREMOVE, REP_PUT, REP_GET
     }
 
     /** A fully-resolved single operation (no RNG state). */
@@ -177,6 +205,20 @@ public final class Ops {
                     case "compare_and_set": return Plan.of(T.AREF_CAS);
                 }
             }
+            if (st.equals("iqueue") && op.equals("offer_poll")) {
+                long i = idx();
+                Plan p = Plan.of(T.QUEUE_OFFERPOLL); p.val = Data.valueBytes(i, valueSize, seed); return p;
+            }
+            if (st.equals("iset") && op.equals("add_remove")) {
+                long i = idx();
+                Plan p = Plan.of(T.SET_ADDREMOVE); p.val = Data.valueBytes(i, valueSize, seed); return p;
+            }
+            if (st.equals("replicatedmap")) {
+                switch (op) {
+                    case "put": case "get_and_put": { long i = idx(); Plan p = Plan.of(T.REP_PUT); p.key = Data.keyI64(i); p.val = Data.valueBytes(i, valueSize, seed); return p; }
+                    case "get": { long i = idx(); long k = cell.variant.equals("miss") ? i + ws : i; Plan p = Plan.of(T.REP_GET); p.key = Data.keyI64(k); return p; }
+                }
+            }
             throw new IllegalArgumentException("planner: unsupported op " + st + "." + op);
         }
     }
@@ -188,6 +230,9 @@ public final class Ops {
         CPMap<Long, Long> cpmap;
         IAtomicLong al;
         IAtomicReference<Long> aref;
+        IQueue<byte[]> queue;
+        ISet<byte[]> set;
+        ReplicatedMap<Long, byte[]> rep;
 
         public static Handles build(HazelcastInstance c, Manifest.Cell cell, int workerId) {
             long ws = Math.max(1, cell.working_set);
@@ -197,6 +242,9 @@ public final class Ops {
                 case "cpmap": h.cpmap = c.getCPSubsystem().getMap(cpmapName(ws)); break;
                 case "atomiclong": h.al = c.getCPSubsystem().getAtomicLong(alName(workerId)); h.al.set(0); break;
                 case "atomicref": h.aref = c.getCPSubsystem().getAtomicReference(arefName(workerId)); h.aref.set(0L); break;
+                case "iqueue": h.queue = c.getQueue(queueName(cell.value_size)); break;
+                case "iset": h.set = c.getSet(setName(cell.value_size)); break;
+                case "replicatedmap": h.rep = c.getReplicatedMap(repmapName(cell.value_size, ws)); break;
                 default: throw new IllegalArgumentException("unsupported structure: " + cell.structure);
             }
             return h;
@@ -235,6 +283,10 @@ public final class Ops {
                 case AREF_GET: aref.get(); break;
                 case AREF_SET: aref.set(p.lval); break;
                 case AREF_CAS: { Long cur = aref.get(); long c = cur == null ? 0 : cur; aref.compareAndSet(cur, c + 1); break; }
+                case QUEUE_OFFERPOLL: queue.offer(p.val); queue.poll(); break;
+                case SET_ADDREMOVE: set.add(p.val); set.remove(p.val); break;
+                case REP_PUT: rep.put(p.key, p.val); break;
+                case REP_GET: rep.get(p.key); break;
                 default: throw new IllegalStateException();
             }
         }

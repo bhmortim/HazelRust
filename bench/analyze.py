@@ -104,13 +104,13 @@ def group_cells(recs):
     for r in recs:
         cid, cl = r["cell_id"], r["client"]
         c = cells.setdefault(cid, {})
-        g = c.setdefault(cl, {"throughput": [], "p50": [], "p99": [], "p999": [],
-                              "p9999": [], "mean": [], "max": [], "errors": [],
-                              "cpu_mops": [], "bytes_op": [], "samples_above_p999": [],
-                              "saturated": [], "recs": []})
+        g = c.setdefault(cl, {"throughput": [], "p50": [], "p75": [], "p90": [],
+                              "p99": [], "p999": [], "p9999": [], "mean": [], "max": [],
+                              "errors": [], "cpu_mops": [], "bytes_op": [],
+                              "samples_above_p999": [], "saturated": [], "recs": []})
         lat = r["latency"]
         g["throughput"].append(r["throughput"])
-        for k in ("p50", "p99", "p999", "p9999", "mean", "max"):
+        for k in ("p50", "p75", "p90", "p99", "p999", "p9999", "mean", "max"):
             g[k].append(lat.get(k))
         g["samples_above_p999"].append(lat.get("samples_above_p999", 0))
         g["errors"].append(r["errors"]["total"])
@@ -140,6 +140,8 @@ def agg(cells):
                 "n": len(g["throughput"]),
                 "throughput": bootstrap_ci(g["throughput"]),
                 "p50": bootstrap_ci(g["p50"]),
+                "p75": bootstrap_ci(g["p75"]),
+                "p90": bootstrap_ci(g["p90"]),
                 "p99": bootstrap_ci(g["p99"]),
                 "p999": bootstrap_ci(g["p999"]),
                 "p9999": bootstrap_ci(g["p9999"]),
@@ -155,7 +157,7 @@ def agg(cells):
             # throughput ratio rust/java (>1 = rust faster)
             entry["ratio"]["throughput"] = ratio_ci(R["throughput"], J["throughput"])
             # latency ratios rust/java (>1 = rust slower)
-            for k in ("p50", "p99", "p999"):
+            for k in ("p50", "p75", "p90", "p99", "p999"):
                 entry["ratio"][k] = ratio_ci(R[k], J[k])
             if R["cpu_mops"] and J["cpu_mops"]:
                 entry["ratio"]["cpu_mops"] = ratio_ci(R["cpu_mops"], J["cpu_mops"])
@@ -449,7 +451,7 @@ def write_report(out_dir, report_path, plots_dir):
     L.append("- Raw per-run records + embedded HdrHistograms are preserved in the run directory "
              "(auditable).\n")
 
-    open(report_path, "w").write("\n".join(L) + "\n")
+    open(report_path, "w", encoding="utf-8").write("\n".join(L) + "\n")
     print("wrote", report_path)
 
 
