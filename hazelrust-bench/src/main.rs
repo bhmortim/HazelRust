@@ -85,6 +85,11 @@ async fn main() -> Result<()> {
     // smart routing ON (default), statistics OFF (default), near-cache OFF
     // (not configured) — the fairness contract (§1.4).
     builder = builder.connection_timeout(Duration::from_secs(10));
+    // Enable backup-ack-to-client by DEFAULT so the benchmark matches the Java
+    // client's default (ON) for a fair comparison. The HazelRust library default
+    // is OFF (RPO-0 safe); HZ_NO_BACKUP_ACK=1 disables it here for the A/B.
+    let backup_ack = std::env::var("HZ_NO_BACKUP_ACK").as_deref() != Ok("1");
+    builder = builder.network(move |n| n.backup_ack_to_client_enabled(backup_ack));
     let config: ClientConfig = builder.build().context("building client config")?;
 
     let client = Arc::new(

@@ -115,6 +115,9 @@ pub struct ConnectionManager {
     invocation_timeout: std::time::Duration,
     invocation_semaphore: Option<Arc<tokio::sync::Semaphore>>,
     redo_operation: bool,
+    /// Whether to opt mutating partition ops into backup-ack-to-client (sets the
+    /// BACKUP_AWARE flag on the request). Mirrors the Java client default (ON).
+    backup_ack_to_client: bool,
     invocation_retry_count: u32,
     invocation_retry_pause: std::time::Duration,
 }
@@ -161,6 +164,7 @@ impl ConnectionManager {
         let redo_operation = config.redo_operation();
         let invocation_retry_count = config.invocation_retry_count();
         let invocation_retry_pause = config.invocation_retry_pause();
+        let backup_ack_to_client = config.network().backup_ack_to_client_enabled();
 
         Self {
             config: Arc::new(config),
@@ -168,6 +172,7 @@ impl ConnectionManager {
             connections: Arc::new(RwLock::new(HashMap::new())),
             invocation: Arc::new(super::invocation::InvocationService::new(
                 invocation_timeout,
+                backup_ack_to_client,
             )),
             members: Arc::new(RwLock::new(HashMap::new())),
             partition_table: Arc::new(RwLock::new(HashMap::new())),
@@ -189,6 +194,7 @@ impl ConnectionManager {
             redo_operation,
             invocation_retry_count,
             invocation_retry_pause,
+            backup_ack_to_client,
         }
     }
 
@@ -231,6 +237,7 @@ impl ConnectionManager {
         let redo_operation = primary_config.redo_operation();
         let invocation_retry_count = primary_config.invocation_retry_count();
         let invocation_retry_pause = primary_config.invocation_retry_pause();
+        let backup_ack_to_client = primary_config.network().backup_ack_to_client_enabled();
 
         Self {
             config: Arc::new(primary_config),
@@ -238,6 +245,7 @@ impl ConnectionManager {
             connections: Arc::new(RwLock::new(HashMap::new())),
             invocation: Arc::new(super::invocation::InvocationService::new(
                 invocation_timeout,
+                backup_ack_to_client,
             )),
             members: Arc::new(RwLock::new(HashMap::new())),
             partition_table: Arc::new(RwLock::new(HashMap::new())),
@@ -259,6 +267,7 @@ impl ConnectionManager {
             redo_operation,
             invocation_retry_count,
             invocation_retry_pause,
+            backup_ack_to_client,
         }
     }
 
@@ -654,6 +663,18 @@ impl ConnectionManager {
             requested = pool_size,
             "registered invocation connection pool"
         );
+
+        // Register the backup-ack listener so this member sends EVENT_BACKUP acks
+        // for the backups it holds (enables backup-ack-to-client write overlap).
+        if self.backup_ack_to_client && registered > 0 {
+            if let Err(e) = self.invocation.register_backup_listener(address).await {
+                tracing::warn!(
+                    address = %address,
+                    error = %e,
+                    "backup-ack listener registration failed; writes whose backup is on this member use the timeout fallback"
+                );
+            }
+        }
 
         let _ = self
             .event_sender
@@ -1760,9 +1781,17 @@ impl ConnectionManager {
     pub async fn invoke_on_partition_with_retry(
         &self,
         partition_id: i32,
-        message: hazelcast_core::ClientMessage,
+        mut message: hazelcast_core::ClientMessage,
         idempotent: bool,
     ) -> Result<hazelcast_core::ClientMessage> {
+        // Backup-ack-to-client: opt mutating (non-idempotent) partition ops in by
+        // flagging the request BACKUP_AWARE. The owner then replies without
+        // blocking on sync backups and the backup members ack the client directly;
+        // the invocation completes after response + all acks (see InvocationService).
+        // Scoped to this partition-mutating path — CP/random ops are unaffected.
+        if !idempotent && self.backup_ack_to_client {
+            message.set_backup_aware();
+        }
         // Opt 5: avoid cloning the message on the success path (99.9% of calls).
         // First attempt uses the original message by value.
         let retryable = idempotent || self.redo_operation;

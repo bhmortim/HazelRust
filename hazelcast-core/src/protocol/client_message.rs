@@ -239,6 +239,33 @@ impl ClientMessage {
             .map(|f| f.is_event_frame())
             .unwrap_or(false)
     }
+
+    /// Returns true if this message is a backup acknowledgement (sent by a
+    /// backup member directly to the client under backup-ack-to-client).
+    pub fn is_backup_event(&self) -> bool {
+        self.frames
+            .first()
+            .map(|f| f.flags & BACKUP_EVENT_FLAG != 0)
+            .unwrap_or(false)
+    }
+
+    /// Marks this request as backup-aware (opts into backup-ack-to-client).
+    /// Sets [`BACKUP_AWARE_FLAG`] on the initial frame.
+    pub fn set_backup_aware(&mut self) {
+        if let Some(f) = self.frames.first_mut() {
+            f.flags |= BACKUP_AWARE_FLAG;
+        }
+    }
+
+    /// Number of backup acknowledgements the client should wait for, read from
+    /// the response initial frame's `backupAcks` byte (offset 12). Returns 0 if
+    /// absent (every read/non-backup-aware response).
+    pub fn backup_ack_count(&self) -> u8 {
+        self.frames
+            .first()
+            .and_then(|f| f.content.get(RESPONSE_BACKUP_ACKS_OFFSET).copied())
+            .unwrap_or(0)
+    }
 }
 
 impl Default for ClientMessage {

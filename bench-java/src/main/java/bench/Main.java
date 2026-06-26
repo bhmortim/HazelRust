@@ -69,6 +69,11 @@ public class Main implements Callable<Integer> {
         if (lic != null && !lic.isBlank()) {
             cfg.setProperty("hazelcast.enterprise.license.key", lic);
         }
+        // Diagnostic toggle: disable backup-ack-to-client to match a client that
+        // does not implement it (isolates the write-latency contribution).
+        if ("1".equals(System.getenv("HZ_NO_BACKUP_ACK"))) {
+            cfg.setBackupAckToClientEnabled(false);
+        }
 
         HazelcastInstance client = HazelcastClient.newHazelcastClient(cfg);
         try {

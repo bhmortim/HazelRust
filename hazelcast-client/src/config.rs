@@ -770,6 +770,13 @@ impl Default for NetworkConfig {
             smart_routing: true,
             routing_mode: RoutingMode::default(),
             reconnect_mode: ReconnectMode::default(),
+            // Default OFF — the partition owner waits for sync backups before
+            // replying, so a successful write is durable (RPO-0), which the CBDC
+            // money path relies on. Opt in (the Java client defaults it ON) for
+            // ~20-90% lower write latency: BACKUP_AWARE makes the owner reply
+            // early and the client completes on that reply, NOT waiting for the
+            // backup to be confirmed (weaker RPO under owner failure). See
+            // InvocationService and connection::manager.
             backup_ack_to_client_enabled: false,
             outbound_ports: Vec::new(),
             outbound_port_definitions: Vec::new(),

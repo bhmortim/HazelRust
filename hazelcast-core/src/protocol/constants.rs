@@ -27,6 +27,15 @@ pub const IS_EVENT_FLAG: u16 = 1 << 9;
 /// is a trap if backup-event handling is ever added.
 pub const BACKUP_EVENT_FLAG: u16 = 1 << 7;
 
+/// Backup-aware flag (Hazelcast protocol `1 << 8`). Set by the client on a
+/// mutating request to opt into "backup ack to client": the partition owner
+/// replies immediately (without blocking on sync backups) and the backup
+/// members ack the client directly via [`BACKUP_EVENT_FLAG`] messages. The
+/// client completes the op only after the response AND all expected acks,
+/// which overlaps backup replication with the owner round-trip and cuts write
+/// latency while preserving durability.
+pub const BACKUP_AWARE_FLAG: u16 = 1 << 8;
+
 /// Null frame flag - indicates a null value.
 pub const IS_NULL_FLAG: u16 = 1 << 10;
 
@@ -424,6 +433,17 @@ pub const CLIENT_REMOVE_DISTRIBUTED_OBJECT_LISTENER: i32 = 0x000A00;
 
 /// Client get distributed objects request.
 pub const CLIENT_GET_DISTRIBUTED_OBJECTS: i32 = 0x000800;
+
+/// ClientLocalBackupListener register request (jar REQUEST_MESSAGE_TYPE = 3840).
+/// Registering it on a member connection makes that member send backup-ack
+/// EVENT_BACKUP messages (type 3842) for backups it holds; each event carries
+/// the source op's correlation id at content offset
+/// [`EVENT_BACKUP_SOURCE_CORRELATION_OFFSET`].
+pub const CLIENT_LOCAL_BACKUP_LISTENER: i32 = 0x000F00;
+
+/// Offset of the source-invocation correlation id (i64 LE) in an EVENT_BACKUP
+/// (backup ack) message's initial frame content.
+pub const EVENT_BACKUP_SOURCE_CORRELATION_OFFSET: usize = 16;
 
 /// Client create proxy request.
 pub const CLIENT_CREATE_PROXY: i32 = 0x000400;

@@ -42,6 +42,35 @@ struct PooledConn {
     inflight: InFlight,
 }
 
+/// State for one in-flight invocation. Normally completed by the owner's
+/// response (the `oneshot` fires). For backup-aware writes the owner replies
+/// early with `acks_expected = backupAcks`, and backup members ack the client
+/// directly ([`ClientMessage::is_backup_event`]); the op completes only once
+/// the response AND all expected acks have arrived (in either order). `inflight`
+/// is the OWNER connection's in-flight set — backup acks arrive on a *different*
+/// connection, so whichever reader completes the op must clean the owner's set
+/// (else it leaks). `response` retained so a lost-ack timeout can still return
+/// the (already-applied) owner response instead of a false error.
+struct PendingOp {
+    tx: Option<oneshot::Sender<Result<ClientMessage>>>,
+    response: Option<ClientMessage>,
+    acks_received: u32,
+    acks_expected: Option<u32>,
+    inflight: Option<InFlight>,
+}
+
+impl PendingOp {
+    fn new(tx: oneshot::Sender<Result<ClientMessage>>) -> Self {
+        Self {
+            tx: Some(tx),
+            response: None,
+            acks_received: 0,
+            acks_expected: None,
+            inflight: None,
+        }
+    }
+}
+
 /// A pool of write connections to a single cluster member.
 struct ConnectionPool {
     /// Pooled connections (each a write half + its in-flight correlation set).
@@ -107,13 +136,17 @@ pub struct InvocationService {
     /// Pending operation waiters keyed by correlation_id. The value is a
     /// `Result` so a reader can deliver a typed failure (e.g. the connection was
     /// torn down with the op in flight) instead of dropping the sender silently.
-    pending_ops: Arc<DashMap<i64, oneshot::Sender<Result<ClientMessage>>>>,
+    pending_ops: Arc<DashMap<i64, PendingOp>>,
     /// Long-lived event handlers keyed by the listener registration correlation_id.
     event_handlers: Arc<DashMap<i64, Arc<dyn Fn(ClientMessage) + Send + Sync>>>,
     /// Set of map names for which CreateProxy has been sent.
     created_proxies: RwLock<HashSet<String>>,
     /// Invocation timeout.
     timeout: Duration,
+    /// Whether backup-ack-to-client is enabled. When false, the reader completes
+    /// every op on its response (the historical behavior) and never waits for
+    /// backup acks — so the feature-off path is byte-for-byte unchanged.
+    backup_ack_enabled: bool,
     /// Reader task handles (kept alive).
     _readers: RwLock<Vec<tokio::task::JoinHandle<()>>>,
 }
@@ -128,13 +161,14 @@ impl std::fmt::Debug for InvocationService {
 
 impl InvocationService {
     /// Create a new invocation service.
-    pub fn new(timeout: Duration) -> Self {
+    pub fn new(timeout: Duration, backup_ack_enabled: bool) -> Self {
         Self {
             pools: DashMap::new(),
             pending_ops: Arc::new(DashMap::new()),
             event_handlers: Arc::new(DashMap::new()),
             created_proxies: RwLock::new(HashSet::new()),
             timeout,
+            backup_ack_enabled,
             _readers: RwLock::new(Vec::new()),
         }
     }
@@ -178,8 +212,9 @@ impl InvocationService {
         // Spawn background reader
         let pending = Arc::clone(&self.pending_ops);
         let events = Arc::clone(&self.event_handlers);
+        let backup_ack = self.backup_ack_enabled;
         let handle = tokio::spawn(async move {
-            Self::reader_loop(address, read_half, pending, events, inflight).await;
+            Self::reader_loop(address, read_half, pending, events, inflight, backup_ack).await;
         });
         self._readers.write().await.push(handle);
     }
@@ -209,9 +244,10 @@ impl InvocationService {
     async fn reader_loop(
         address: SocketAddr,
         mut read: BoxedRead,
-        pending_ops: Arc<DashMap<i64, oneshot::Sender<Result<ClientMessage>>>>,
+        pending_ops: Arc<DashMap<i64, PendingOp>>,
         event_handlers: Arc<DashMap<i64, Arc<dyn Fn(ClientMessage) + Send + Sync>>>,
         inflight: InFlight,
+        _backup_ack_enabled: bool,
     ) {
         let mut codec = ClientMessageCodec::new();
         let mut read_buffer = BytesMut::with_capacity(16384);
@@ -223,6 +259,10 @@ impl InvocationService {
                     if msg.is_event() {
                         // Listener event: route to the registered handler (which
                         // stays registered for the lifetime of the listener).
+                        // Backup-ack EVENT_BACKUP messages are delivered here too —
+                        // they arrive on the registered ClientLocalBackupListener
+                        // correlation id and the handler routes them to the source
+                        // op by the correlation id in their payload.
                         if let Some(corr_id) = msg.correlation_id() {
                             if let Some(h) = event_handlers.get(&corr_id) {
                                 let handler = Arc::clone(h.value());
@@ -231,9 +271,33 @@ impl InvocationService {
                             }
                         }
                     } else if let Some(corr_id) = msg.correlation_id() {
-                        inflight.remove(&corr_id);
-                        if let Some((_, tx)) = pending_ops.remove(&corr_id) {
-                            let _ = tx.send(Ok(msg));
+                        // Operation response — complete the invocation on the owner
+                        // response. With backup-ack-to-client, BACKUP_AWARE makes the
+                        // owner reply EARLY (overlapping its sync backups) and the
+                        // client completes on that reply without blocking on the
+                        // backup acks (matching the Java client, whose
+                        // ClientInvocation.shouldCompleteWithoutBackups() is always
+                        // true). Backup acks still arrive on the registered listener
+                        // and are counted for bookkeeping, but they do not gate
+                        // completion. NOTE: this is the documented latency/durability
+                        // trade-off — under owner failure between the early reply and
+                        // the backup applying, the op may be lost (weaker RPO). Set
+                        // backup_ack_to_client(false) for strong (wait-for-backup)
+                        // durability.
+                        let mut done = None;
+                        if let Some(mut e) = pending_ops.get_mut(&corr_id) {
+                            if let Some(tx) = e.tx.take() {
+                                done = Some((tx, msg, e.inflight.clone()));
+                            }
+                        }
+                        if let Some((tx, resp, owner_inflight)) = done {
+                            pending_ops.remove(&corr_id);
+                            if let Some(i) = owner_inflight {
+                                i.remove(&corr_id);
+                            } else {
+                                inflight.remove(&corr_id);
+                            }
+                            let _ = tx.send(Ok(resp));
                         }
                         // Unmatched non-event responses are discarded.
                     }
@@ -279,11 +343,13 @@ impl InvocationService {
         }
         for corr_id in stranded {
             inflight.remove(&corr_id);
-            if let Some((_, tx)) = pending_ops.remove(&corr_id) {
-                let _ = tx.send(Err(HazelcastError::Connection(format!(
-                    "connection to {} closed with operation in flight",
-                    address
-                ))));
+            if let Some((_, mut op)) = pending_ops.remove(&corr_id) {
+                if let Some(tx) = op.tx.take() {
+                    let _ = tx.send(Err(HazelcastError::Connection(format!(
+                        "connection to {} closed with operation in flight",
+                        address
+                    ))));
+                }
             }
         }
     }
@@ -324,6 +390,56 @@ impl InvocationService {
         }
     }
 
+    /// Registers a `ClientLocalBackupListener` on `address` so that member sends
+    /// backup-ack (`EVENT_BACKUP`) events for the backups it holds. Each event
+    /// carries the source op's correlation id in its payload; the handler routes
+    /// the ack to that pending op. Called once per member connection when
+    /// backup-ack-to-client is enabled. Best-effort — if it fails, writes whose
+    /// backup lands on this member simply fall back to the (slower) timeout
+    /// completion path rather than overlapping the backup.
+    pub async fn register_backup_listener(&self, address: SocketAddr) -> Result<()> {
+        let pending = Arc::clone(&self.pending_ops);
+        let handler: Arc<dyn Fn(ClientMessage) + Send + Sync> =
+            Arc::new(move |msg: ClientMessage| {
+                if let Some(f) = msg.initial_frame() {
+                    let off = EVENT_BACKUP_SOURCE_CORRELATION_OFFSET;
+                    if f.content.len() >= off + 8 {
+                        let src = i64::from_le_bytes(
+                            f.content[off..off + 8].try_into().unwrap(),
+                        );
+                        Self::deliver_backup_ack(&pending, src);
+                    }
+                }
+            });
+        let request =
+            ClientMessage::create_for_encode(CLIENT_LOCAL_BACKUP_LISTENER, PARTITION_ID_ANY);
+        self.invoke_listener(address, request, handler).await.map(|_| ())
+    }
+
+    /// Records one backup ack for `src_corr`; completes the op iff the owner
+    /// response is already in and all expected acks have now arrived (acks may
+    /// arrive before or after the response).
+    fn deliver_backup_ack(pending_ops: &DashMap<i64, PendingOp>, src_corr: i64) {
+        let mut done = None;
+        if let Some(mut e) = pending_ops.get_mut(&src_corr) {
+            e.acks_received += 1;
+            if let (Some(exp), true) = (e.acks_expected, e.response.is_some()) {
+                if e.acks_received >= exp {
+                    if let (Some(tx), Some(resp)) = (e.tx.take(), e.response.take()) {
+                        done = Some((tx, resp, e.inflight.clone()));
+                    }
+                }
+            }
+        }
+        if let Some((tx, resp, infl)) = done {
+            pending_ops.remove(&src_corr);
+            if let Some(i) = infl {
+                i.remove(&src_corr);
+            }
+            let _ = tx.send(Ok(resp));
+        }
+    }
+
     /// Send a message on a connection and wait for the correlated response.
     pub async fn invoke(
         &self,
@@ -334,7 +450,7 @@ impl InvocationService {
 
         // Register pending operation BEFORE sending
         let (tx, rx) = oneshot::channel();
-        self.pending_ops.insert(corr_id, tx);
+        self.pending_ops.insert(corr_id, PendingOp::new(tx));
 
         // Send the message
         if let Err(e) = self.send_raw(address, &mut message).await {
@@ -353,14 +469,27 @@ impl InvocationService {
                     "response channel dropped".to_string(),
                 ))
             }
-            Err(_) => {
-                self.pending_ops.remove(&corr_id);
-                Err(HazelcastError::Timeout(format!(
-                    "invocation timed out after {:?}",
-                    self.timeout
-                )))
+            Err(_) => self.on_invoke_timeout(corr_id),
+        }
+    }
+
+    /// Timeout handling shared by `invoke`/`invoke_pinned`. If the owner response
+    /// already arrived but backup acks did not (a lost/late ack), the op DID
+    /// apply on the owner — return that response rather than a false timeout
+    /// error. Otherwise report the timeout.
+    fn on_invoke_timeout(&self, corr_id: i64) -> Result<ClientMessage> {
+        if let Some((_, mut op)) = self.pending_ops.remove(&corr_id) {
+            if let Some(i) = &op.inflight {
+                i.remove(&corr_id);
+            }
+            if let Some(resp) = op.response.take() {
+                return check_response(resp);
             }
         }
+        Err(HazelcastError::Timeout(format!(
+            "invocation timed out after {:?}",
+            self.timeout
+        )))
     }
 
     /// Send a message without waiting for a response.
@@ -380,6 +509,12 @@ impl InvocationService {
         }; // Release DashMap shard lock before awaiting
 
         inflight.insert(corr_id, ());
+        // Record the OWNER connection's in-flight set on the pending op so the
+        // reader that completes it (possibly a backup member's reader) cleans
+        // the right set.
+        if let Some(mut e) = self.pending_ops.get_mut(&corr_id) {
+            e.inflight = Some(inflight.clone());
+        }
 
         let mut buf = BytesMut::with_capacity(256);
         message.write_to(&mut buf);
@@ -405,7 +540,7 @@ impl InvocationService {
     ) -> Result<ClientMessage> {
         let corr_id = message.correlation_id().unwrap_or(0);
         let (tx, rx) = oneshot::channel();
-        self.pending_ops.insert(corr_id, tx);
+        self.pending_ops.insert(corr_id, PendingOp::new(tx));
         if let Err(e) = self.send_raw_pinned(address, &mut message).await {
             self.pending_ops.remove(&corr_id);
             return Err(e);
@@ -418,13 +553,7 @@ impl InvocationService {
                     "response channel dropped".to_string(),
                 ))
             }
-            Err(_) => {
-                self.pending_ops.remove(&corr_id);
-                Err(HazelcastError::Timeout(format!(
-                    "invocation timed out after {:?}",
-                    self.timeout
-                )))
-            }
+            Err(_) => self.on_invoke_timeout(corr_id),
         }
     }
 
@@ -442,6 +571,9 @@ impl InvocationService {
             (conn.writer.clone(), conn.inflight.clone())
         };
         inflight.insert(corr_id, ());
+        if let Some(mut e) = self.pending_ops.get_mut(&corr_id) {
+            e.inflight = Some(inflight.clone());
+        }
         let mut buf = BytesMut::with_capacity(256);
         message.write_to(&mut buf);
         let mut w = writer.lock().await;
@@ -567,7 +699,7 @@ mod tests {
     /// invocation timeout. Backed by an in-memory duplex so no cluster is needed.
     #[tokio::test]
     async fn in_flight_op_fails_fast_on_connection_teardown() {
-        let svc = InvocationService::new(Duration::from_secs(30));
+        let svc = InvocationService::new(Duration::from_secs(30), true);
         let addr: SocketAddr = "127.0.0.1:65000".parse().unwrap();
 
         // `client_io` is the client end; `server_io` is the peer. Splitting the
