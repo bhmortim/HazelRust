@@ -51,10 +51,16 @@ pub async fn run_closed(
         loop {
             let now = Instant::now();
             if now >= measure_end {
-                samples.push((now.duration_since(start).as_secs_f64(), mon_counter.load(Ordering::Relaxed)));
+                samples.push((
+                    now.duration_since(start).as_secs_f64(),
+                    mon_counter.load(Ordering::Relaxed),
+                ));
                 break;
             }
-            samples.push((now.duration_since(start).as_secs_f64(), mon_counter.load(Ordering::Relaxed)));
+            samples.push((
+                now.duration_since(start).as_secs_f64(),
+                mon_counter.load(Ordering::Relaxed),
+            ));
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         samples
@@ -107,7 +113,11 @@ pub async fn run_closed(
         errors += e;
     }
     let samples = monitor.await?;
-    let series = per_second_series(&samples, warmup.as_secs_f64(), (warmup + measure).as_secs_f64());
+    let series = per_second_series(
+        &samples,
+        warmup.as_secs_f64(),
+        (warmup + measure).as_secs_f64(),
+    );
 
     Ok(RunResult {
         hist: merged,
@@ -217,7 +227,9 @@ pub async fn run_open(
             handle.spawn(async move {
                 let _permit = permit;
                 let res = h.exec(plan).await;
-                let lat = Instant::now().saturating_duration_since(scheduled).as_nanos() as u64;
+                let lat = Instant::now()
+                    .saturating_duration_since(scheduled)
+                    .as_nanos() as u64;
                 let code = match &res {
                     Ok(()) => Ok(()),
                     Err(e) => Err(classify_code(e)),

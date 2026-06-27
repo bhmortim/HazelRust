@@ -509,16 +509,16 @@ impl InvocationService {
                 if let Some(f) = msg.initial_frame() {
                     let off = EVENT_BACKUP_SOURCE_CORRELATION_OFFSET;
                     if f.content.len() >= off + 8 {
-                        let src = i64::from_le_bytes(
-                            f.content[off..off + 8].try_into().unwrap(),
-                        );
+                        let src = i64::from_le_bytes(f.content[off..off + 8].try_into().unwrap());
                         Self::deliver_backup_ack(&pending, src);
                     }
                 }
             });
         let request =
             ClientMessage::create_for_encode(CLIENT_LOCAL_BACKUP_LISTENER, PARTITION_ID_ANY);
-        self.invoke_listener(address, request, handler).await.map(|_| ())
+        self.invoke_listener(address, request, handler)
+            .await
+            .map(|_| ())
     }
 
     /// Records one backup ack for `src_corr`; completes the op iff the owner

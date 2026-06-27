@@ -46,7 +46,11 @@ async fn test_atomic_long_concurrent_increments_no_lost_updates() {
         h.await.expect("join task");
     }
 
-    let total = client.get_atomic_long(&name).get().await.expect("final get");
+    let total = client
+        .get_atomic_long(&name)
+        .get()
+        .await
+        .expect("final get");
     assert_eq!(
         total,
         TASKS * PER_TASK,
@@ -95,7 +99,11 @@ async fn test_atomic_long_concurrent_cas_exactly_one_winner() {
         1,
         "exactly one concurrent CAS(0 -> id) must win (linearizable single-writer)"
     );
-    let final_v = client.get_atomic_long(&name).get().await.expect("final get");
+    let final_v = client
+        .get_atomic_long(&name)
+        .get()
+        .await
+        .expect("final get");
     assert!(
         (1..=CONTENDERS).contains(&final_v),
         "final value must be the winning contender's id, got {final_v}"

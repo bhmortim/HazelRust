@@ -85,8 +85,7 @@ pub async fn ensure_repmap_seeded(
     ws: u64,
     seed: u64,
 ) -> Result<ReplicatedMap<i64, Vec<u8>>> {
-    let rep: ReplicatedMap<i64, Vec<u8>> =
-        client.get_replicated_map(&repmap_name(value_size, ws));
+    let rep: ReplicatedMap<i64, Vec<u8>> = client.get_replicated_map(&repmap_name(value_size, ws));
     if rep.size().await? as u64 >= ws {
         return Ok(rep);
     }
@@ -149,9 +148,7 @@ impl Planner {
     pub fn new(cell: &Cell, worker_id: u32, seed: u64) -> Planner {
         let ws = cell.working_set.max(1);
         let dist = Dist::new(&cell.distribution, ws, cell.zipf_theta);
-        let wseed = seed
-            ^ (worker_id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            ^ fnv1a(&cell.id);
+        let wseed = seed ^ (worker_id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ fnv1a(&cell.id);
         Planner {
             cell: cell.clone(),
             rng: SplitMix64::new(wseed),
@@ -196,7 +193,11 @@ impl Planner {
             }
             ("imap", "get") => {
                 let i = self.idx();
-                let k = if self.cell.variant == "miss" { i + self.ws } else { i };
+                let k = if self.cell.variant == "miss" {
+                    i + self.ws
+                } else {
+                    i
+                };
                 Plan::ImapGet(key_i64(k))
             }
             ("imap", "contains_key") => Plan::ImapContains(key_i64(self.idx())),
@@ -261,7 +262,11 @@ impl Planner {
             }
             ("replicatedmap", "get") => {
                 let i = self.idx();
-                let k = if self.cell.variant == "miss" { i + self.ws } else { i };
+                let k = if self.cell.variant == "miss" {
+                    i + self.ws
+                } else {
+                    i
+                };
                 Plan::RepGet(key_i64(k))
             }
             (s, o) => panic!("planner: unsupported op {s}.{o}"),
@@ -291,7 +296,11 @@ impl Handles {
         let ws = cell.working_set.max(1);
         let mut h = Handles {
             is_rmw: cell.op == "mixed"
-                && cell.mix.as_ref().map(|m| m.contains_key("rmw")).unwrap_or(false),
+                && cell
+                    .mix
+                    .as_ref()
+                    .map(|m| m.contains_key("rmw"))
+                    .unwrap_or(false),
             imap: None,
             cpmap: None,
             al: None,

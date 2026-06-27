@@ -11,7 +11,7 @@ use std::time::Duration;
 use bytes::BytesMut;
 use hazelcast_core::protocol::constants::*;
 use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, HazelcastError, Result};
+use hazelcast_core::{ClientMessage, Result};
 use tokio::sync::OnceCell;
 
 use crate::cluster::CPSessionManager;

@@ -95,7 +95,11 @@ pub fn classify_code(e: &anyhow::Error) -> u8 {
     let s = e.to_string().to_lowercase();
     if s.contains("timeout") || s.contains("timed out") {
         1
-    } else if s.contains("connection") || s.contains("connect") || s.contains("closed") || s.contains("disconnect") {
+    } else if s.contains("connection")
+        || s.contains("connect")
+        || s.contains("closed")
+        || s.contains("disconnect")
+    {
         2
     } else if s.contains("exception") || s.contains("server") || s.contains("hazelcast") {
         3

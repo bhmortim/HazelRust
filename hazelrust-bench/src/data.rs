@@ -81,9 +81,15 @@ impl Zipf {
         let zetan = zeta(n, theta);
         let zeta2 = zeta(2, theta);
         let alpha = 1.0 / (1.0 - theta);
-        let eta =
-            (1.0 - (2.0 / n as f64).powf(1.0 - theta)) / (1.0 - zeta2 / zetan);
-        Self { n, theta, alpha, zetan, eta, zeta2 }
+        let eta = (1.0 - (2.0 / n as f64).powf(1.0 - theta)) / (1.0 - zeta2 / zetan);
+        Self {
+            n,
+            theta,
+            alpha,
+            zetan,
+            eta,
+            zeta2,
+        }
     }
 
     #[inline]

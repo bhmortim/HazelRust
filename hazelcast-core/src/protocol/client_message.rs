@@ -679,8 +679,12 @@ mod tests {
         // correlation id, so the two encodings must come from the same instance).
         let mut msg = ClientMessage::create_for_encode(0x0102, 7);
         msg.add_frame(Frame::with_content(BytesMut::from(&b"bench-map"[..])));
-        msg.add_frame(Frame::with_content(BytesMut::from(&[0u8, 1, 2, 3, 4, 5, 6, 7][..])));
-        msg.add_frame(Frame::with_content(BytesMut::from(&vec![0xABu8; 16384][..])));
+        msg.add_frame(Frame::with_content(BytesMut::from(
+            &[0u8, 1, 2, 3, 4, 5, 6, 7][..],
+        )));
+        msg.add_frame(Frame::with_content(BytesMut::from(
+            &vec![0xABu8; 16384][..],
+        )));
 
         // Reference: the existing concatenating encoder (on a clone).
         let mut reference = BytesMut::new();
@@ -694,7 +698,11 @@ mod tests {
             assembled.extend_from_slice(&headers[h..h + FRAME_HEADER_SIZE]);
             assembled.extend_from_slice(&f.content);
         }
-        assert_eq!(&assembled[..], &reference[..], "into_segments wire bytes differ from write_to");
+        assert_eq!(
+            &assembled[..],
+            &reference[..],
+            "into_segments wire bytes differ from write_to"
+        );
 
         // Single-frame message (e.g. a poll: just the header frame).
         let single = ClientMessage::create_for_encode(0x0103, 1);

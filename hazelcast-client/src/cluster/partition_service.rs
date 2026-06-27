@@ -1,6 +1,6 @@
 //! Partition service for querying cluster partition information.
 
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::sync::Arc;
 
 use tokio::sync::broadcast;

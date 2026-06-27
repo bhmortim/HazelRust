@@ -33,7 +33,11 @@ async fn test_atomic_long_money_ops_cross_client() {
         .await
         .expect("compare_and_set");
     assert!(cas, "compare_and_set(7370 -> 8000) must succeed");
-    assert_eq!(along.get().await.expect("get"), 8000, "value after CAS must be 8000");
+    assert_eq!(
+        along.get().await.expect("get"),
+        8000,
+        "value after CAS must be 8000"
+    );
 
     eprintln!("RUST_ALONG_8000");
     client.shutdown().await.ok();

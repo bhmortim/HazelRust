@@ -22,8 +22,15 @@ async fn roundtrip_of_size(client: &HazelcastClient, n: usize) {
         .await
         .unwrap_or_else(|e| panic!("get of {n}-byte value failed: {e}"))
         .unwrap_or_else(|| panic!("get of {n}-byte value returned None"));
-    assert_eq!(got.len(), value.len(), "{n}-byte value: length mismatch on round-trip");
-    assert_eq!(got, value, "{n}-byte value: content corrupted on round-trip");
+    assert_eq!(
+        got.len(),
+        value.len(),
+        "{n}-byte value: length mismatch on round-trip"
+    );
+    assert_eq!(
+        got, value,
+        "{n}-byte value: content corrupted on round-trip"
+    );
 }
 
 #[tokio::test]

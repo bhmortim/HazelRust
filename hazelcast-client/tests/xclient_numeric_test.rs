@@ -17,7 +17,7 @@ use hazelcast_client::HazelcastClient;
 
 const LONG_V: i64 = 9_223_372_036_854_775_123; // near i64::MAX — a large balance
 const INT_V: i32 = 1_234_567_890;
-const DOUBLE_V: f64 = 3.141_592_653_589_793;
+const DOUBLE_V: f64 = std::f64::consts::PI;
 fn bytes_v() -> Vec<u8> {
     vec![1u8, 2, 3, 254, 255]
 }
