@@ -52,6 +52,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # rdkafka-sys compiles a vendored librdkafka from source via cmake and links
+      # against system SASL/OpenSSL/zlib/curl. Without these -dev packages the build
+      # fails with "libsasl2 not found" / "curl/curl.h: No such file or directory".
+      - name: Install native build dependencies (rdkafka)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            libsasl2-dev libssl-dev zlib1g-dev libcurl4-openssl-dev
       # Pulls native deps (rdkafka) and large cloud SDKs; kept non-blocking until
       # the matrix of optional features is known-good on Linux runners.
       - name: cargo build --workspace --all-features --locked
