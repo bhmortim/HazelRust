@@ -80,6 +80,16 @@ IMPROVEMENTS = [
      "delta": "+61%", "commit": "d0eba24", "detail": None},
     {"short": "Coalescing writer task", "op": "IMap.get", "before": 270, "after": 302,
      "delta": "+12%", "commit": "d0eba24", "detail": None},
+    {"short": "Leaner completion + List/Topic cache", "op": "high concurrency", "before": None,
+     "after": None, "delta": "less per-op work", "commit": "d72a480",
+     "detail": "The response-completion hot path now does one map lookup per response instead of "
+               "two (helps the lead at C256), and the single-partition id cache was extended to "
+               "IList and ITopic."},
+    {"short": "Vectored zero-copy writes", "op": "IMap.put (large)", "before": None, "after": None,
+     "delta": "put@16KB 1.01 -> 1.10 R/J", "commit": "58cc26d",
+     "detail": "The writer issues a single writev over frame slices instead of concatenating, "
+               "removing the per-value send-buffer memcpy. IMap.put at 16KB went from parity to "
+               "+10% vs Java; every large write drops a copy (lower client CPU)."},
 ]
 
 
