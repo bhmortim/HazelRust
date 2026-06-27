@@ -346,20 +346,20 @@ impl InvocationService {
                         // the backup applying, the op may be lost (weaker RPO). Set
                         // backup_ack_to_client(false) for strong (wait-for-backup)
                         // durability.
-                        let mut done = None;
-                        if let Some(mut e) = pending_ops.get_mut(&corr_id) {
-                            if let Some(tx) = e.tx.take() {
-                                done = Some((tx, msg, e.inflight.clone()));
+                        // Single removal: take the PendingOp out in ONE hash + shard-lock
+                        // (was get_mut + remove = two lookups per response). The owner
+                        // response completes the op (shouldCompleteWithoutBackups), so
+                        // removing here is correct; a late backup ack for this id then
+                        // finds nothing in pending_ops and harmlessly no-ops.
+                        if let Some((_, mut op)) = pending_ops.remove(&corr_id) {
+                            if let Some(tx) = op.tx.take() {
+                                if let Some(i) = op.inflight {
+                                    i.remove(&corr_id);
+                                } else {
+                                    inflight.remove(&corr_id);
+                                }
+                                let _ = tx.send(Ok(msg));
                             }
-                        }
-                        if let Some((tx, resp, owner_inflight)) = done {
-                            pending_ops.remove(&corr_id);
-                            if let Some(i) = owner_inflight {
-                                i.remove(&corr_id);
-                            } else {
-                                inflight.remove(&corr_id);
-                            }
-                            let _ = tx.send(Ok(resp));
                         }
                         // Unmatched non-event responses are discarded.
                     }

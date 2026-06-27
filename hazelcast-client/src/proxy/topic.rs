@@ -2,7 +2,7 @@
 
 use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -206,6 +206,10 @@ pub struct ITopic<T> {
     connection_manager: Arc<ConnectionManager>,
     stats: Arc<ListenerStats>,
     local_stats: Arc<TopicStatsTracker>,
+    /// Cached partition id (-1 = not yet computed). ITopic ops route to the
+    /// name's partition owner, which is constant — computed once instead of
+    /// re-serializing the name on every publish.
+    cached_partition: AtomicI32,
     _phantom: PhantomData<fn() -> T>,
 }
 
@@ -217,6 +221,7 @@ impl<T> ITopic<T> {
             connection_manager,
             stats: Arc::new(ListenerStats::new()),
             local_stats: Arc::new(TopicStatsTracker::new()),
+            cached_partition: AtomicI32::new(-1),
             _phantom: PhantomData,
         }
     }
@@ -468,9 +473,14 @@ where
     /// Partition id for this topic, derived from the topic name (Hazelcast routes
     /// ITopic operations to the name's partition owner).
     fn name_partition_id(&self) -> i32 {
-        let count = self.connection_manager.partition_count();
-        let count = if count > 0 { count } else { 271 };
-        match Self::serialize_value(&self.name) {
+        let cached = self.cached_partition.load(Ordering::Relaxed);
+        if cached >= 0 {
+            return cached;
+        }
+        let raw_count = self.connection_manager.partition_count();
+        let known = raw_count > 0;
+        let count = if known { raw_count } else { 271 };
+        let pid = match Self::serialize_value(&self.name) {
             Ok(d) => {
                 let payload = if d.len() > 8 { &d[8..] } else { &d[..] };
                 hazelcast_core::partition_id_for_hash(
@@ -479,7 +489,11 @@ where
                 )
             }
             Err(_) => 0,
+        };
+        if known {
+            self.cached_partition.store(pid, Ordering::Relaxed);
         }
+        pid
     }
 
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
@@ -544,6 +558,7 @@ impl<T> Clone for ITopic<T> {
             connection_manager: Arc::clone(&self.connection_manager),
             stats: Arc::clone(&self.stats),
             local_stats: Arc::clone(&self.local_stats),
+            cached_partition: AtomicI32::new(self.cached_partition.load(Ordering::Relaxed)),
             _phantom: PhantomData,
         }
     }
