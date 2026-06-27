@@ -4,7 +4,7 @@ use libfuzzer_sys::fuzz_target;
 
 use hazelcast_core::serialization::compact::{
     Compact, CompactReader, CompactSerializer, CompactWriter, DefaultCompactReader,
-    FieldDescriptor, FieldKind, Schema,
+    DefaultCompactWriter, FieldDescriptor, FieldKind, Schema,
 };
 use hazelcast_core::Result;
 
@@ -26,7 +26,7 @@ impl Compact for FuzzCompact {
         "FuzzCompact"
     }
 
-    fn write(&self, writer: &mut dyn CompactWriter) -> Result<()> {
+    fn write(&self, writer: &mut DefaultCompactWriter) -> Result<()> {
         writer.write_boolean("bool", self.bool_val)?;
         writer.write_int8("int8", self.int8_val)?;
         writer.write_int16("int16", self.int16_val)?;
@@ -39,7 +39,7 @@ impl Compact for FuzzCompact {
         Ok(())
     }
 
-    fn read(&mut self, reader: &mut dyn CompactReader) -> Result<()> {
+    fn read(&mut self, reader: &mut DefaultCompactReader) -> Result<()> {
         self.bool_val = reader.read_boolean("bool")?;
         self.int8_val = reader.read_int8("int8")?;
         self.int16_val = reader.read_int16("int16")?;

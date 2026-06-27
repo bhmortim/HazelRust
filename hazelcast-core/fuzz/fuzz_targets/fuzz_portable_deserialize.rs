@@ -4,8 +4,8 @@ use libfuzzer_sys::fuzz_target;
 use std::sync::Arc;
 
 use hazelcast_core::serialization::portable::{
-    ClassDefinition, FieldDefinition, FieldType, Portable, PortableFactory, PortableReader,
-    PortableSerializer, PortableWriter,
+    ClassDefinition, DefaultPortableReader, DefaultPortableWriter, FieldDefinition, FieldType,
+    Portable, PortableFactory, PortableReader, PortableSerializer, PortableWriter,
 };
 use hazelcast_core::Result;
 
@@ -30,7 +30,7 @@ impl Portable for FuzzPortable {
         1
     }
 
-    fn write_portable(&self, writer: &mut dyn PortableWriter) -> Result<()> {
+    fn write_portable(&self, writer: &mut DefaultPortableWriter) -> Result<()> {
         writer.write_byte("byte", self.byte_val)?;
         writer.write_bool("bool", self.bool_val)?;
         writer.write_short("short", self.short_val)?;
@@ -42,7 +42,7 @@ impl Portable for FuzzPortable {
         Ok(())
     }
 
-    fn read_portable(&mut self, reader: &mut dyn PortableReader) -> Result<()> {
+    fn read_portable(&mut self, reader: &mut DefaultPortableReader) -> Result<()> {
         self.byte_val = reader.read_byte("byte")?;
         self.bool_val = reader.read_bool("bool")?;
         self.short_val = reader.read_short("short")?;

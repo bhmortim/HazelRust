@@ -7,7 +7,7 @@ use hazelcast_core::protocol::Frame;
 
 fuzz_target!(|data: &[u8]| {
     let mut buf = BytesMut::from(data);
-    
+
     while !buf.is_empty() {
         match Frame::read_from(&mut buf) {
             Some(frame) => {
