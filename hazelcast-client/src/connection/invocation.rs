@@ -8,6 +8,7 @@
 //! to reduce write-Mutex contention under high concurrency.
 
 use std::collections::HashSet;
+use std::io::IoSlice;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -35,16 +36,26 @@ type BoxedRead = Box<dyn AsyncRead + Send + Unpin>;
 /// of it on a single connection's break would wrongly abort other members' ops.
 type InFlight = Arc<DashMap<i64, ()>>;
 
+/// A message ready for the writer task: the (small) per-frame headers plus the
+/// owned frames. The writer references each frame's content in place via
+/// `IoSlice` for a zero-copy vectored write (no per-value `put_slice` copy);
+/// over a transport without vectored support (TLS) it concatenates instead.
+struct Outbound {
+    headers: BytesMut,
+    frames: Vec<Frame>,
+}
+
 /// A single pooled connection: a sender to its dedicated writer task plus the
 /// set of correlation ids it has dispatched and is still awaiting responses for.
 struct PooledConn {
     /// Requests are pushed here; one writer task per connection drains the
-    /// channel and coalesces all immediately-available buffers into a single
-    /// socket write (batched IO, like the Java client's IO thread), instead of
-    /// each op locking a shared writer and issuing its own write syscall. This
-    /// is what lets a single connection (e.g. a single-partition IQueue/ISet)
-    /// pipeline efficiently under high concurrency.
-    outbound: mpsc::UnboundedSender<BytesMut>,
+    /// channel and coalesces all immediately-available messages into a single
+    /// vectored socket write (batched, zero-copy IO — like the Java client's IO
+    /// thread), instead of each op locking a shared writer and issuing its own
+    /// write syscall. This lets a single connection (e.g. a single-partition
+    /// IQueue/ISet) pipeline efficiently under high concurrency, and avoids
+    /// copying large values into a send buffer.
+    outbound: mpsc::UnboundedSender<Outbound>,
     inflight: InFlight,
 }
 
@@ -193,8 +204,8 @@ impl InvocationService {
         let inflight: InFlight = Arc::new(DashMap::new());
         // Channel feeding this connection's dedicated writer task. Unbounded is
         // safe: outstanding depth is bounded by the client's concurrency (each
-        // in-flight op has at most one queued buffer).
-        let (outbound, write_rx) = mpsc::unbounded_channel::<BytesMut>();
+        // in-flight op has at most one queued message).
+        let (outbound, write_rx) = mpsc::unbounded_channel::<Outbound>();
 
         // Add connection to pool (create pool if first connection for this address)
         match self.pools.entry(address) {
@@ -263,39 +274,71 @@ impl InvocationService {
     async fn writer_loop(
         address: SocketAddr,
         mut write: BoxedWrite,
-        mut rx: mpsc::UnboundedReceiver<BytesMut>,
+        mut rx: mpsc::UnboundedReceiver<Outbound>,
     ) {
-        // Cap a coalesced batch so a burst of large payloads can't build an
-        // unbounded buffer (bounds memory + per-write latency).
-        const MAX_BATCH_BYTES: usize = 1 << 20; // 1 MiB
-        let mut batch = BytesMut::new();
+        // Cap messages coalesced per write so a burst can't build an unbounded
+        // IoSlice list (kept well under IOV_MAX) or concat buffer.
+        const MAX_BATCH_MSGS: usize = 128;
+        // Vectored writes (writev) reference frame contents in place, avoiding a
+        // copy of large values into a send buffer. Only the plaintext TCP half
+        // (OwnedWriteHalf) reports vectored support; the TLS half does not, so we
+        // fall back to concatenation there.
+        let vectored = write.is_write_vectored();
+        let mut concat = BytesMut::new();
         while let Some(first) = rx.recv().await {
-            // Fast path: nothing else queued — write the single buffer directly,
-            // avoiding a copy into the batch.
-            match rx.try_recv() {
-                Err(_) => {
-                    if let Err(e) = write.write_all(&first).await {
-                        tracing::warn!(address = %address, error = %e, "writer I/O error");
-                        break;
-                    }
-                }
-                Ok(second) => {
-                    batch.clear();
-                    batch.extend_from_slice(&first);
-                    batch.extend_from_slice(&second);
-                    while batch.len() < MAX_BATCH_BYTES {
-                        match rx.try_recv() {
-                            Ok(more) => batch.extend_from_slice(&more),
-                            Err(_) => break,
-                        }
-                    }
-                    if let Err(e) = write.write_all(&batch).await {
-                        tracing::warn!(address = %address, error = %e, "writer I/O error");
-                        break;
-                    }
+            let mut pending: Vec<Outbound> = Vec::with_capacity(8);
+            pending.push(first);
+            while pending.len() < MAX_BATCH_MSGS {
+                match rx.try_recv() {
+                    Ok(o) => pending.push(o),
+                    Err(_) => break,
                 }
             }
+            let res = if vectored {
+                Self::write_pending_vectored(&mut write, &pending).await
+            } else {
+                concat.clear();
+                for o in &pending {
+                    for (i, f) in o.frames.iter().enumerate() {
+                        let h = i * FRAME_HEADER_SIZE;
+                        concat.extend_from_slice(&o.headers[h..h + FRAME_HEADER_SIZE]);
+                        concat.extend_from_slice(&f.content);
+                    }
+                }
+                write.write_all(&concat).await
+            };
+            if let Err(e) = res {
+                tracing::warn!(address = %address, error = %e, "writer I/O error");
+                break;
+            }
         }
+    }
+
+    /// Gather-write every pending message (per-frame header + content) with a
+    /// single `writev`, referencing the frame bytes in place — no per-value
+    /// copy. Loops on partial writes, advancing past the bytes the kernel took.
+    async fn write_pending_vectored(
+        write: &mut BoxedWrite,
+        pending: &[Outbound],
+    ) -> std::io::Result<()> {
+        let cap: usize = pending.iter().map(|o| o.frames.len() * 2).sum();
+        let mut slices: Vec<IoSlice> = Vec::with_capacity(cap);
+        for o in pending {
+            for (i, f) in o.frames.iter().enumerate() {
+                let h = i * FRAME_HEADER_SIZE;
+                slices.push(IoSlice::new(&o.headers[h..h + FRAME_HEADER_SIZE]));
+                slices.push(IoSlice::new(&f.content));
+            }
+        }
+        let mut remaining: &mut [IoSlice] = &mut slices;
+        while !remaining.is_empty() {
+            let n = write.write_vectored(remaining).await?;
+            if n == 0 {
+                return Err(std::io::ErrorKind::WriteZero.into());
+            }
+            IoSlice::advance_slices(&mut remaining, n);
+        }
+        Ok(())
     }
 
     /// Background reader loop that decodes messages and routes to pending ops.
@@ -506,7 +549,7 @@ impl InvocationService {
     pub async fn invoke(
         &self,
         address: SocketAddr,
-        mut message: ClientMessage,
+        message: ClientMessage,
     ) -> Result<ClientMessage> {
         let corr_id = message.correlation_id().unwrap_or(0);
 
@@ -515,7 +558,7 @@ impl InvocationService {
         self.pending_ops.insert(corr_id, PendingOp::new(tx));
 
         // Send the message (corr_id already parsed — passed down, not re-read)
-        if let Err(e) = self.send_raw(address, corr_id, &mut message).await {
+        if let Err(e) = self.send_raw(address, corr_id, message).await {
             self.pending_ops.remove(&corr_id);
             return Err(e);
         }
@@ -564,7 +607,7 @@ impl InvocationService {
         &self,
         address: SocketAddr,
         corr_id: i64,
-        message: &mut ClientMessage,
+        message: ClientMessage,
     ) -> Result<()> {
         let (outbound, inflight) = {
             let pool_ref = self.pools.get(&address).ok_or_else(|| {
@@ -582,15 +625,12 @@ impl InvocationService {
             e.inflight = Some(inflight.clone());
         }
 
-        // Pre-size from the exact encoded size (avoids the mid-serialize realloc
-        // that BytesMut::with_capacity(256) hits for any payload over ~250 B).
-        let mut buf = BytesMut::with_capacity(message.wire_size());
-        message.write_to(&mut buf);
-
-        // Hand the buffer to the connection's writer task, which coalesces it
-        // with any other queued buffers into one socket write. Send only fails
-        // if the writer task is gone (connection torn down).
-        if outbound.send(buf).is_err() {
+        // Zero-copy: split into small per-frame headers + the owned frames. The
+        // writer task references frame contents in place via IoSlice (no copy of
+        // the value) and coalesces queued messages into one writev. Send only
+        // fails if the writer task is gone (connection torn down).
+        let (headers, frames) = message.into_segments();
+        if outbound.send(Outbound { headers, frames }).is_err() {
             inflight.remove(&corr_id);
             return Err(HazelcastError::Connection(format!(
                 "connection to {} closed before send",
@@ -606,12 +646,12 @@ impl InvocationService {
     pub async fn invoke_pinned(
         &self,
         address: SocketAddr,
-        mut message: ClientMessage,
+        message: ClientMessage,
     ) -> Result<ClientMessage> {
         let corr_id = message.correlation_id().unwrap_or(0);
         let (tx, rx) = oneshot::channel();
         self.pending_ops.insert(corr_id, PendingOp::new(tx));
-        if let Err(e) = self.send_raw_pinned(address, corr_id, &mut message).await {
+        if let Err(e) = self.send_raw_pinned(address, corr_id, message).await {
             self.pending_ops.remove(&corr_id);
             return Err(e);
         }
@@ -631,7 +671,7 @@ impl InvocationService {
         &self,
         address: SocketAddr,
         corr_id: i64,
-        message: &mut ClientMessage,
+        message: ClientMessage,
     ) -> Result<()> {
         let (outbound, inflight) = {
             let pool_ref = self.pools.get(&address).ok_or_else(|| {
@@ -644,11 +684,10 @@ impl InvocationService {
         if let Some(mut e) = self.pending_ops.get_mut(&corr_id) {
             e.inflight = Some(inflight.clone());
         }
-        let mut buf = BytesMut::with_capacity(message.wire_size());
-        message.write_to(&mut buf);
         // Pinned ops (transactions) go to the first connection's writer task; the
         // channel preserves FIFO order, so the txn's request sequence is kept.
-        if outbound.send(buf).is_err() {
+        let (headers, frames) = message.into_segments();
+        if outbound.send(Outbound { headers, frames }).is_err() {
             inflight.remove(&corr_id);
             return Err(HazelcastError::Connection(format!(
                 "connection to {} closed before send",

@@ -224,6 +224,26 @@ impl ClientMessage {
         }
     }
 
+    /// Consumes the message into `(headers, frames)` for a zero-copy vectored
+    /// write. Sets `IS_FINAL_FLAG` on the last frame exactly like [`write_to`].
+    /// `headers[i*FRAME_HEADER_SIZE .. (i+1)*FRAME_HEADER_SIZE]` is frame `i`'s
+    /// on-wire `[length_le(4), flags_le(2)]` header; the frame *contents* are
+    /// returned untouched so the writer can reference them in place via
+    /// `IoSlice` (avoiding the per-frame `put_slice` copy that `write_to` does).
+    /// Concatenating `headers[i]` followed by `frames[i].content` for every `i`
+    /// yields bytes identical to `write_to`.
+    pub fn into_segments(mut self) -> (BytesMut, Vec<Frame>) {
+        if let Some(last) = self.frames.last_mut() {
+            last.flags |= IS_FINAL_FLAG;
+        }
+        let mut headers = BytesMut::with_capacity(self.frames.len() * FRAME_HEADER_SIZE);
+        for f in &self.frames {
+            headers.put_u32_le((FRAME_HEADER_SIZE + f.content.len()) as u32);
+            headers.put_u16_le(f.flags);
+        }
+        (headers, self.frames)
+    }
+
     /// Returns true if this message is a request (has partition ID field).
     pub fn is_request(&self) -> bool {
         self.frames
@@ -649,5 +669,44 @@ mod tests {
 
         assert_eq!(msg.message_type(), Some(MAP_GET));
         assert_eq!(msg.partition_id(), Some(PARTITION_ID_ANY));
+    }
+
+    #[test]
+    fn test_into_segments_matches_write_to_byte_for_byte() {
+        // Build a representative multi-frame request (header + name + key + value),
+        // like IMap.put, with a large value to exercise the zero-copy path.
+        // Build ONE message (create_for_encode auto-increments the global
+        // correlation id, so the two encodings must come from the same instance).
+        let mut msg = ClientMessage::create_for_encode(0x0102, 7);
+        msg.add_frame(Frame::with_content(BytesMut::from(&b"bench-map"[..])));
+        msg.add_frame(Frame::with_content(BytesMut::from(&[0u8, 1, 2, 3, 4, 5, 6, 7][..])));
+        msg.add_frame(Frame::with_content(BytesMut::from(&vec![0xABu8; 16384][..])));
+
+        // Reference: the existing concatenating encoder (on a clone).
+        let mut reference = BytesMut::new();
+        msg.clone().write_to(&mut reference);
+
+        // Zero-copy: headers + frame contents, reassembled in order, must match.
+        let (headers, frames) = msg.into_segments();
+        let mut assembled = BytesMut::new();
+        for (i, f) in frames.iter().enumerate() {
+            let h = i * FRAME_HEADER_SIZE;
+            assembled.extend_from_slice(&headers[h..h + FRAME_HEADER_SIZE]);
+            assembled.extend_from_slice(&f.content);
+        }
+        assert_eq!(&assembled[..], &reference[..], "into_segments wire bytes differ from write_to");
+
+        // Single-frame message (e.g. a poll: just the header frame).
+        let single = ClientMessage::create_for_encode(0x0103, 1);
+        let mut r2 = BytesMut::new();
+        single.clone().write_to(&mut r2);
+        let (h2, f2) = single.into_segments();
+        let mut a2 = BytesMut::new();
+        for (i, f) in f2.iter().enumerate() {
+            let h = i * FRAME_HEADER_SIZE;
+            a2.extend_from_slice(&h2[h..h + FRAME_HEADER_SIZE]);
+            a2.extend_from_slice(&f.content);
+        }
+        assert_eq!(&a2[..], &r2[..]);
     }
 }
