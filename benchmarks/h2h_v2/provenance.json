@@ -1,0 +1,36 @@
+{
+  "benchmark": "HazelRust vs official Hazelcast Java client",
+  "commit": "d0eba24",
+  "cluster_name": "dev",
+  "cluster": "127.0.0.1:5701,127.0.0.1:5702,127.0.0.1:5703",
+  "cluster_topology": "3-node EE 5.7.0 (dev), -Xms512m -Xmx1g per member",
+  "hz_java_client_version": "5.7.0",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "java": "openjdk version \"21.0.11\" 2026-04-21 LTS",
+  "cargo_profile": "release (opt-level=3, lto=false, codegen-units=16)",
+  "cpu_model": "Intel(R) Xeon(R) Platinum 8275CL CPU @ 3.00GHz",
+  "logical_cpus": "16",
+  "cpu_mhz": {
+    "min": 3591.849,
+    "max": 3610.263,
+    "mean": 3600.865
+  },
+  "governor": "unavailable (virtualized guest; frequency managed by hypervisor)",
+  "kernel": "Linux ip-172-31-40-82.us-east-2.compute.internal 6.1.175-219.357.amzn2023.x86_64 #1 SMP PREEMPT_DYNAMIC Tue Jun 16 03:47:47 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+  "pinning": {
+    "members": "0-3,8-11",
+    "client": "4-6,12-14",
+    "os": "7,15",
+    "applied": true,
+    "member_cpuset_observed": {
+      "hz1": "0-3,8-11",
+      "hz2": "0-3,8-11",
+      "hz3": "0-3,8-11"
+    }
+  },
+  "colocation_caveat": "Cluster and client are CO-LOCATED on one AWS instance. Members and client are pinned to DISJOINT core sets, but they share L3, memory bandwidth, and the NIC/loopback. Absolute numbers may differ from a 2-machine LAN setup; the Rust/Java COMPARISON is fair (identical conditions).",
+  "jfr": false,
+  "ts_unix_ms": 1782511360527,
+  "java_client_edition": "enterprise 5.7.0 (instance ~/hzlib jar; required for CP)",
+  "license_source": "instance ~/hz/hz1.yaml (not logged)"
+}
