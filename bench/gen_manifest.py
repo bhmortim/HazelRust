@@ -53,6 +53,12 @@ TIERS = {
     # the 5x3 ideal); warmup is kept >=12 s so the Java JIT reaches steady state.
     "h2h": dict(forks=3, trials=2, warmup_s=12, measure_s=12, min_ops=300_000,
                 open_loop=True),
+    # Seven realistic, named load scenarios for the client head-to-head report
+    # (see gen_scenarios): six closed-loop workloads + one open-loop tail
+    # scenario. forks=3 x trials=3 (n=9) for tight bootstrap CIs; warmup>=12 s so
+    # the Java JIT reaches steady state before the measured window.
+    "scenarios": dict(forks=3, trials=3, warmup_s=12, measure_s=15, min_ops=300_000,
+                      open_loop=True),
 }
 
 # Open-loop target rates as a fraction of the measured closed-loop max
@@ -276,11 +282,59 @@ def gen_h2h():
     return cells
 
 
+def gen_scenarios():
+    """Seven realistic, named load scenarios for the head-to-head client report.
+
+    Six closed-loop workloads spanning the shapes a real service mixes — read-heavy
+    cache, write-heavy ingest, replicated reference data, balanced OLTP, CP
+    coordination, and queueing — plus one open-loop, coordinated-omission-correct
+    tail-under-load scenario derived from the read-heavy mix. Every cell is driven
+    bit-for-bit identically by both clients (SplitMix64 + YCSB Zipfian)."""
+    cfg = TIERS["scenarios"]
+    td = dict(warmup_s=cfg["warmup_s"], measure_s=cfg["measure_s"],
+              forks=cfg["forks"], trials=cfg["trials"], min_ops=cfg["min_ops"])
+    cells = []
+
+    def add(suite, struct, op, variant, c, vs, dist, mix=None, kt="i64", vk="bytes", ws=None):
+        wsv = ws if ws is not None else ws_for(vs)
+        cells.append(cell(suite=suite, structure=struct, op=op, variant=variant,
+                          key_type=kt, value_kind=vk, value_size=vs, working_set=wsv,
+                          concurrency=c, load_model="closed", distribution=dist, mix=mix, **td))
+
+    # 1. Session store — read-heavy IMap (95/5 get/put), skewed access, 512 B.
+    add("J", "imap", "mixed", "ycsb_b", 64, 512, "zipfian", mix=dict(get=0.95, put=0.05))
+    # 2. Telemetry ingestion — write-heavy IMap put, 1 KB, high concurrency.
+    add("A", "imap", "put", "update", 128, 1024, "uniform")
+    # 3. Reference-data cache — read-mostly fully-replicated map, 512 B.
+    add("C", "replicatedmap", "get", "hit", 64, 512, "zipfian", ws=10_000)
+    # 4. Transactional OLTP — balanced IMap (50/50), skewed access, 512 B.
+    add("J", "imap", "mixed", "ycsb_a", 64, 512, "zipfian", mix=dict(get=0.5, put=0.5))
+    # 5. Rate limiting / counters — CP AtomicLong increments (linearizable, Raft).
+    add("B", "atomiclong", "increment_and_get", "default", 64, 8, "uniform",
+        vk="i64", ws=WORKING_SET_SMALL)
+    # 6. Work queue — IQueue producer/consumer (offer+poll pair), 256 B.
+    add("C", "iqueue", "offer_poll", "default", 64, 256, "uniform", ws=WORKING_SET_SMALL)
+
+    # 7. Latency under sustained load — open-loop (CO-corrected), derived from the
+    #    read-heavy session mix at 50% and 75% of the measured closed-loop max.
+    base = next(c for c in cells if c["op"] == "mixed" and c["variant"] == "ycsb_b")
+    for frac in (0.50, 0.75):
+        cells.append(cell(suite=base["suite"], structure=base["structure"], op=base["op"],
+                          variant=base["variant"], key_type=base["key_type"],
+                          value_kind=base["value_kind"], value_size=base["value_size"],
+                          working_set=base["working_set"], concurrency=256, load_model="open",
+                          rate_group=base["rate_group"], rate_frac=frac,
+                          distribution=base["distribution"], mix=base["mix"], **td))
+    return cells
+
+
 def gen_tier(tier):
     if tier == "headline":
         return gen_headline()
     if tier == "h2h":
         return gen_h2h()
+    if tier == "scenarios":
+        return gen_scenarios()
     cfg = TIERS[tier]
     cells = []
     tdefaults = dict(warmup_s=cfg["warmup_s"], measure_s=cfg["measure_s"],
