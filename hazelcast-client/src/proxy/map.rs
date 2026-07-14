@@ -681,8 +681,7 @@ where
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(value_data) = cache_guard.get(&key_data) {
                 self.stats_tracker.record_hit();
-                let mut input = ObjectDataInput::new(&value_data);
-                return V::deserialize(&mut input).map(Some);
+                return Self::deserialize_cached_value(&value_data).map(Some);
             }
         }
 
@@ -1756,8 +1755,7 @@ where
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(value_data) = cache_guard.get(&key_data) {
-                    let mut input = ObjectDataInput::new(&value_data);
-                    if let Ok(value) = V::deserialize(&mut input) {
+                    if let Ok(value) = Self::deserialize_cached_value(&value_data) {
                         results.insert(key.clone(), value);
                         continue;
                     }
@@ -1825,8 +1823,7 @@ where
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(value_data) = cache_guard.get(&key_data) {
-                    let mut input = ObjectDataInput::new(&value_data);
-                    if let Ok(value) = V::deserialize(&mut input) {
+                    if let Ok(value) = Self::deserialize_cached_value(&value_data) {
                         results[idx] = Some(value);
                         continue;
                     }
@@ -2850,6 +2847,26 @@ where
         output.write_int(value.type_id())?; // Hazelcast constant type id
         value.serialize(&mut output)?;
         Ok(output.into_bytes())
+    }
+
+    /// Deserializes a value cached in the near cache.
+    ///
+    /// Near-cache entries store the full Hazelcast `Data` form produced by
+    /// [`serialize_value`](Self::serialize_value) —
+    /// `[partition_hash: i32][type_id: i32][payload]` — so the 8-byte header
+    /// must be skipped before deserializing, exactly as
+    /// `decode_nullable_response` does for server responses. Deserializing
+    /// from offset 0 silently corrupts every hit (e.g. a cached `Vec<u8>`
+    /// reads the zero partition-hash placeholder as its length and returns
+    /// an empty vec).
+    fn deserialize_cached_value<T: Deserializable>(value_data: &[u8]) -> Result<T> {
+        if value_data.len() < 8 {
+            return Err(HazelcastError::Serialization(
+                "near-cache entry shorter than Data header".to_string(),
+            ));
+        }
+        let mut input = ObjectDataInput::new(&value_data[8..]);
+        T::deserialize(&mut input)
     }
 
     /// Like [`serialize_value`](Self::serialize_value) but returns the serialized
@@ -6154,6 +6171,30 @@ mod tests {
     fn test_imap_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<IMap<String, String>>();
+    }
+
+    /// Regression: near-cache entries are stored in full Data form (8-byte
+    /// header + payload); the hit path must skip the header. Deserializing
+    /// from offset 0 read the zero partition-hash placeholder as the payload
+    /// length and silently returned empty values on every cache hit.
+    #[test]
+    fn test_near_cache_value_roundtrip_skips_data_header() {
+        // Vec<u8>: previously returned Some(vec![]) on a hit.
+        let value: Vec<u8> = vec![222, 173, 190, 239];
+        let data = IMap::<String, Vec<u8>>::serialize_value(&value).unwrap();
+        assert_eq!(&data[8..12], &[0, 0, 0, 4], "payload length prefix");
+        let back: Vec<u8> = IMap::<String, Vec<u8>>::deserialize_cached_value(&data).unwrap();
+        assert_eq!(back, value);
+
+        // String round-trip.
+        let s = "hello world".to_string();
+        let data = IMap::<String, String>::serialize_value(&s).unwrap();
+        let back: String = IMap::<String, String>::deserialize_cached_value(&data).unwrap();
+        assert_eq!(back, s);
+
+        // Entries shorter than the Data header are an error, not a panic.
+        let err = IMap::<String, Vec<u8>>::deserialize_cached_value::<Vec<u8>>(&[0, 1, 2]);
+        assert!(err.is_err());
     }
 
     #[tokio::test]
