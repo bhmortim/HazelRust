@@ -116,7 +116,11 @@ pub struct ConnectionManager {
     invocation_semaphore: Option<Arc<tokio::sync::Semaphore>>,
     redo_operation: bool,
     /// Whether to opt mutating partition ops into backup-ack-to-client (sets the
-    /// BACKUP_AWARE flag on the request). Mirrors the Java client default (ON).
+    /// BACKUP_AWARE flag on the request). Default OFF — a deliberate divergence
+    /// from the Java client (which defaults ON): the owner then waits for sync
+    /// backups before replying, keeping successful writes RPO-0. Opt in via
+    /// `NetworkConfig::backup_ack_to_client_enabled` for lower write latency
+    /// (see the rationale on the config default).
     backup_ack_to_client: bool,
     invocation_retry_count: u32,
     invocation_retry_pause: std::time::Duration,
