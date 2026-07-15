@@ -2088,6 +2088,17 @@ impl ConnectionManager {
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
+                        // Keep the pooled invocation connections warm too. The
+                        // loop below pings only the per-member METADATA
+                        // connections; all data ops run on the InvocationService
+                        // pools, which otherwise see no traffic while the client
+                        // idles — members reap them after the client-heartbeat
+                        // timeout and every later data op fails with a broken
+                        // pipe until the pool is rebuilt. Fire-and-forget: this
+                        // spawns one short-timeout ping task per pooled
+                        // connection and never blocks the tick.
+                        manager.invocation.keepalive_all();
+
                         let mut conns = connections.write().await;
                         let mut failed_addresses = Vec::new();
 
@@ -2173,6 +2184,54 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    /// The heartbeat tick must keep the POOLED invocation connections warm,
+    /// not just the per-member metadata connections: members reap idle data
+    /// sockets after their client-heartbeat timeout, after which every data op
+    /// to that member fails with a broken pipe until the pool is rebuilt.
+    #[tokio::test]
+    async fn heartbeat_tick_pings_pooled_invocation_connections() {
+        use tokio_util::codec::Decoder;
+
+        let config = ClientConfigBuilder::new()
+            .network(|n| n.heartbeat_interval(Duration::from_millis(50)))
+            .build()
+            .unwrap();
+        let cm = Arc::new(ConnectionManager::from_config(config));
+
+        // Register a pooled data connection only — no metadata connection —
+        // so any ping seen on the wire came from the invocation keepalive.
+        let addr: SocketAddr = "127.0.0.1:65010".parse().unwrap();
+        let (client_io, mut server_io) = tokio::io::duplex(4096);
+        let (read_half, write_half) = tokio::io::split(client_io);
+        cm.invocation
+            .register_connection(addr, Box::new(read_half), Box::new(write_half))
+            .await;
+
+        cm.spawn_heartbeat_task();
+
+        // A Client.ping (0x000200) must arrive within a few 50ms ticks.
+        let msg = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut codec = hazelcast_core::protocol::ClientMessageCodec::new();
+            let mut buf = bytes::BytesMut::new();
+            loop {
+                if let Some(msg) = codec.decode(&mut buf).expect("wire bytes must decode") {
+                    return msg;
+                }
+                if server_io
+                    .read_buf(&mut buf)
+                    .await
+                    .expect("test read failed")
+                    == 0
+                {
+                    panic!("connection closed before a ping arrived");
+                }
+            }
+        })
+        .await
+        .expect("heartbeat must ping the pooled invocation connection");
+        assert_eq!(msg.message_type(), Some(0x000200));
+    }
 
     #[test]
     fn test_auth_credential_frames_sends_configured_credentials() {

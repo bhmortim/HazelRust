@@ -36,6 +36,16 @@ type BoxedRead = Box<dyn AsyncRead + Send + Unpin>;
 /// of it on a single connection's break would wrongly abort other members' ops.
 type InFlight = Arc<DashMap<i64, ()>>;
 
+/// `Client.ping` request message type — the same wire value the metadata
+/// connections' heartbeat uses (`Connection::send_heartbeat`).
+const CLIENT_PING_MESSAGE_TYPE: i32 = 0x000200;
+
+/// Upper bound on waiting for a keepalive pong. Generous for a healthy member
+/// (a ping round-trip is sub-millisecond on a LAN) yet far shorter than the
+/// heartbeat interval, so a stuck member cannot pile up waiter tasks across
+/// ticks or starve pings to healthy members.
+const KEEPALIVE_PING_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// A message ready for the writer task: the (small) per-frame headers plus the
 /// owned frames. The writer references each frame's content in place via
 /// `IoSlice` for a zero-copy vectored write (no per-value `put_slice` copy);
@@ -260,6 +270,96 @@ impl InvocationService {
                 address = %address,
                 "evicted stale connection pool (reconnect or teardown)"
             );
+        }
+    }
+
+    /// Sends a `Client.ping` on EVERY pooled invocation connection.
+    ///
+    /// The heartbeat task pings only the per-member metadata connections; the
+    /// pooled data connections registered here carry no traffic while the
+    /// client idles, so a member reaps them once its client-heartbeat timeout
+    /// elapses — and every subsequent data op to that member fails with a
+    /// broken pipe until the pool is rebuilt. Calling this from each heartbeat
+    /// tick refreshes the members' idle timers on the exact sockets the data
+    /// ops use.
+    ///
+    /// Fire-and-forget: each ping runs on its own task with a short timeout
+    /// ([`KEEPALIVE_PING_TIMEOUT`]), so a stuck member can neither block the
+    /// caller nor starve pings to healthy members. Failures are logged and
+    /// otherwise ignored — the metadata heartbeat and the reader teardown path
+    /// (RR-21) own connection-failure recovery.
+    pub fn keepalive_all(&self) {
+        for entry in self.pools.iter() {
+            let address = *entry.key();
+            for conn in entry.value().conns.iter() {
+                let outbound = conn.outbound.clone();
+                let inflight = Arc::clone(&conn.inflight);
+                let pending_ops = Arc::clone(&self.pending_ops);
+                tokio::spawn(async move {
+                    Self::keepalive_ping(address, outbound, inflight, pending_ops).await;
+                });
+            }
+        }
+    }
+
+    /// One keepalive ping on one pooled connection: registers a waiter, queues
+    /// the ping on the connection's writer task, and awaits the pong with
+    /// [`KEEPALIVE_PING_TIMEOUT`]. Cleans up its waiter on every exit path so
+    /// an unanswered ping cannot leak a `pending_ops` entry.
+    async fn keepalive_ping(
+        address: SocketAddr,
+        outbound: mpsc::UnboundedSender<Outbound>,
+        inflight: InFlight,
+        pending_ops: Arc<DashMap<i64, PendingOp>>,
+    ) {
+        let message = ClientMessage::create_for_encode(CLIENT_PING_MESSAGE_TYPE, PARTITION_ID_ANY);
+        let corr_id = message.correlation_id().unwrap_or(0);
+
+        // Same registration order as `send_raw`: waiter first, then the
+        // in-flight mark, so the reader can complete OR fail this ping and
+        // always finds a consistent pair.
+        let (tx, rx) = oneshot::channel();
+        pending_ops.insert(corr_id, PendingOp::new(tx));
+        inflight.insert(corr_id, ());
+        if let Some(mut op) = pending_ops.get_mut(&corr_id) {
+            op.inflight = Some(Arc::clone(&inflight));
+        }
+
+        let (headers, frames) = message.into_segments();
+        if outbound.send(Outbound { headers, frames }).is_err() {
+            // Writer task gone: the pool was evicted mid-tick. Reconnect owns
+            // recovery; just drop the waiter.
+            pending_ops.remove(&corr_id);
+            inflight.remove(&corr_id);
+            tracing::debug!(address = %address, "keepalive ping skipped: connection closed");
+            return;
+        }
+
+        match tokio::time::timeout(KEEPALIVE_PING_TIMEOUT, rx).await {
+            Ok(Ok(Ok(_pong))) => {
+                tracing::trace!(address = %address, "keepalive pong received");
+            }
+            Ok(Ok(Err(e))) => {
+                // The reader failed the op (connection teardown, RR-21) and
+                // already cleaned up both maps.
+                tracing::debug!(address = %address, error = %e, "keepalive ping failed");
+            }
+            Ok(Err(_)) => {
+                // Waiter dropped without a result — the pending op was removed
+                // externally (e.g. shutdown). Nothing left to clean.
+                tracing::debug!(address = %address, "keepalive waiter dropped");
+            }
+            Err(_) => {
+                // No pong within the deadline. Clean up so unanswered pings
+                // don't accumulate in pending_ops tick after tick.
+                pending_ops.remove(&corr_id);
+                inflight.remove(&corr_id);
+                tracing::warn!(
+                    address = %address,
+                    timeout = ?KEEPALIVE_PING_TIMEOUT,
+                    "keepalive ping timed out"
+                );
+            }
         }
     }
 
@@ -803,6 +903,135 @@ fn decode_error_response(response: &ClientMessage) -> HazelcastError {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// Reads one complete `ClientMessage` off a test server end.
+    async fn read_one_message(io: &mut tokio::io::DuplexStream) -> ClientMessage {
+        let mut codec = ClientMessageCodec::new();
+        let mut buf = BytesMut::new();
+        loop {
+            if let Some(msg) = codec.decode(&mut buf).expect("wire bytes must decode") {
+                return msg;
+            }
+            if io.read_buf(&mut buf).await.expect("test read failed") == 0 {
+                panic!("connection closed before a full message arrived");
+            }
+        }
+    }
+
+    /// keepalive_all must ping EVERY pooled connection — every connection in a
+    /// multi-connection pool and every member's pool — because a member reaps
+    /// each idle socket individually.
+    #[tokio::test]
+    async fn keepalive_all_pings_every_pooled_connection() {
+        let svc = InvocationService::new(Duration::from_secs(30), true);
+        let addr_a: SocketAddr = "127.0.0.1:65001".parse().unwrap();
+        let addr_b: SocketAddr = "127.0.0.1:65002".parse().unwrap();
+
+        // Two pooled connections to member A, one to member B.
+        let mut server_ends = Vec::new();
+        for addr in [addr_a, addr_a, addr_b] {
+            let (client_io, server_io) = tokio::io::duplex(4096);
+            let (read_half, write_half) = tokio::io::split(client_io);
+            svc.register_connection(addr, Box::new(read_half), Box::new(write_half))
+                .await;
+            server_ends.push(server_io);
+        }
+
+        svc.keepalive_all();
+
+        for mut server_io in server_ends {
+            let msg =
+                tokio::time::timeout(Duration::from_secs(5), read_one_message(&mut server_io))
+                    .await
+                    .expect("a ping must arrive on every pooled connection");
+            assert_eq!(msg.message_type(), Some(CLIENT_PING_MESSAGE_TYPE));
+        }
+    }
+
+    /// A pong routed back by the reader must complete the keepalive waiter and
+    /// remove it from `pending_ops` (the normal, healthy-member path).
+    #[tokio::test]
+    async fn keepalive_pong_completes_and_cleans_waiter() {
+        let svc = InvocationService::new(Duration::from_secs(30), true);
+        let addr: SocketAddr = "127.0.0.1:65003".parse().unwrap();
+        let (client_io, mut server_io) = tokio::io::duplex(4096);
+        let (read_half, write_half) = tokio::io::split(client_io);
+        svc.register_connection(addr, Box::new(read_half), Box::new(write_half))
+            .await;
+
+        svc.keepalive_all();
+
+        let ping = tokio::time::timeout(Duration::from_secs(5), read_one_message(&mut server_io))
+            .await
+            .expect("ping must arrive");
+        assert_eq!(ping.message_type(), Some(CLIENT_PING_MESSAGE_TYPE));
+        let corr_id = ping
+            .correlation_id()
+            .expect("ping must carry a correlation id");
+        assert!(
+            svc.pending_ops.contains_key(&corr_id),
+            "waiter must be registered until the pong arrives"
+        );
+
+        // Answer with a pong carrying the same correlation id (response
+        // message type = request type + 1, as the server does).
+        let mut pong =
+            ClientMessage::create_for_encode(CLIENT_PING_MESSAGE_TYPE + 1, PARTITION_ID_ANY);
+        pong.set_correlation_id(corr_id);
+        let mut wire = BytesMut::new();
+        for frame in pong.frames() {
+            frame.write_to(&mut wire);
+        }
+        server_io.write_all(&wire).await.unwrap();
+
+        // The reader routes the pong to the waiter, which cleans up after itself.
+        let mut cleaned = false;
+        for _ in 0..250 {
+            if !svc.pending_ops.contains_key(&corr_id) {
+                cleaned = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            cleaned,
+            "pong must remove the keepalive waiter from pending_ops"
+        );
+    }
+
+    /// An unanswered keepalive must clean up its own waiter once the ping
+    /// deadline passes — otherwise every tick against a stuck member would
+    /// leak a `pending_ops` entry forever.
+    #[tokio::test(start_paused = true)]
+    async fn unanswered_keepalive_cleans_up_after_timeout() {
+        let svc = InvocationService::new(Duration::from_secs(30), true);
+        let addr: SocketAddr = "127.0.0.1:65004".parse().unwrap();
+        let (client_io, server_io) = tokio::io::duplex(4096);
+        let (read_half, write_half) = tokio::io::split(client_io);
+        svc.register_connection(addr, Box::new(read_half), Box::new(write_half))
+            .await;
+
+        svc.keepalive_all();
+
+        // Let the spawned ping task register its waiter and queue the send.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            svc.pending_ops.len(),
+            1,
+            "keepalive must register exactly one waiter for one pooled connection"
+        );
+
+        // Never answer; jump past the ping deadline (virtual time).
+        tokio::time::sleep(KEEPALIVE_PING_TIMEOUT + Duration::from_millis(100)).await;
+        assert!(
+            svc.pending_ops.is_empty(),
+            "timed-out keepalive must remove its own waiter"
+        );
+
+        // Keep the server end alive until after the assertions so reader
+        // teardown (RR-21) can't race the timeout path we're testing.
+        drop(server_io);
+    }
 
     /// RR-21: an invocation that is in flight when its connection is torn down
     /// must fail fast with a typed `Connection` error, not hang until the
