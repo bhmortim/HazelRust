@@ -3915,6 +3915,17 @@ where
         self.check_permission(PermissionAction::Read)?;
         self.check_permission(PermissionAction::Put)?;
         let key_data = Self::serialize_value(key)?;
+
+        // EntryProcessors mutate entries server-side: drop any near-cached
+        // copy so subsequent gets observe the processor's write (same
+        // client-side invalidation put/set/remove perform).
+        if let Some(ref cache) = self.near_cache {
+            let mut cache_guard = cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            cache_guard.invalidate(&key_data);
+        }
+
         let processor_data = Self::serialize_processor(processor)?;
         let partition_id = self.partition_index_dynamic(&key_data);
 
@@ -3985,6 +3996,13 @@ where
         message.add_frame(Frame::with_flags(BEGIN_DATA_STRUCTURE_FLAG));
         for key in keys {
             let key_data = Self::serialize_value(key)?;
+            // Same near-cache invalidation as execute_on_key, per key.
+            if let Some(ref cache) = self.near_cache {
+                let mut cache_guard = cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                cache_guard.invalidate(&key_data);
+            }
             message.add_frame(Self::data_frame(&key_data));
         }
         message.add_frame(Frame::with_flags(END_DATA_STRUCTURE_FLAG));
