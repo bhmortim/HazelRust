@@ -3,7 +3,7 @@
 mod near_cache;
 mod query_cache;
 
-pub use near_cache::{NearCache, NearCacheStats, PreloadStats};
+pub use near_cache::{NearCache, NearCacheStats, PreloadStats, ShardedNearCache};
 pub use query_cache::{
     AttributeExtractor, FnAttributeExtractor, QueryCache, QueryCacheConfig,
     QueryCacheConfigBuilder, QueryCacheIndexPredicate, QueryCacheIndexType, QueryCacheStats,
@@ -221,6 +221,13 @@ impl NearCacheConfig {
     /// Returns the preload configuration.
     pub fn preload_config(&self) -> &PreloadConfig {
         &self.preload_config
+    }
+
+    /// Returns this configuration with `max_size` replaced. Used to derive the
+    /// per-stripe capacity of a [`ShardedNearCache`](crate::cache::ShardedNearCache).
+    pub(crate) fn with_max_size(mut self, max_size: u32) -> Self {
+        self.max_size = max_size;
+        self
     }
 
     /// Checks if this configuration matches the given map name.

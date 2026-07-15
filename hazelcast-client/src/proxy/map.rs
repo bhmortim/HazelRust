@@ -49,9 +49,10 @@ use hazelcast_core::protocol::constants::{
     MAP_PROJECT_WITH_PREDICATE, MAP_PUT, MAP_PUT_ALL, MAP_PUT_IF_ABSENT, MAP_PUT_TRANSIENT,
     MAP_PUT_WITH_MAX_IDLE, MAP_REMOVE, MAP_REMOVE_ALL, MAP_REMOVE_ENTRY_LISTENER,
     MAP_REMOVE_IF_SAME, MAP_REMOVE_INTERCEPTOR, MAP_REMOVE_PARTITION_LOST_LISTENER, MAP_REPLACE,
-    MAP_REPLACE_IF_SAME, MAP_SET_ALL, MAP_SET_TTL, MAP_SIZE, MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK,
-    MAP_VALUES as MAP_VALUES_OP, MAP_VALUES_WITH_PAGING_PREDICATE, MAP_VALUES_WITH_PREDICATE,
-    PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
+    MAP_REPLACE_IF_SAME, MAP_SET, MAP_SET_ALL, MAP_SET_TTL, MAP_SET_WITH_MAX_IDLE, MAP_SIZE,
+    MAP_TRY_LOCK, MAP_TRY_PUT, MAP_UNLOCK, MAP_VALUES as MAP_VALUES_OP,
+    MAP_VALUES_WITH_PAGING_PREDICATE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
+    RESPONSE_HEADER_SIZE,
 };
 use hazelcast_core::protocol::Frame;
 use hazelcast_core::serialization::{DataInput, ObjectDataInput, ObjectDataOutput};
@@ -59,7 +60,7 @@ use hazelcast_core::{
     compute_partition_hash, ClientMessage, Deserializable, HazelcastError, Result, Serializable,
 };
 
-use crate::cache::{NearCache, NearCacheConfig, NearCacheStats};
+use crate::cache::{NearCacheConfig, NearCacheStats, ShardedNearCache};
 use crate::proxy::map_stats::{LocalMapStats, MapStatsTracker};
 
 /// Event types for Event Journal map events.
@@ -555,7 +556,7 @@ pub struct IMap<K, V> {
     connection_manager: Arc<ConnectionManager>,
     listener_stats: Arc<ListenerStats>,
     stats_tracker: Arc<MapStatsTracker>,
-    near_cache: Option<Arc<Mutex<NearCache<Vec<u8>, Vec<u8>>>>>,
+    near_cache: Option<Arc<ShardedNearCache>>,
     invalidation_registration: Arc<Mutex<Option<ListenerRegistration>>>,
     thread_id: i64,
     _phantom: PhantomData<fn() -> (K, V)>,
@@ -602,7 +603,7 @@ impl<K, V> IMap<K, V> {
             connection_manager,
             listener_stats: Arc::new(ListenerStats::new()),
             stats_tracker: Arc::new(MapStatsTracker::new()),
-            near_cache: Some(Arc::new(Mutex::new(NearCache::new(config)))),
+            near_cache: Some(Arc::new(ShardedNearCache::new(config))),
             invalidation_registration: Arc::new(Mutex::new(None)),
             thread_id: 0, // all client ops use logical thread 0 (consistent with put/get)
             _phantom: PhantomData,
@@ -616,7 +617,7 @@ impl<K, V> IMap<K, V> {
     pub(crate) fn new_with_shared_near_cache(
         name: String,
         connection_manager: Arc<ConnectionManager>,
-        near_cache: Arc<Mutex<NearCache<Vec<u8>, Vec<u8>>>>,
+        near_cache: Arc<ShardedNearCache>,
     ) -> Self {
         Self {
             name,
@@ -676,10 +677,7 @@ where
 
         // Check near-cache first
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(value_data) = cache_guard.get(&key_data) {
+            if let Some(value_data) = cache.get(&key_data) {
                 self.stats_tracker.record_hit();
                 return Self::deserialize_cached_value(&value_data).map(Some);
             }
@@ -703,14 +701,14 @@ where
         let response = self.invoke_on_partition(partition_id, message).await?;
         let result: Option<V> = Self::decode_nullable_response(&response)?;
 
-        // Populate near-cache on successful remote fetch
-        if let Some(ref value) = result {
+        // Populate near-cache on successful remote fetch with the response's
+        // wire `Data` bytes — the exact format the hit path expects — instead
+        // of re-serializing the value we just deserialized.
+        if result.is_some() {
             if let Some(ref cache) = self.near_cache {
-                let value_data = Self::serialize_value(value)?;
-                let mut cache_guard = cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                cache_guard.put(key_data, value_data);
+                if let Some(value_data) = Self::response_data_bytes(&response) {
+                    cache.put(key_data, value_data.to_vec());
+                }
             }
         }
 
@@ -733,13 +731,10 @@ where
         let key_buf = Self::serialize_buf(&key)?;
         let value_buf = Self::serialize_buf(&value)?;
 
-        // Invalidate near-cache before remote operation (off by default; only
-        // here do we materialize a Vec key).
+        // Invalidate near-cache before remote operation (no Vec materialized —
+        // invalidate takes the serialized key as &[u8]).
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_buf.to_vec());
+            cache.invalidate(&key_buf);
         }
 
         let partition_id = self.partition_index_dynamic(&key_buf);
@@ -789,10 +784,7 @@ where
         let value_data = Self::serialize_value(&value)?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -838,10 +830,7 @@ where
         let value_data = Self::serialize_value(&value)?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -884,10 +873,7 @@ where
         let new_value_data = Self::serialize_value(&new_value)?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -1053,10 +1039,7 @@ where
 
         // Invalidate near-cache before remote operation
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -1101,10 +1084,7 @@ where
         let value_data = Self::serialize_value(value)?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -1212,10 +1192,7 @@ where
         let partition_id = self.partition_index_dynamic(&pk_data);
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
@@ -1260,10 +1237,7 @@ where
         let partition_id = self.partition_index_dynamic(&pk_data);
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let mut message = ClientMessage::create_for_encode(MAP_REMOVE, partition_id);
@@ -1356,10 +1330,7 @@ where
 
         // Invalidate near-cache before remote operation
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -1380,8 +1351,10 @@ where
 
     /// Associates the specified value with the specified key without returning the old value.
     ///
-    /// Unlike [`put`](Self::put), this method does not return the previous value and
-    /// is therefore slightly more efficient when the previous value is not needed.
+    /// Unlike [`put`](Self::put), this sends the protocol's `map.set` operation
+    /// (void response), so the member neither loads the previous value nor ships
+    /// it back — cheaper on both the member and the wire when the old value is
+    /// not needed.
     ///
     /// If near-cache is enabled, invalidates the local cache entry before
     /// sending the set to the cluster.
@@ -1402,18 +1375,15 @@ where
 
         // Invalidate near-cache before remote operation
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_buf.to_vec());
+            cache.invalidate(&key_buf);
         }
 
         let partition_id = self.partition_index_dynamic(&key_buf);
 
-        let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
+        let mut message = ClientMessage::create_for_encode(MAP_SET, partition_id);
 
         // Fixed-size params go in the initial frame (after the 16-byte header):
-        // threadId (long, 8 bytes) + ttl (long, 8 bytes)
+        // threadId (long, 8 bytes) + ttl (long, 8 bytes) — same layout as map.put.
         if let Some(initial_frame) = message.frames_mut().first_mut() {
             use bytes::BufMut;
             initial_frame.content.put_i64_le(0); // threadId = 0
@@ -1664,11 +1634,8 @@ where
         }
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for (key_data, _) in &serialized_entries {
-                cache_guard.invalidate(key_data);
+                cache.invalidate(key_data);
             }
         }
 
@@ -1751,10 +1718,7 @@ where
             let key_data = Self::serialize_value(key)?;
 
             if let Some(ref cache) = self.near_cache {
-                let mut cache_guard = cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some(value_data) = cache_guard.get(&key_data) {
+                if let Some(value_data) = cache.get(&key_data) {
                     if let Ok(value) = Self::deserialize_cached_value(&value_data) {
                         results.insert(key.clone(), value);
                         continue;
@@ -1819,10 +1783,7 @@ where
 
             // Check near-cache first
             if let Some(ref cache) = self.near_cache {
-                let mut cache_guard = cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some(value_data) = cache_guard.get(&key_data) {
+                if let Some(value_data) = cache.get(&key_data) {
                     if let Ok(value) = Self::deserialize_cached_value(&value_data) {
                         results[idx] = Some(value);
                         continue;
@@ -1881,10 +1842,7 @@ where
                     // Populate near-cache
                     if let Some(ref cache) = self.near_cache {
                         let value_data = Self::serialize_value(&value)?;
-                        let mut cache_guard = cache
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        cache_guard.put(key_data, value_data);
+                        cache.put(key_data, value_data);
                     }
                     results[idx] = Some(value);
                 }
@@ -1924,10 +1882,7 @@ where
 
             // Invalidate near-cache
             if let Some(ref cache) = self.near_cache {
-                let mut cache_guard = cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                cache_guard.invalidate(&key_data);
+                cache.invalidate(&key_data);
             }
 
             let partition_id = self.partition_index_dynamic(&key_data);
@@ -1995,12 +1950,9 @@ where
         }
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for key in keys {
                 if let Ok(key_data) = Self::serialize_value(key) {
-                    cache_guard.invalidate(&key_data);
+                    cache.invalidate(&key_data);
                 }
             }
         }
@@ -2050,10 +2002,7 @@ where
         // Clear near-cache before remote operation since we can't know
         // which specific entries will be removed
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.clear();
+            cache.clear();
         }
 
         let predicate_data = predicate.to_predicate_data()?;
@@ -2074,10 +2023,7 @@ where
         self.check_quorum(false).await?;
         // Clear near-cache before remote operation
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.clear();
+            cache.clear();
         }
 
         let mut message = ClientMessage::create_for_encode(MAP_CLEAR, PARTITION_ID_ANY);
@@ -2275,10 +2221,7 @@ where
         let key_data = Self::serialize_value(key)?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -2313,10 +2256,7 @@ where
         self.check_quorum(false).await?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.clear();
+            cache.clear();
         }
 
         let mut message = ClientMessage::create_for_encode(MAP_EVICT_ALL, PARTITION_ID_ANY);
@@ -2466,10 +2406,7 @@ where
         let value_data = Self::serialize_value(&value)?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -2528,10 +2465,7 @@ where
         let value_data = Self::serialize_value(&value)?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -2606,10 +2540,7 @@ where
         let value_data = Self::serialize_value(&value)?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -2685,10 +2616,7 @@ where
         let value_data = Self::serialize_value(&value)?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -2697,14 +2625,22 @@ where
         } else {
             ttl.as_millis() as i64
         };
-        let _max_idle_ms = if max_idle.is_zero() {
+        let max_idle_ms = if max_idle.is_zero() {
             -1
         } else {
             max_idle.as_millis() as i64
         };
 
-        let mut message = ClientMessage::create_for_encode(MAP_PUT, partition_id);
-        Self::write_initial_thread_id_and_ttl(&mut message, ttl_ms);
+        // map.setWithMaxIdle: void response (no old-value load on the member)
+        // and, unlike the MAP_PUT this used to send, actually carries maxIdle.
+        let mut message = ClientMessage::create_for_encode(MAP_SET_WITH_MAX_IDLE, partition_id);
+        // Fixed-size params: threadId (long) + ttl (long) + maxIdle (long)
+        if let Some(initial_frame) = message.frames_mut().first_mut() {
+            use bytes::BufMut;
+            initial_frame.content.put_i64_le(0); // threadId = 0
+            initial_frame.content.put_i64_le(ttl_ms);
+            initial_frame.content.put_i64_le(max_idle_ms);
+        }
         message.add_frame(Self::string_frame(&self.name));
         message.add_frame(Self::data_frame(&key_data));
         message.add_frame(Self::data_frame(&value_data));
@@ -2748,10 +2684,7 @@ where
         let value_data = Self::serialize_value(&value)?;
 
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let partition_id = self.partition_index_dynamic(&key_data);
@@ -2976,6 +2909,24 @@ where
         self.connection_manager
             .invoke_on_random_with_retry(message, false)
             .await
+    }
+
+    /// Returns the raw `Data` bytes of a nullable single-value response
+    /// (`[partition_hash: i32][type_id: i32][payload]`), or `None` for a
+    /// null/absent value. This is the exact form near-cache entries store
+    /// (see [`deserialize_cached_value`](Self::deserialize_cached_value)), so
+    /// a GET miss can populate the cache from the wire bytes without
+    /// re-serializing the freshly deserialized value.
+    fn response_data_bytes(response: &ClientMessage) -> Option<&[u8]> {
+        let frames = response.frames();
+        if frames.len() < 2 {
+            return None;
+        }
+        let data_frame = &frames[1];
+        if data_frame.flags & IS_NULL_FLAG != 0 || data_frame.content.len() < 8 {
+            return None;
+        }
+        Some(&data_frame.content)
     }
 
     fn decode_nullable_response<T: Deserializable>(response: &ClientMessage) -> Result<Option<T>> {
@@ -3424,12 +3375,7 @@ where
     ///
     /// Returns `None` if this map does not have near-cache configured.
     pub fn near_cache_stats(&self) -> Option<NearCacheStats> {
-        self.near_cache.as_ref().map(|cache| {
-            cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .stats()
-        })
+        self.near_cache.as_ref().map(|cache| cache.stats())
     }
 
     /// Returns accumulated client-side statistics for this map.
@@ -3450,10 +3396,7 @@ where
             .near_cache
             .as_ref()
             .map(|cache| {
-                let guard = cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let count = guard.size() as u64;
+                let count = cache.size() as u64;
                 let cost = count * 64;
                 (count, cost)
             })
@@ -3469,10 +3412,7 @@ where
     pub fn invalidate_near_cache_entry(&self, key: &K) -> Result<()> {
         if let Some(ref cache) = self.near_cache {
             let key_data = Self::serialize_value(key)?;
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
         Ok(())
     }
@@ -3480,10 +3420,7 @@ where
     /// Clears all entries from the near-cache without affecting the remote map.
     pub fn clear_near_cache(&self) {
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.clear();
+            cache.clear();
         }
     }
 
@@ -3920,10 +3857,7 @@ where
         // copy so subsequent gets observe the processor's write (same
         // client-side invalidation put/set/remove perform).
         if let Some(ref cache) = self.near_cache {
-            let mut cache_guard = cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_guard.invalidate(&key_data);
+            cache.invalidate(&key_data);
         }
 
         let processor_data = Self::serialize_processor(processor)?;
@@ -3998,10 +3932,7 @@ where
             let key_data = Self::serialize_value(key)?;
             // Same near-cache invalidation as execute_on_key, per key.
             if let Some(ref cache) = self.near_cache {
-                let mut cache_guard = cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                cache_guard.invalidate(&key_data);
+                cache.invalidate(&key_data);
             }
             message.add_frame(Self::data_frame(&key_data));
         }
@@ -4852,10 +4783,7 @@ where
                 let mut output = ObjectDataOutput::new();
                 if event.key.serialize(&mut output).is_ok() {
                     let key_data = output.into_bytes();
-                    let mut cache_guard = near_cache
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    cache_guard.invalidate(&key_data);
+                    near_cache.invalidate(&key_data);
                 }
             })
             .await?;
@@ -5641,10 +5569,7 @@ where
 
         if replace_existing {
             if let Some(ref cache) = self.near_cache {
-                let mut cache_guard = cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                cache_guard.clear();
+                cache.clear();
             }
         }
 
@@ -6018,12 +5943,9 @@ where
 
         if replace_existing {
             if let Some(ref cache) = self.near_cache {
-                let mut cache_guard = cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 for key in keys {
                     if let Ok(key_data) = Self::serialize_value(key) {
-                        cache_guard.invalidate(&key_data);
+                        cache.invalidate(&key_data);
                     }
                 }
             }

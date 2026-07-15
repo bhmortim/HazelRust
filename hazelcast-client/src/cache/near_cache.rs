@@ -1,8 +1,10 @@
 //! Near-cache implementation for client-side caching.
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use super::{EvictionPolicy, NearCacheConfig};
@@ -47,6 +49,15 @@ impl NearCacheStats {
         } else {
             self.hits as f64 / total as f64
         }
+    }
+
+    /// Adds another stats snapshot into this one (used to aggregate the
+    /// per-stripe stats of a [`ShardedNearCache`]).
+    pub(crate) fn merge(&mut self, other: &NearCacheStats) {
+        self.hits += other.hits;
+        self.misses += other.misses;
+        self.evictions += other.evictions;
+        self.expirations += other.expirations;
     }
 }
 
@@ -136,7 +147,14 @@ where
     /// Returns a clone of the cached value if present and not expired.
     ///
     /// This method updates access statistics and touch time for LRU/LFU tracking.
-    pub fn get(&mut self, key: &K) -> Option<V> {
+    ///
+    /// Accepts any borrowed form of the key (e.g. `&[u8]` for a `Vec<u8>`-keyed
+    /// cache), so hot paths can look up without allocating an owned key.
+    pub fn get<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         let now = Instant::now();
 
         // Check if entry exists
@@ -195,7 +213,14 @@ where
     }
 
     /// Removes an entry from the cache.
-    pub fn invalidate(&mut self, key: &K) {
+    ///
+    /// Accepts any borrowed form of the key (e.g. `&[u8]` for a `Vec<u8>`-keyed
+    /// cache), so write paths can invalidate without allocating an owned key.
+    pub fn invalidate<Q>(&mut self, key: &Q)
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         self.store.remove(key);
     }
 
@@ -500,6 +525,128 @@ where
     }
 }
 
+/// Number of lock stripes in a [`ShardedNearCache`]. Power of two so stripe
+/// selection is a mask. 16 stripes keeps per-stripe contention negligible for
+/// the pool sizes the client runs with while costing only 16 mutexes per map.
+const STRIPE_COUNT: usize = 16;
+
+/// A lock-striped near cache over serialized (`Data`) keys and values.
+///
+/// The previous design shared ONE `Mutex<NearCache>` per map name across every
+/// proxy handle, so every GET hit, miss-populate, and write invalidation
+/// serialized on a single lock (~tens of thousands of exclusive acquisitions
+/// per second under load). Entries are instead partitioned across
+/// [`STRIPE_COUNT`] independent [`NearCache`] stripes by key hash; operations
+/// on different stripes proceed in parallel and all methods take `&self`.
+///
+/// Semantics per entry (TTL, max-idle, per-stripe LRU/LFU/Random eviction,
+/// stats) are those of [`NearCache`]; `max_size` is split evenly across
+/// stripes, so eviction approximates a global policy per hash stripe.
+pub struct ShardedNearCache {
+    stripes: Vec<Mutex<NearCache<Vec<u8>, Vec<u8>>>>,
+    config: NearCacheConfig,
+}
+
+impl std::fmt::Debug for ShardedNearCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShardedNearCache")
+            .field("config", &self.config)
+            .field("size", &self.size())
+            .finish()
+    }
+}
+
+impl ShardedNearCache {
+    /// Creates a sharded near-cache; `config.max_size()` is divided across the
+    /// stripes (rounded up, min 1 per stripe).
+    pub fn new(config: NearCacheConfig) -> Self {
+        let per_stripe = ((config.max_size() as usize).div_ceil(STRIPE_COUNT)).max(1) as u32;
+        let stripe_config = config.clone().with_max_size(per_stripe);
+        let stripes = (0..STRIPE_COUNT)
+            .map(|_| Mutex::new(NearCache::new(stripe_config.clone())))
+            .collect();
+        Self { stripes, config }
+    }
+
+    /// FNV-1a over the key bytes, masked to a stripe index. Serialized keys
+    /// embed a type id and payload, which FNV mixes well enough for 16-way
+    /// striping.
+    fn stripe(&self, key: &[u8]) -> &Mutex<NearCache<Vec<u8>, Vec<u8>>> {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in key {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        &self.stripes[(hash as usize) & (STRIPE_COUNT - 1)]
+    }
+
+    /// Returns a clone of the cached value bytes if present and not expired.
+    pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+        self.stripe(key)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(key)
+    }
+
+    /// Inserts serialized value bytes; returns `false` if rejected (stripe full
+    /// with `EvictionPolicy::None`).
+    pub fn put(&self, key: Vec<u8>, value: Vec<u8>) -> bool {
+        self.stripe(&key)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .put(key, value)
+    }
+
+    /// Removes an entry. Takes the key as `&[u8]` — no owned-key allocation.
+    pub fn invalidate(&self, key: &[u8]) {
+        self.stripe(key)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .invalidate(key);
+    }
+
+    /// Removes all entries from every stripe.
+    pub fn clear(&self) {
+        for stripe in &self.stripes {
+            stripe
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
+        }
+    }
+
+    /// Returns the total number of entries across all stripes.
+    pub fn size(&self) -> usize {
+        self.stripes
+            .iter()
+            .map(|s| {
+                s.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .size()
+            })
+            .sum()
+    }
+
+    /// Returns aggregated statistics across all stripes.
+    pub fn stats(&self) -> NearCacheStats {
+        let mut total = NearCacheStats::default();
+        for stripe in &self.stripes {
+            total.merge(
+                &stripe
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .stats(),
+            );
+        }
+        total
+    }
+
+    /// Returns the (original, un-split) cache configuration.
+    pub fn config(&self) -> &NearCacheConfig {
+        &self.config
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -777,6 +924,86 @@ mod tests {
     fn test_near_cache_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<NearCache<String, String>>();
+    }
+
+    #[test]
+    fn test_get_and_invalidate_by_borrowed_slice() {
+        // Vec<u8>-keyed caches must accept &[u8] lookups (no owned-key alloc).
+        let config = make_config("test");
+        let mut cache: NearCache<Vec<u8>, Vec<u8>> = NearCache::new(config);
+
+        cache.put(b"key".to_vec(), b"value".to_vec());
+        assert_eq!(cache.get(&b"key"[..]), Some(b"value".to_vec()));
+        cache.invalidate(&b"key"[..]);
+        assert_eq!(cache.get(&b"key"[..]), None);
+    }
+
+    #[test]
+    fn test_sharded_put_get_invalidate() {
+        let config = make_config("sharded");
+        let cache = ShardedNearCache::new(config);
+
+        assert!(cache.put(b"k1".to_vec(), b"v1".to_vec()));
+        assert!(cache.put(b"k2".to_vec(), b"v2".to_vec()));
+        assert_eq!(cache.get(b"k1"), Some(b"v1".to_vec()));
+        assert_eq!(cache.get(b"k2"), Some(b"v2".to_vec()));
+        assert_eq!(cache.size(), 2);
+
+        cache.invalidate(b"k1");
+        assert_eq!(cache.get(b"k1"), None);
+        assert_eq!(cache.size(), 1);
+
+        cache.clear();
+        assert_eq!(cache.size(), 0);
+        assert_eq!(cache.get(b"k2"), None);
+    }
+
+    #[test]
+    fn test_sharded_stats_aggregate_across_stripes() {
+        let config = make_config("sharded-stats");
+        let cache = ShardedNearCache::new(config);
+
+        for i in 0..64u32 {
+            let key = format!("key-{i}").into_bytes();
+            cache.put(key.clone(), b"v".to_vec());
+            assert_eq!(cache.get(&key), Some(b"v".to_vec())); // hit
+        }
+        cache.get(b"absent"); // miss
+
+        let stats = cache.stats();
+        assert_eq!(stats.hits(), 64);
+        assert_eq!(stats.misses(), 1);
+    }
+
+    #[test]
+    fn test_sharded_capacity_split_bounds_total_size() {
+        // max_size 16 over 16 stripes = 1 entry per stripe; with eviction None
+        // the total can never exceed 16 no matter how many keys are offered.
+        let config = NearCacheConfig::builder("sharded-cap")
+            .max_size(16)
+            .eviction_policy(EvictionPolicy::None)
+            .build()
+            .unwrap();
+        let cache = ShardedNearCache::new(config);
+
+        for i in 0..200u32 {
+            let key = format!("key-{i}").into_bytes();
+            cache.put(key, b"v".to_vec());
+        }
+        assert!(
+            cache.size() <= 16,
+            "size {} must not exceed max_size 16",
+            cache.size()
+        );
+        assert!(cache.size() > 0);
+        // The original (un-split) capacity is still reported by config().
+        assert_eq!(cache.config().max_size(), 16);
+    }
+
+    #[test]
+    fn test_sharded_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ShardedNearCache>();
     }
 
     #[test]

@@ -229,12 +229,8 @@ pub struct HazelcastClient {
     connection_listeners: RwLock<ConnectionListenerState>,
     user_context:
         Arc<RwLock<std::collections::HashMap<String, Box<dyn std::any::Any + Send + Sync>>>>,
-    near_cache_registry: RwLock<
-        std::collections::HashMap<
-            String,
-            Arc<std::sync::Mutex<crate::cache::NearCache<Vec<u8>, Vec<u8>>>>,
-        >,
-    >,
+    near_cache_registry:
+        RwLock<std::collections::HashMap<String, Arc<crate::cache::ShardedNearCache>>>,
 }
 
 impl HazelcastClient {
@@ -331,7 +327,7 @@ impl HazelcastClient {
         &self,
         name: &str,
         config: &crate::cache::NearCacheConfig,
-    ) -> Arc<std::sync::Mutex<crate::cache::NearCache<Vec<u8>, Vec<u8>>>> {
+    ) -> Arc<crate::cache::ShardedNearCache> {
         if let Some(existing) = self.near_cache_registry.read().unwrap().get(name) {
             return Arc::clone(existing);
         }
@@ -339,9 +335,7 @@ impl HazelcastClient {
         if let Some(existing) = reg.get(name) {
             return Arc::clone(existing);
         }
-        let created = Arc::new(std::sync::Mutex::new(crate::cache::NearCache::new(
-            config.clone(),
-        )));
+        let created = Arc::new(crate::cache::ShardedNearCache::new(config.clone()));
         reg.insert(name.to_string(), Arc::clone(&created));
         created
     }
