@@ -1697,14 +1697,52 @@ impl ConnectionManager {
         };
 
         let address = self.get_connection_for_partition(partition_id).await?;
+        let opcode = message.message_type().unwrap_or(0);
+        self.ensure_proxy_for_request(address, opcode, message.frames())
+            .await?;
+        self.invocation.invoke(address, message).await
+    }
 
-        // Opt 2: ensure_proxy uses a fast DashSet check internally.
-        // Only parse the object name if proxy hasn't been created yet.
-        if message.frame_count() > 1 {
-            let name_bytes = &message.frames()[1].content;
+    /// [`invoke_on_partition`](Self::invoke_on_partition) over an
+    /// already-encoded request. Each call re-resolves the partition owner and
+    /// shares the prepared segments (no payload copy), which is what the retry
+    /// wrappers use to avoid deep-cloning the message per attempt.
+    async fn invoke_on_partition_prepared(
+        &self,
+        partition_id: i32,
+        prepared: &crate::connection::invocation::PreparedMessage,
+    ) -> Result<hazelcast_core::ClientMessage> {
+        let _permit = match &self.invocation_semaphore {
+            Some(sem) => Some(
+                sem.acquire()
+                    .await
+                    .map_err(|_| HazelcastError::Connection("shutting down".to_string()))?,
+            ),
+            None => None,
+        };
+
+        let address = self.get_connection_for_partition(partition_id).await?;
+        self.ensure_proxy_for_request(address, prepared.message_type(), prepared.frames())
+            .await?;
+        self.invocation.invoke_prepared(address, prepared).await
+    }
+
+    /// Ensure the CreateProxy handshake has been sent for the object a request
+    /// targets (frame 1 carries the object name). Shared by the owned and
+    /// prepared invocation paths.
+    ///
+    /// Opt 2: `is_proxy_created_bytes` is a fast byte-level check; the name is
+    /// only parsed (and the service inferred from the opcode) on first use.
+    async fn ensure_proxy_for_request(
+        &self,
+        address: std::net::SocketAddr,
+        opcode: i32,
+        frames: &[hazelcast_core::protocol::Frame],
+    ) -> Result<()> {
+        if frames.len() > 1 {
+            let name_bytes = &frames[1].content;
             if !self.invocation.is_proxy_created_bytes(name_bytes) {
                 let obj_name = String::from_utf8_lossy(name_bytes);
-                let opcode = message.message_type().unwrap_or(0);
                 let service = if (0x0601..=0x060F).contains(&(opcode >> 8)) {
                     "hz:impl:setService"
                 } else if (0x0501..=0x050F).contains(&(opcode >> 8)) {
@@ -1721,8 +1759,7 @@ impl ConnectionManager {
                     .await?;
             }
         }
-
-        self.invocation.invoke(address, message).await
+        Ok(())
     }
 
     /// Invokes a request on any available connection and returns the response.
@@ -1753,30 +1790,41 @@ impl ConnectionManager {
             }
         };
 
-        // Opt 2: fast proxy check avoids String allocation + RwLock on hot path
-        if message.frame_count() > 1 {
-            let name_bytes = &message.frames()[1].content;
-            if !self.invocation.is_proxy_created_bytes(name_bytes) {
-                let obj_name = String::from_utf8_lossy(name_bytes);
-                let opcode = message.message_type().unwrap_or(0);
-                let service = if (0x0601..=0x060F).contains(&(opcode >> 8)) {
-                    "hz:impl:setService"
-                } else if (0x0501..=0x050F).contains(&(opcode >> 8)) {
-                    "hz:impl:listService"
-                } else if (0x0301..=0x030F).contains(&(opcode >> 8)) {
-                    "hz:impl:queueService"
-                } else if (0x0401..=0x040F).contains(&(opcode >> 8)) {
-                    "hz:impl:topicService"
-                } else {
-                    "hz:impl:mapService"
-                };
-                self.invocation
-                    .ensure_proxy(address, &obj_name, service)
-                    .await?;
-            }
-        }
-
+        let opcode = message.message_type().unwrap_or(0);
+        self.ensure_proxy_for_request(address, opcode, message.frames())
+            .await?;
         self.invocation.invoke(address, message).await
+    }
+
+    /// [`invoke_on_random`](Self::invoke_on_random) over an already-encoded
+    /// request; each call re-picks a connection and shares the prepared
+    /// segments (no payload copy). Used by the retry wrapper.
+    async fn invoke_on_random_prepared(
+        &self,
+        prepared: &crate::connection::invocation::PreparedMessage,
+    ) -> Result<hazelcast_core::ClientMessage> {
+        let _permit = match &self.invocation_semaphore {
+            Some(sem) => Some(
+                sem.acquire()
+                    .await
+                    .map_err(|_| HazelcastError::Connection("shutting down".to_string()))?,
+            ),
+            None => None,
+        };
+
+        let address = match self.invocation.any_address() {
+            Some(addr) => addr,
+            None => {
+                let addrs = self.connected_addresses().await;
+                addrs.into_iter().next().ok_or_else(|| {
+                    HazelcastError::Connection("no connections available".to_string())
+                })?
+            }
+        };
+
+        self.ensure_proxy_for_request(address, prepared.message_type(), prepared.frames())
+            .await?;
+        self.invocation.invoke_prepared(address, prepared).await
     }
 
     /// Invokes a request on a specific partition with automatic retry for retryable errors.
@@ -1802,8 +1850,6 @@ impl ConnectionManager {
         if !idempotent && self.backup_ack_to_client {
             message.set_backup_aware();
         }
-        // Opt 5: avoid cloning the message on the success path (99.9% of calls).
-        // First attempt uses the original message by value.
         let retryable = idempotent || self.redo_operation;
         let max_attempts = if retryable {
             self.invocation_retry_count
@@ -1816,12 +1862,16 @@ impl ConnectionManager {
             return self.invoke_on_partition(partition_id, message).await;
         }
 
-        // Retries configured — clone only for the retry path
+        // Opt 5 (revised): retries configured — encode ONCE into shared
+        // segments. Every attempt (including the first) bumps refcounts on the
+        // same frame payloads; nothing is deep-copied on the success path OR
+        // in the retry arm.
+        let prepared = crate::connection::invocation::PreparedMessage::new(message);
         let mut last_err;
         let retry_pause = self.invocation_retry_pause;
 
         match self
-            .invoke_on_partition(partition_id, message.clone())
+            .invoke_on_partition_prepared(partition_id, &prepared)
             .await
         {
             Ok(resp) => return Ok(resp),
@@ -1833,7 +1883,7 @@ impl ConnectionManager {
             tracing::debug!(attempt, max_attempts, "retrying partition invocation");
             tokio::time::sleep(retry_pause).await;
             match self
-                .invoke_on_partition(partition_id, message.clone())
+                .invoke_on_partition_prepared(partition_id, &prepared)
                 .await
             {
                 Ok(resp) => return Ok(resp),
@@ -1872,10 +1922,13 @@ impl ConnectionManager {
             return self.invoke_on_random(message).await;
         }
 
+        // Encode once; every attempt shares the same frame payloads (see
+        // invoke_on_partition_with_retry) — no per-attempt deep clone.
+        let prepared = crate::connection::invocation::PreparedMessage::new(message);
         let mut last_err;
         let retry_pause = self.invocation_retry_pause;
 
-        match self.invoke_on_random(message.clone()).await {
+        match self.invoke_on_random_prepared(&prepared).await {
             Ok(resp) => return Ok(resp),
             Err(e) if !e.is_retryable() => return Err(e),
             Err(e) => last_err = e,
@@ -1884,7 +1937,7 @@ impl ConnectionManager {
         for attempt in 1..=max_attempts {
             tracing::debug!(attempt, max_attempts, "retrying random invocation");
             tokio::time::sleep(retry_pause).await;
-            match self.invoke_on_random(message.clone()).await {
+            match self.invoke_on_random_prepared(&prepared).await {
                 Ok(resp) => return Ok(resp),
                 Err(e) if e.is_retryable() && attempt < max_attempts => {
                     last_err = e;

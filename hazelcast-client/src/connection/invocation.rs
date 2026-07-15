@@ -47,12 +47,77 @@ const CLIENT_PING_MESSAGE_TYPE: i32 = 0x000200;
 const KEEPALIVE_PING_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A message ready for the writer task: the (small) per-frame headers plus the
-/// owned frames. The writer references each frame's content in place via
+/// shared frames. The writer references each frame's content in place via
 /// `IoSlice` for a zero-copy vectored write (no per-value `put_slice` copy);
 /// over a transport without vectored support (TLS) it concatenates instead.
+/// Both fields are refcounted so a retryable invocation can hold a
+/// [`PreparedMessage`] and re-send without deep-copying the payload.
 struct Outbound {
-    headers: BytesMut,
-    frames: Vec<Frame>,
+    headers: bytes::Bytes,
+    frames: Arc<Vec<Frame>>,
+}
+
+impl From<ClientMessage> for Outbound {
+    fn from(message: ClientMessage) -> Self {
+        let (headers, frames) = message.into_segments();
+        Self {
+            headers: headers.freeze(),
+            frames: Arc::new(frames),
+        }
+    }
+}
+
+/// A request already encoded into its wire segments, cheap to re-send:
+/// each attempt bumps the frames `Arc` and clones the refcounted header
+/// `Bytes` — the frame payloads are never deep-copied. This is what lets
+/// `*_with_retry` paths stop cloning the full `ClientMessage` up front for
+/// the (overwhelmingly common) first-attempt success.
+///
+/// Retries reuse the original correlation id, exactly like the former
+/// `ClientMessage::clone` behavior.
+pub(crate) struct PreparedMessage {
+    corr_id: i64,
+    message_type: i32,
+    headers: bytes::Bytes,
+    frames: Arc<Vec<Frame>>,
+}
+
+impl PreparedMessage {
+    /// Encodes a message into shared wire segments (consumes it; no copy).
+    pub(crate) fn new(message: ClientMessage) -> Self {
+        let corr_id = message.correlation_id().unwrap_or(0);
+        let message_type = message.message_type().unwrap_or(0);
+        let (headers, frames) = message.into_segments();
+        Self {
+            corr_id,
+            message_type,
+            headers: headers.freeze(),
+            frames: Arc::new(frames),
+        }
+    }
+
+    /// The request's correlation id (shared by every send of this message).
+    pub(crate) fn correlation_id(&self) -> i64 {
+        self.corr_id
+    }
+
+    /// The request's message type (opcode), captured before encoding.
+    pub(crate) fn message_type(&self) -> i32 {
+        self.message_type
+    }
+
+    /// The encoded frames (initial frame first), e.g. for proxy-name checks.
+    pub(crate) fn frames(&self) -> &[Frame] {
+        &self.frames
+    }
+
+    /// A writer-task handoff sharing this message's segments (refcount bumps).
+    fn to_outbound(&self) -> Outbound {
+        Outbound {
+            headers: self.headers.clone(),
+            frames: Arc::clone(&self.frames),
+        }
+    }
 }
 
 /// A single pooled connection: a sender to its dedicated writer task plus the
@@ -174,6 +239,10 @@ pub struct InvocationService {
     /// every op on its response (the historical behavior) and never waits for
     /// backup acks — so the feature-off path is byte-for-byte unchanged.
     backup_ack_enabled: bool,
+    /// Round-robin cursor for [`any_address`](Self::any_address), so
+    /// non-partition ops (key_set/size/queries/listener registrations) spread
+    /// across live members instead of pinning to one DashMap entry.
+    next_any: AtomicUsize,
     /// Reader task handles (kept alive).
     _readers: RwLock<Vec<tokio::task::JoinHandle<()>>>,
 }
@@ -196,6 +265,7 @@ impl InvocationService {
             created_proxies: RwLock::new(HashSet::new()),
             timeout,
             backup_ack_enabled,
+            next_any: AtomicUsize::new(0),
             _readers: RwLock::new(Vec::new()),
         }
     }
@@ -325,8 +395,7 @@ impl InvocationService {
             op.inflight = Some(Arc::clone(&inflight));
         }
 
-        let (headers, frames) = message.into_segments();
-        if outbound.send(Outbound { headers, frames }).is_err() {
+        if outbound.send(message.into()).is_err() {
             // Writer task gone: the pool was evicted mid-tick. Reconnect owns
             // recovery; just drop the waiter.
             pending_ops.remove(&corr_id);
@@ -652,7 +721,28 @@ impl InvocationService {
         message: ClientMessage,
     ) -> Result<ClientMessage> {
         let corr_id = message.correlation_id().unwrap_or(0);
+        self.invoke_outbound(address, corr_id, message.into()).await
+    }
 
+    /// Send an already-prepared message and wait for the correlated response.
+    /// Sending shares the prepared segments (refcount bumps only), so a caller
+    /// holding the `PreparedMessage` can re-invoke on retryable failures
+    /// without ever deep-copying the request.
+    pub(crate) async fn invoke_prepared(
+        &self,
+        address: SocketAddr,
+        prepared: &PreparedMessage,
+    ) -> Result<ClientMessage> {
+        self.invoke_outbound(address, prepared.correlation_id(), prepared.to_outbound())
+            .await
+    }
+
+    async fn invoke_outbound(
+        &self,
+        address: SocketAddr,
+        corr_id: i64,
+        message: Outbound,
+    ) -> Result<ClientMessage> {
         // Register pending operation BEFORE sending
         let (tx, rx) = oneshot::channel();
         self.pending_ops.insert(corr_id, PendingOp::new(tx));
@@ -703,12 +793,7 @@ impl InvocationService {
     /// contention on any single write Mutex. The correlation id is recorded in
     /// the selected connection's in-flight set so its reader can fail it on
     /// teardown.
-    async fn send_raw(
-        &self,
-        address: SocketAddr,
-        corr_id: i64,
-        message: ClientMessage,
-    ) -> Result<()> {
+    async fn send_raw(&self, address: SocketAddr, corr_id: i64, message: Outbound) -> Result<()> {
         let (outbound, inflight) = {
             let pool_ref = self.pools.get(&address).ok_or_else(|| {
                 HazelcastError::Connection(format!("no connection to {}", address))
@@ -725,12 +810,12 @@ impl InvocationService {
             e.inflight = Some(inflight.clone());
         }
 
-        // Zero-copy: split into small per-frame headers + the owned frames. The
-        // writer task references frame contents in place via IoSlice (no copy of
-        // the value) and coalesces queued messages into one writev. Send only
-        // fails if the writer task is gone (connection torn down).
-        let (headers, frames) = message.into_segments();
-        if outbound.send(Outbound { headers, frames }).is_err() {
+        // Zero-copy: the Outbound holds small per-frame headers + the shared
+        // frames. The writer task references frame contents in place via
+        // IoSlice (no copy of the value) and coalesces queued messages into one
+        // writev. Send only fails if the writer task is gone (connection torn
+        // down).
+        if outbound.send(message).is_err() {
             inflight.remove(&corr_id);
             return Err(HazelcastError::Connection(format!(
                 "connection to {} closed before send",
@@ -786,8 +871,7 @@ impl InvocationService {
         }
         // Pinned ops (transactions) go to the first connection's writer task; the
         // channel preserves FIFO order, so the txn's request sequence is kept.
-        let (headers, frames) = message.into_segments();
-        if outbound.send(Outbound { headers, frames }).is_err() {
+        if outbound.send(message.into()).is_err() {
             inflight.remove(&corr_id);
             return Err(HazelcastError::Connection(format!(
                 "connection to {} closed before send",
@@ -825,9 +909,24 @@ impl InvocationService {
         Ok(())
     }
 
-    /// Get any available writer address.
+    /// Get any available writer address, round-robining across live members.
+    ///
+    /// Previously this returned the first DashMap entry every call (stable per
+    /// process), which pinned ALL non-partition operations — key_set/SCAN,
+    /// size, queries, listener registrations — to a single member. The atomic
+    /// cursor spreads them evenly; membership churn between the `len()` read
+    /// and the iteration at worst skews one selection.
     pub fn any_address(&self) -> Option<SocketAddr> {
-        self.pools.iter().next().map(|entry| *entry.key())
+        let len = self.pools.len();
+        if len == 0 {
+            return None;
+        }
+        let n = self.next_any.fetch_add(1, Ordering::Relaxed) % len;
+        self.pools
+            .iter()
+            .nth(n)
+            .or_else(|| self.pools.iter().next())
+            .map(|entry| *entry.key())
     }
 
     /// Get all connected addresses.
@@ -1075,5 +1174,124 @@ mod tests {
             Err(HazelcastError::Connection(_)) => {}
             other => panic!("expected Err(Connection(..)) on teardown, got {:?}", other),
         }
+    }
+
+    /// `any_address` must rotate across every connected member instead of
+    /// pinning all non-partition ops to the first DashMap entry.
+    #[tokio::test]
+    async fn any_address_round_robins_across_members() {
+        let svc = InvocationService::new(Duration::from_secs(30), true);
+        let addrs: Vec<SocketAddr> = (0..3)
+            .map(|i| format!("127.0.0.1:{}", 65010 + i).parse().unwrap())
+            .collect();
+        // Keep the peer ends alive so the pools stay registered.
+        let mut _server_ends = Vec::new();
+        for addr in &addrs {
+            let (client_io, server_io) = tokio::io::duplex(4096);
+            let (read_half, write_half) = tokio::io::split(client_io);
+            svc.register_connection(*addr, Box::new(read_half), Box::new(write_half))
+                .await;
+            _server_ends.push(server_io);
+        }
+
+        let mut counts = std::collections::HashMap::new();
+        for _ in 0..30 {
+            let picked = svc.any_address().expect("three members are connected");
+            *counts.entry(picked).or_insert(0u32) += 1;
+        }
+        assert_eq!(counts.len(), 3, "every member must be selected: {counts:?}");
+        for addr in &addrs {
+            assert_eq!(
+                counts.get(addr),
+                Some(&10),
+                "30 picks over 3 members must be even: {counts:?}"
+            );
+        }
+    }
+
+    /// A `PreparedMessage` must yield the exact wire segments `into_segments`
+    /// produces, and re-sends must SHARE the frame payloads (refcount bump),
+    /// not deep-copy them.
+    #[test]
+    fn prepared_message_shares_segments_across_sends() {
+        let mut msg = ClientMessage::create_for_encode(0x010F00, 7);
+        msg.frames_mut()
+            .first_mut()
+            .unwrap()
+            .content
+            .extend_from_slice(&0i64.to_le_bytes());
+        msg.add_frame(Frame::with_content(BytesMut::from(&b"bench-map"[..])));
+        msg.add_frame(Frame::with_content(BytesMut::from(&[0xABu8; 4096][..])));
+
+        let corr_id = msg.correlation_id().unwrap();
+        let reference = msg.clone();
+        let prepared = PreparedMessage::new(msg);
+        assert_eq!(prepared.correlation_id(), corr_id);
+        assert_eq!(prepared.message_type(), 0x010F00);
+
+        let (ref_headers, ref_frames) = reference.into_segments();
+        let first = prepared.to_outbound();
+        let second = prepared.to_outbound();
+        assert_eq!(&first.headers[..], &ref_headers[..]);
+        assert_eq!(first.frames.as_slice(), ref_frames.as_slice());
+        // Retry "clones" are refcount bumps on the same allocation.
+        assert!(
+            Arc::ptr_eq(&first.frames, &second.frames),
+            "re-sends must share the frame payloads"
+        );
+    }
+
+    /// End-to-end: the same `PreparedMessage` can be invoked repeatedly (the
+    /// retry path) and every send puts identical bytes on the wire.
+    #[tokio::test]
+    async fn invoke_prepared_resends_identical_bytes() {
+        let svc = Arc::new(InvocationService::new(Duration::from_secs(30), true));
+        let addr: SocketAddr = "127.0.0.1:65020".parse().unwrap();
+        let (client_io, mut server_io) = tokio::io::duplex(65536);
+        let (read_half, write_half) = tokio::io::split(client_io);
+        svc.register_connection(addr, Box::new(read_half), Box::new(write_half))
+            .await;
+
+        let mut msg = ClientMessage::create_for_encode(0x010000, PARTITION_ID_ANY);
+        msg.add_frame(Frame::with_content(BytesMut::from(&b"payload"[..])));
+        let prepared = Arc::new(PreparedMessage::new(msg));
+
+        let mut wires = Vec::new();
+        for _ in 0..2 {
+            let svc2 = Arc::clone(&svc);
+            let prepared2 = Arc::clone(&prepared);
+            let invoke = tokio::spawn(async move { svc2.invoke_prepared(addr, &prepared2).await });
+
+            let request =
+                tokio::time::timeout(Duration::from_secs(5), read_one_message(&mut server_io))
+                    .await
+                    .expect("request must arrive");
+            let corr_id = request.correlation_id().unwrap();
+            assert_eq!(corr_id, prepared.correlation_id());
+            let mut wire = BytesMut::new();
+            for frame in request.frames() {
+                frame.write_to(&mut wire);
+            }
+            wires.push(wire);
+
+            // Reply so the invocation completes successfully. `write_to` (not
+            // per-frame writes) sets IS_FINAL on the last frame, which is what
+            // the codec needs to complete the message — like the real server.
+            let mut resp = ClientMessage::create_for_encode(0x010001, PARTITION_ID_ANY);
+            resp.set_correlation_id(corr_id);
+            let mut out = BytesMut::new();
+            resp.write_to(&mut out);
+            server_io.write_all(&out).await.unwrap();
+
+            let result = tokio::time::timeout(Duration::from_secs(5), invoke)
+                .await
+                .expect("invocation must complete")
+                .expect("invoke task panicked");
+            assert!(result.is_ok(), "invoke_prepared failed: {result:?}");
+        }
+        assert_eq!(
+            wires[0], wires[1],
+            "re-sent prepared message must be byte-identical"
+        );
     }
 }
