@@ -1073,28 +1073,34 @@ mod tests {
         );
 
         // Answer with a pong carrying the same correlation id (response
-        // message type = request type + 1, as the server does).
+        // message type = request type + 1, as the server does). `write_to`
+        // (not per-frame writes) sets IS_FINAL on the last frame, which is
+        // what the codec needs to complete the message — like the real server.
         let mut pong =
             ClientMessage::create_for_encode(CLIENT_PING_MESSAGE_TYPE + 1, PARTITION_ID_ANY);
         pong.set_correlation_id(corr_id);
         let mut wire = BytesMut::new();
-        for frame in pong.frames() {
-            frame.write_to(&mut wire);
-        }
+        pong.write_to(&mut wire);
         server_io.write_all(&wire).await.unwrap();
 
-        // The reader routes the pong to the waiter, which cleans up after itself.
+        // The reader routes the pong to the waiter, which cleans up after
+        // itself. Cap the wait well under KEEPALIVE_PING_TIMEOUT: past that
+        // deadline the ping task's own timeout cleanup also removes the
+        // waiter, which would let a never-routed pong pass this test.
+        let deadline = tokio::time::Instant::now() + KEEPALIVE_PING_TIMEOUT / 2;
         let mut cleaned = false;
-        for _ in 0..250 {
+        while tokio::time::Instant::now() < deadline {
             if !svc.pending_ops.contains_key(&corr_id) {
                 cleaned = true;
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(
             cleaned,
-            "pong must remove the keepalive waiter from pending_ops"
+            "pong must remove the keepalive waiter from pending_ops well before \
+             the {KEEPALIVE_PING_TIMEOUT:?} ping timeout (timeout cleanup is a \
+             different code path)"
         );
     }
 
