@@ -579,3 +579,113 @@ async fn test_near_cache_concurrent_access() {
 
     map.clear().await.unwrap();
 }
+
+/// A write on one client must invalidate the near cache of every *other*
+/// client, not just its own.
+///
+/// This is the scenario that made the eviction-key mismatch matter in
+/// practice. `IMap::get` populates the near cache under `serialize_value(key)`
+/// — full `Data` form, `[partition_hash i32][type_id i32][payload]` — while the
+/// invalidation listener used to rebuild the key with a bare
+/// `ObjectDataOutput`, omitting the 8-byte header. The eviction addressed a key
+/// that was never stored, so it removed nothing, silently.
+///
+/// A single client never sees it: `put`, `set` and `remove` invalidate through
+/// `serialize_value`, so a client's own writes always evicted correctly. It
+/// takes two clients for the bug to appear, which is why the unit test on key
+/// derivation is not enough on its own.
+///
+/// Marked `#[ignore]` like the other cluster-backed tests; run with
+/// `cargo test --test near_cache_integration_test -- --ignored`.
+#[tokio::test]
+#[ignore = "requires running Hazelcast cluster"]
+async fn test_near_cache_invalidated_by_another_clients_write() {
+    if skip_if_no_cluster() {
+        return;
+    }
+    wait_for_cluster_ready().await;
+
+    let map_name = unique_name("test-nc-cross-client");
+    let key = "order:42".to_string();
+
+    // Two independent clients, each with its own near cache on the same map.
+    let mut clients = Vec::new();
+    for _ in 0..2 {
+        let near_cache_config = NearCacheConfig::builder(&map_name)
+            .max_size(1000)
+            .time_to_live(Duration::from_secs(300))
+            .build()
+            .unwrap();
+        let config = ClientConfigBuilder::new()
+            .cluster_name("dev")
+            .add_address(common::DEFAULT_CLUSTER_ADDRESS.parse().unwrap())
+            .add_near_cache_config(near_cache_config)
+            .build()
+            .unwrap();
+        clients.push(
+            HazelcastClient::new(config)
+                .await
+                .expect("failed to connect"),
+        );
+    }
+    let reader = clients[0].get_map::<String, String>(&map_name);
+    let writer = clients[1].get_map::<String, String>(&map_name);
+    reader.start_near_cache_invalidation().await.unwrap();
+    writer.start_near_cache_invalidation().await.unwrap();
+
+    writer
+        .put(key.clone(), "tier=silver".to_string())
+        .await
+        .unwrap();
+
+    // First read populates the reader's near cache; the second must be served
+    // from it. Asserting the hit matters: without it, a near cache that never
+    // engaged would make the rest of this test pass for the wrong reason.
+    assert_eq!(
+        reader.get(&key).await.unwrap(),
+        Some("tier=silver".to_string())
+    );
+    assert_eq!(
+        reader.get(&key).await.unwrap(),
+        Some("tier=silver".to_string())
+    );
+    let stats = reader.near_cache_stats().unwrap();
+    assert_eq!(
+        stats.hits(),
+        1,
+        "second read should come from the near cache"
+    );
+
+    // The write the reader must not miss.
+    writer
+        .put(key.clone(), "tier=GOLD".to_string())
+        .await
+        .unwrap();
+
+    // Invalidation is a server push and normally lands within a millisecond;
+    // poll rather than sleep a fixed amount, so a slow cluster is not a flake
+    // and a broken one is not hidden by a generous sleep. Unfixed, this never
+    // converges and the assertion below reports the stale value.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut observed = None;
+    while std::time::Instant::now() < deadline {
+        observed = reader.get(&key).await.unwrap();
+        if observed.as_deref() == Some("tier=GOLD") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    assert_eq!(
+        observed,
+        Some("tier=GOLD".to_string()),
+        "the reader's near cache was never invalidated by the writer's update, \
+         so it is still serving a stale value; the cluster holds {:?}",
+        writer.get(&key).await.unwrap()
+    );
+
+    reader.clear().await.unwrap();
+    for client in clients {
+        client.shutdown().await.expect("shutdown failed");
+    }
+}
