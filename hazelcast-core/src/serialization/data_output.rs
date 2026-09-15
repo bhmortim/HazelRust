@@ -1,6 +1,7 @@
 //! Data output traits and implementations for Hazelcast serialization.
 
 use crate::error::Result;
+use crate::serialization::Serializable;
 use bytes::{BufMut, BytesMut};
 
 /// Trait for writing primitive values in Hazelcast's binary format.
@@ -33,6 +34,30 @@ pub trait DataOutput {
 
     /// Writes a string with its length prefix.
     fn write_string(&mut self, v: &str) -> Result<()>;
+
+    /// Writes a nested serializable object: its [`Serializable::type_id`] as a
+    /// 32-bit big-endian integer, immediately followed by the object's own
+    /// serialized body.
+    ///
+    /// This is the exact framing a Hazelcast member reads back with
+    /// `ObjectDataInput.readObject()` — the same convention the map proxy uses
+    /// for a top-level `IdentifiedDataSerializable` payload (`write_int(-2)`
+    /// then the IDS body). Use it to embed one serializable value inside
+    /// another serialized message, e.g. an EntryProcessor that carries an
+    /// expected and a replacement value up to the member.
+    ///
+    /// The body written is whatever the value's [`Serializable::serialize`]
+    /// emits; for an `IdentifiedDataSerializable` that is
+    /// `[bool isIdentified][int factoryId][int classId][writeData…]`, so the
+    /// value's `serialize` must include that envelope (as the map value types
+    /// do) — `write_object` only prepends the type id.
+    fn write_object<T: Serializable>(&mut self, value: &T) -> Result<()>
+    where
+        Self: Sized,
+    {
+        self.write_int(value.type_id())?;
+        value.serialize(self)
+    }
 }
 
 /// A buffer-based implementation of `DataOutput`.
@@ -268,5 +293,80 @@ mod tests {
     fn test_default() {
         let output = ObjectDataOutput::default();
         assert!(output.is_empty());
+    }
+
+    /// A minimal `IdentifiedDataSerializable`-shaped value: `type_id` is the
+    /// IDS constant (-2) and `serialize` writes the `[isIdentified][factory]
+    /// [class][body]` envelope, mirroring how the map value types serialize.
+    struct IdsValue {
+        factory: i32,
+        class: i32,
+        payload: i64,
+    }
+
+    impl Serializable for IdsValue {
+        fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+            output.write_bool(true)?;
+            output.write_int(self.factory)?;
+            output.write_int(self.class)?;
+            output.write_long(self.payload)?;
+            Ok(())
+        }
+        fn type_id(&self) -> i32 {
+            -2
+        }
+    }
+
+    #[test]
+    fn test_write_object_prepends_type_id_then_body() {
+        let v = IdsValue {
+            factory: 1000,
+            class: 3,
+            payload: 7,
+        };
+        let mut output = ObjectDataOutput::new();
+        output.write_object(&v).unwrap();
+
+        // Expect: [type_id=-2 BE][isIdentified=1][factory=1000 BE][class=3 BE][payload=7 BE]
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&(-2i32).to_be_bytes());
+        expected.push(1); // isIdentified
+        expected.extend_from_slice(&1000i32.to_be_bytes());
+        expected.extend_from_slice(&3i32.to_be_bytes());
+        expected.extend_from_slice(&7i64.to_be_bytes());
+        assert_eq!(output.as_bytes(), expected.as_slice());
+    }
+
+    #[test]
+    fn test_write_object_equals_manual_type_id_plus_serialize() {
+        let v = IdsValue {
+            factory: 1001,
+            class: 10,
+            payload: -42,
+        };
+
+        let mut via_helper = ObjectDataOutput::new();
+        via_helper.write_object(&v).unwrap();
+
+        let mut manual = ObjectDataOutput::new();
+        manual.write_int(v.type_id()).unwrap();
+        v.serialize(&mut manual).unwrap();
+
+        assert_eq!(via_helper.as_bytes(), manual.as_bytes());
+    }
+
+    #[test]
+    fn test_write_object_uses_value_type_id_not_hardcoded() {
+        // A non-IDS type id (e.g. STRING -11) must be honored verbatim.
+        struct Stringy;
+        impl Serializable for Stringy {
+            fn serialize<W: DataOutput>(&self, output: &mut W) -> Result<()> {
+                output.write_string("hi")
+            }
+            // uses the default type_id() == -11
+        }
+        let mut output = ObjectDataOutput::new();
+        output.write_object(&Stringy).unwrap();
+        assert_eq!(&output.as_bytes()[0..4], &(-11i32).to_be_bytes());
     }
 }
