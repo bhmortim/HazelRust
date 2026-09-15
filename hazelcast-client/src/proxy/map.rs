@@ -2782,6 +2782,17 @@ where
         Ok(output.into_bytes())
     }
 
+    /// The key bytes a near-cache entry is addressed by.
+    ///
+    /// Population (`get`) and eviction (the entry listener started by
+    /// [`start_near_cache_invalidation`](Self::start_near_cache_invalidation))
+    /// MUST derive this the same way, or an eviction addresses a key that was
+    /// never stored and the stale entry survives until TTL. Sharing one
+    /// function is what keeps them honest.
+    fn near_cache_key<T: Serializable>(key: &T) -> Option<Vec<u8>> {
+        Self::serialize_value(key).ok()
+    }
+
     /// Deserializes a value cached in the near cache.
     ///
     /// Near-cache entries store the full Hazelcast `Data` form produced by
@@ -4780,9 +4791,12 @@ where
 
         let registration = self
             .add_entry_listener(config, move |event: EntryEvent<K, V>| {
-                let mut output = ObjectDataOutput::new();
-                if event.key.serialize(&mut output).is_ok() {
-                    let key_data = output.into_bytes();
+                // Must match how `get` populates the cache: the full Data form
+                // `[partition_hash i32][type_id i32][payload]`. A bare
+                // `ObjectDataOutput` here omits the 8-byte header, so the
+                // eviction addresses a key that was never stored and the stale
+                // entry survives until TTL.
+                if let Some(key_data) = Self::near_cache_key(&event.key) {
                     near_cache.invalidate(&key_data);
                 }
             })
@@ -6135,6 +6149,59 @@ mod tests {
         // Entries shorter than the Data header are an error, not a panic.
         let err = IMap::<String, Vec<u8>>::deserialize_cached_value::<Vec<u8>>(&[0, 1, 2]);
         assert!(err.is_err());
+    }
+
+    /// Regression: a near-cache eviction must address the key the entry was
+    /// populated under.
+    ///
+    /// `IMap::get` populates via `serialize_value`, which writes the full
+    /// Hazelcast `Data` form — `[partition_hash i32][type_id i32][payload]`.
+    /// The invalidation listener used to rebuild the key with a bare
+    /// `ObjectDataOutput`, writing the payload alone. The two differed by the
+    /// 8-byte header, so a server-driven invalidation evicted nothing: a write
+    /// on another client left this one serving the stale value until TTL or
+    /// max-idle removed it. Local mutations were unaffected, because
+    /// `put`/`set`/`remove` all invalidate through `serialize_value`.
+    ///
+    /// Same class as `test_near_cache_value_roundtrip_skips_data_header`, in
+    /// the key path rather than the value path.
+    #[test]
+    fn test_near_cache_invalidation_key_matches_populate_key() {
+        let key: Vec<u8> = b"order:42".to_vec();
+
+        // How `get` addresses the entry when it populates the cache.
+        let populate_key = IMap::<Vec<u8>, Vec<u8>>::serialize_value(&key).unwrap();
+
+        // How the invalidation listener addresses it.
+        let eviction_key = IMap::<Vec<u8>, Vec<u8>>::near_cache_key(&key).unwrap();
+
+        assert_eq!(
+            eviction_key, populate_key,
+            "eviction and population must derive the key the same way"
+        );
+
+        // The 8-byte Data header is the part that used to go missing.
+        assert_eq!(&populate_key[..4], &[0, 0, 0, 0], "partition hash");
+        assert_eq!(
+            i32::from_be_bytes(populate_key[4..8].try_into().unwrap()),
+            -12,
+            "CONSTANT_TYPE_BYTE_ARRAY"
+        );
+
+        // And the behaviour, through the real near cache.
+        let cache = ShardedNearCache::new(
+            NearCacheConfig::builder("test-map")
+                .max_size(16)
+                .build()
+                .unwrap(),
+        );
+        cache.put(populate_key.clone(), b"stale value".to_vec());
+        cache.invalidate(&eviction_key);
+        assert_eq!(
+            cache.get(&populate_key),
+            None,
+            "a server-driven invalidation left the stale entry in place"
+        );
     }
 
     #[tokio::test]
