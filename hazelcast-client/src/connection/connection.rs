@@ -264,17 +264,16 @@ impl Connection {
 
         socket
             .connect(&address.into())
-            .or_else(|e| {
-                // Non-blocking connect returns WouldBlock/InProgress, which is expected
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.raw_os_error() == Some(10035) // WSAEWOULDBLOCK on Windows
-                || e.raw_os_error() == Some(115)
-                // EINPROGRESS on Linux
-                {
-                    Ok(())
-                } else {
-                    Err(e)
-                }
+            .or_else(|e| match e.kind() {
+                // A non-blocking connect reports that it has *started*, not
+                // that it has finished; `stream.writable()` below is what waits
+                // for completion. Match the error kind rather than raw errno:
+                // EINPROGRESS is 115 on Linux but 36 on macOS and the BSDs, so
+                // the old numeric check made every connect fail on macOS with
+                // "Operation now in progress (os error 36)".
+                std::io::ErrorKind::WouldBlock => Ok(()),
+                _ if is_connect_in_progress(&e) => Ok(()),
+                _ => Err(e),
             })
             .map_err(|e| {
                 HazelcastError::Connection(format!("failed to connect to {}: {}", address, e))
@@ -686,4 +685,23 @@ mod tests {
             assert!(debug_str.contains("Plain"));
         });
     }
+}
+
+/// Whether a non-blocking `connect` reported that it has started rather than
+/// failed.
+///
+/// `EINPROGRESS` is 115 on Linux but 36 on macOS and the BSDs, and
+/// `std::io::ErrorKind::InProgress` is still unstable, so the raw value has to
+/// come from the platform rather than from a literal. Hardcoding Linux's 115
+/// made every connect fail on macOS with "Operation now in progress".
+#[cfg(unix)]
+fn is_connect_in_progress(e: &std::io::Error) -> bool {
+    e.raw_os_error() == Some(libc::EINPROGRESS)
+}
+
+/// Windows reports a pending overlapped connect as `WSAEWOULDBLOCK`, which
+/// `ErrorKind::WouldBlock` already covers.
+#[cfg(not(unix))]
+fn is_connect_in_progress(_e: &std::io::Error) -> bool {
+    false
 }

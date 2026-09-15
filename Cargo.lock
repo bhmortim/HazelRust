@@ -1787,6 +1787,7 @@ dependencies = [
  "hazelcast-core",
  "k8s-openapi",
  "kube",
+ "libc",
  "metrics",
  "metrics-exporter-prometheus",
  "rand 0.8.6",
