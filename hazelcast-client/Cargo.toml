@@ -113,3 +113,8 @@ harness = false
 [[example]]
 name = "prometheus_metrics"
 required-features = ["metrics"]
+
+# For EINPROGRESS, whose raw value differs per platform; see
+# `is_connect_in_progress` in src/connection/connection.rs.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
