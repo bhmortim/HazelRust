@@ -1,6 +1,6 @@
-# HazelRust — Production-Hardening Execution Plan
+# Hazelcast Rust Client — Production-Hardening Execution Plan
 
-This is the working tracker for taking HazelRust from an early-stage client toward
+This is the working tracker for taking the client from an early-stage client toward
 the assurance bar required for high-stakes (up to central-bank / CBDC) use. It is
 derived from `docs/CBDC_READINESS_ASSESSMENT.md`, which holds the full rationale.
 
@@ -25,7 +25,7 @@ Owner: fill in a name; **no item on the money path may be reviewed by only its a
 - [ ] **Ratchet:** flip `fmt` to blocking once `cargo fmt --all` is clean — *Owner: ___*
 - [ ] **Ratchet:** flip `clippy` to `-D warnings` once the warning backlog is cleared — *Owner: ___*
 - [ ] **Ratchet:** flip `audit` + `deny` to blocking once the tree is clean — *Owner: ___*
-- [ ] Add coverage for **both** crates (today only `hazelcast-core`), remove `--ignore-run-fail`, set `fail_ci_if_error: true`, add a ratcheting threshold — *Owner: ___*
+- [ ] Add coverage for **both** crates (today only `hazelcast-client-core`), remove `--ignore-run-fail`, set `fail_ci_if_error: true`, add a ratcheting threshold — *Owner: ___*
 - [ ] Produce an SBOM (CycloneDX) per build; pin toolchain via `rust-toolchain.toml` — *Owner: ___*
 
 **Exit:** every commit is gated by build + test + fmt + clippy(-D warnings) + audit + deny, all green; coverage measured on both crates.
@@ -67,11 +67,11 @@ run against it. Results so far:
 - [x] **IMap / Hash / Set / String / key-mgmt paths:** exercised against the live
   cluster; behavior matches expectations.
 - [x] **CP `AtomicLong`: bug found, root-caused, fixed, and VERIFIED on a real cluster
-  → [issue #12](https://github.com/bhmortim/HazelRust/issues/12).**
+  → [issue #12](https://github.com/hazelcast/hazelcast-rust-client/issues/12).**
   Against a real CP subsystem, every op returned `0` / silently no-op'd. **Three**
   defects, all in `proxy/atomic_long.rs`, fixed in commit `41316dd`: (1) CP requests
   omitted the Raft `groupId`; (2) the `RaftGroupId` was mis-framed as plain frames
-  instead of a `BEGIN/[seed,id]/name/END` data structure; (3) the `hazelcast_core`
+  instead of a `BEGIN/[seed,id]/name/END` data structure; (3) the `hazelcast_client_core`
   `CP_ATOMIC_LONG_*` message-type constants are mislabeled (`…_ADD_AND_GET = 0x090500`
   is really *Get*), so `add_and_get` was invoking *Get* and never mutating. Fix resolves
   the group via `CPGroupCreateCPGroup` (`0x1E0100`) and uses correct local message types.
@@ -98,9 +98,9 @@ run against it. Results so far:
 - [ ] **Follow-up:** `cp_session.rs` `encode_group_id` also writes plain frames rather
   than the data-structure framing — audit whether any live CP path depends on it, and
   correct the mislabeled `CP_ATOMIC_LONG_*` / `CP_SUBSYSTEM_*` constants at the source in
-  `hazelcast-core/src/protocol/constants.rs` (currently only shadowed locally). — *Owner: ___*
+  `hazelcast-client-core/src/protocol/constants.rs` (currently only shadowed locally). — *Owner: ___*
 - [ ] **Follow-up:** the mislabeled `CP_ATOMIC_LONG_*` / `CP_SUBSYSTEM_*` constants in
-  `hazelcast-core/src/protocol/constants.rs` should be corrected at the source (not just
+  `hazelcast-client-core/src/protocol/constants.rs` should be corrected at the source (not just
   shadowed locally) and cross-checked against the generated protocol definitions. — *Owner: ___*
 - [ ] **Follow-up:** separate live-cluster hangs/failures observed (IMap lock test hang;
   ~15 `java_parity` failures) — triage independently. — *Owner: ___*

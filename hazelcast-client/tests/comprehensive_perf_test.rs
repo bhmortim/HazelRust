@@ -1,4 +1,4 @@
-//! Comprehensive performance benchmarks for HazelRust Hazelcast client.
+//! Comprehensive performance benchmarks for the Hazelcast Rust client.
 //!
 //! Run with: cargo test --test comprehensive_perf_test -- --nocapture --test-threads=1
 //!

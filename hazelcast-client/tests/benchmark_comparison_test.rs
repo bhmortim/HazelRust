@@ -1,4 +1,4 @@
-//! HazelRust vs Java Benchmark Suite — Locked 43-scenario matrix.
+//! Rust vs Java Client Benchmark Suite — Locked 43-scenario matrix.
 //!
 //! Both Rust and Java clients run the EXACT SAME scenarios so every
 //! data point is directly comparable. No orphan scenarios.

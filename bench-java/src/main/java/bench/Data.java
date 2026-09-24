@@ -5,7 +5,7 @@ import java.util.Map;
 
 /**
  * Deterministic data-generation contract — BIT-IDENTICAL to the Rust harness
- * (hazelrust-bench/src/data.rs). Both clients must produce the same key set,
+ * (hazelcast-client-bench/src/data.rs). Both clients must produce the same key set,
  * value bytes, and distribution draws. Note the use of unsigned operations
  * ({@code >>>}, {@link Long#remainderUnsigned}) to match Rust's u64 semantics.
  */

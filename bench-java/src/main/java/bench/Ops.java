@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Operation dispatch + seeding — mirror of hazelrust-bench/src/ops.rs. Split
+ * Operation dispatch + seeding — mirror of hazelcast-client-bench/src/ops.rs. Split
  * into a {@link Planner} (advances the deterministic key-stream) and
  * {@link Handles} (executes a resolved {@link Plan} against shared proxies).
  */

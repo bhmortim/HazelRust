@@ -12,7 +12,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Load-generation drivers — mirror of hazelrust-bench/src/runner.rs. Closed-loop
+ * Load-generation drivers — mirror of hazelcast-client-bench/src/runner.rs. Closed-loop
  * uses C platform threads each issuing → awaiting → re-issuing (so outstanding
  * ops == C, matching the Rust tokio model). Open-loop uses a fixed-rate clock
  * with C-permit backpressure and coordinated-omission-correct latency

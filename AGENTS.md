@@ -1,37 +1,52 @@
-Based on the `HazelRust` codebase, here is the concise coding style guide focusing on its specific architectural patterns and modern Rust idioms.
+# AGENTS.md
 
-# HazelRust Coding Style Guide
+Guidance for AI coding agents working in this repository. Human contributors should
+start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## 1. Safety and Interior Mutability
-*   **Avoid `unsafe` where possible:** Rely on the compiler to manage memory and lifetimes.
-*   **Prefer `RefCell` for local interior mutability:** Use `RefCell` when you need to mutate data behind an immutable reference within a single-threaded context. 
-*   **Pattern Matching for State Management:** Use `match` extensively on `State` enums to handle internal transitions safely.
+## What this is
 
-## 2. Structural Patterns and Lifecycle
-*   **The "Application" Trait Pattern:** Define core logic via a trait (e.g., `Application`) that provides hooks for `on_update`, `on_event`, and `on_render`.
-*   **Static Creation Methods:** Use a `new()` associated function as the primary constructor. Avoid complex logic in the constructor; delegate to initialization methods if needed.
-*   **Explicit Drop Logic:** Implement the `Drop` trait for structs managing external resources (like window handles or GPU contexts) to ensure clean teardown.
+The Hazelcast Rust client (experimental): an async, Tokio-based client for Hazelcast
+5.x clusters that speaks the Hazelcast Open Binary Client Protocol.
 
-## 3. Macros and Logging
-*   **Contextual Logging:** Use the `info!`, `warn!`, and `error!` macros consistently. 
-*   **Module-Level Metadata:** Use the `#[macro_use]` attribute on the internal `macros` module to ensure logging and utility macros are available throughout the crate without explicit imports.
+## Workspace
 
-## 4. Error Handling and Assertions
-*   **Internal Assertions:** Use `hz_core_assert!` for engine-level invariants and `hz_assert!` for application-level logic. These should be used to catch unrecoverable state violations during development.
-*   **Result Wrapping:** Prefer returning `Result<(), String>` or specialized Error types for fallible initialization (e.g., Window creation).
+| Crate | Path | Role |
+|-------|------|------|
+| `hazelcast-client-core` | `hazelcast-client-core/` | Wire protocol (`ClientMessage`/`Frame`), serialization (Compact, Portable, IdentifiedDataSerializable, JSON, serde), error types |
+| `hazelcast-client` | `hazelcast-client/` | Connections, cluster and partition management, data-structure proxies, CP, SQL, transactions, Jet, near cache, config. Re-exports the core crate as `hazelcast_client::core` |
+| `hazelcast-client-derive` | `hazelcast-client-derive/` | Derive macros for the serialization traits |
+| `hazelcast-client-bench` | `hazelcast-client-bench/` | Benchmark harness against the Java client (`publish = false`); see `bench/README.md` |
 
-## 5. Event Handling
-*   **Dispatcher Pattern:** Use a `Dispatcher` mechanism to route events to specific handlers. 
-*   **Functional Event Processing:** Leverage closures and the `?` operator within event dispatchers to create a clean, declarative event flow:
-    ```rust
-    dispatcher.dispatch::<WindowCloseEvent>(&|e| self.on_window_close(e))?;
-    ```
+Fuzz targets live in `hazelcast-client-core/fuzz/`, a standalone cargo-fuzz workspace
+that needs a nightly toolchain.
 
-## 6. Naming and Visibility
-*   **Internal vs. Public:** Use `pub(crate)` for modules and functions that should be accessible across the engine but hidden from the end-user.
-*   **Trait Prefixes:** Do not prefix traits with `I` (e.g., use `Layer`, not `ILayer`).
-*   **Feature Gating:** Use `#[cfg(target_os = "...")]` at the module level to handle platform-specific implementations (e.g., Windows vs. Linux windowing) rather than cluttering logic with inline checks.
+## Build and test
 
-## 7. Formatting and Idioms
-*   **Trailing Commas:** Always use trailing commas in multi-line struct definitions and match arms to minimize diff noise.
-*   **Explicit `self` types:** Use `self: &mut Self` or `self: RefCell<Self>` only when specific ownership semantics are required; otherwise, stick to standard `&self` and `&mut self`.
+CI runs these on every push and pull request; build, test, fmt, and deny are blocking:
+
+```sh
+cargo build --workspace --locked
+cargo test --workspace --locked
+cargo fmt --all --check
+cargo clippy --all-targets --locked   # observe-only in CI; don't add new warnings
+cargo deny check
+```
+
+Integration tests that need a live cluster are `#[ignore]`d. Point them at a cluster
+with `CLUSTER_ADDRESS`:
+
+```sh
+CLUSTER_ADDRESS=127.0.0.1:5701 cargo test -p hazelcast-client -- --ignored
+```
+
+## Conventions
+
+- Every source file starts with the Hazelcast Apache 2.0 license header; copy it from
+  an existing file.
+- Return `hazelcast_client_core::Result` / `HazelcastError` from fallible code; avoid
+  `unwrap()` and `expect()` in library code.
+- Protocol encoders must match the Java client's wire format; check message types and
+  frame layout against the Hazelcast client protocol definitions, not just local
+  constants.
+- Use conventional commit messages (`feat`, `fix`, `docs`, `refactor`, `test`, `bench`,
+  `chore`).

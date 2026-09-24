@@ -532,7 +532,7 @@ stages that serialize correctly for the Hazelcast Jet engine.
 
 ## Appendix: Protocol Constants Defined But Unused
 
-The following constants are defined in `hazelcast-core/src/protocol/constants.rs` but
+The following constants are defined in `hazelcast-client-core/src/protocol/constants.rs` but
 are not referenced anywhere in client code. They may represent features that have
 protocol support but no client-side implementation:
 

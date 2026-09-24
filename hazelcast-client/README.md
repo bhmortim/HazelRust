@@ -12,11 +12,10 @@ An asynchronous Rust client for [Hazelcast](https://hazelcast.com/) 5.x, built o
 queues, topics, locks, counters, SQL service, transactions, and Jet jobs from idiomatic
 `async` Rust.
 
-> **Not an official Hazelcast client.** This is an independent, community-developed crate.
-> It is not affiliated with or endorsed by Hazelcast, Inc. The vendor-supported clients are
-> Java, Python, Node.js, Go, .NET, and C++. See the
-> [workspace README](https://github.com/bhmortim/HazelRust) for a full feature overview and
-> a maturity breakdown.
+> **Status: experimental.** This client is under active development and is not yet
+> recommended for production use; APIs may change between releases. See the
+> [workspace README](https://github.com/hazelcast/hazelcast-rust-client) for a full feature
+> overview and a maturity breakdown.
 
 ## Quick start
 
@@ -242,3 +241,5 @@ Criterion writes HTML reports to `target/criterion/`.
 ## License
 
 Apache License 2.0 — see [LICENSE](../LICENSE).
+
+Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.

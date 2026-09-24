@@ -21,7 +21,7 @@ import java.util.concurrent.Callable;
 
 /**
  * hazeljava-bench — official Hazelcast Java client benchmark harness. Mirrors
- * hazelrust-bench: identical manifest, args, concurrency model, and output
+ * hazelcast-client-bench: identical manifest, args, concurrency model, and output
  * schema. GC log + JFR are enabled via JVM flags injected by the orchestrator.
  */
 @Command(name = "hazeljava-bench", mixinStandardHelpOptions = true,

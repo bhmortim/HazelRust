@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Shared benchmark manifest generator — the single source of truth for the
-HazelRust-vs-Java comparison (see docs/cbdc/BENCHMARK_METHODOLOGY.md).
+Rust-vs-Java client comparison (see docs/cbdc/BENCHMARK_METHODOLOGY.md).
 
-Both harnesses (Rust `hazelrust-bench`, Java `bench-java`) consume the emitted
+Both harnesses (Rust `hazelcast-client-bench`, Java `bench-java`) consume the emitted
 manifest and execute every cell *bit-for-bit identically*. Neither harness
 hard-codes a workload. This generator emits one manifest per tier:
 

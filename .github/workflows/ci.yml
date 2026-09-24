@@ -1,6 +1,6 @@
 name: CI
 
-# The real build/test/lint gate for HazelRust.
+# The real build/test/lint gate for the Hazelcast Rust client.
 #
 # Rollout model (see EXECUTION_PLAN.md, Layer 0):
 #   * `build` and `test` are BLOCKING — the workspace must compile on stable

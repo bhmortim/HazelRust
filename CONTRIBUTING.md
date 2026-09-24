@@ -6,18 +6,20 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.85 or later
 - A running Hazelcast cluster for integration tests
 - Docker (optional, for running Hazelcast locally)
 
 ### Development Setup
 
-This project is organized as a Cargo workspace with two crates:
+This project is organized as a Cargo workspace:
 
 | Crate | Description |
 |-------|-------------|
-| `hazelcast-core` | Core types, protocols, and serialization |
+| `hazelcast-client-core` | Core types, protocols, and serialization |
 | `hazelcast-client` | Client implementation and connection management |
+| `hazelcast-client-derive` | Derive macros for the serialization traits |
+| `hazelcast-client-bench` | Benchmark harness against the Java client (not published) |
 
 ```bash
 # Clone the repository
@@ -34,7 +36,7 @@ cargo test
 cargo test --all-features
 
 # Build/test a specific crate
-cargo build -p hazelcast-core
+cargo build -p hazelcast-client-core
 cargo test -p hazelcast-client
 ```
 
@@ -78,6 +80,23 @@ cargo clippy --all-targets --all-features -- -D warnings
 - Use the `?` operator for error propagation
 - Provide context in error messages
 - Avoid `unwrap()` and `expect()` in library code
+
+### License Headers
+
+Every source file (`.rs`, `.java`, `.py`) starts with the Apache License 2.0 header used
+across Hazelcast projects:
+
+```
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * ...
+ */
+```
+
+Copy the full header from any existing file when you add a new one (Python files use `#`
+comments).
 
 ## Testing
 
@@ -191,31 +210,34 @@ Include:
 
 ```
 hazelcast-rust-client/
-├── Cargo.toml              # Workspace manifest
-├── hazelcast-core/         # Core crate
+├── Cargo.toml                # Workspace manifest
+├── hazelcast-client-core/    # Core crate
 │   ├── Cargo.toml
+│   ├── fuzz/                 # cargo-fuzz targets (standalone workspace)
 │   └── src/
-│       ├── lib.rs          # Public API exports
-│       ├── protocol/       # Hazelcast protocol implementation
-│       ├── serialization/  # Data serialization
-│       └── types/          # Common types and errors
-├── hazelcast-client/       # Client crate
+│       ├── lib.rs            # Public API exports
+│       ├── protocol/         # Hazelcast protocol implementation
+│       ├── serialization/    # Data serialization
+│       └── types/            # Common types and errors
+├── hazelcast-client/         # Client crate
 │   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs          # Public API exports
-│       ├── client.rs       # Client entry point
-│       ├── config.rs       # Configuration builders
-│       ├── proxy/          # Data structure proxies (IMap, IQueue, etc.)
-│       ├── connection/     # Network layer (TCP, TLS, WebSocket)
-│       ├── listener/       # Event listener infrastructure
-│       ├── cache/          # Near cache implementation
-│       ├── sql/            # SQL service
-│       ├── query/          # Predicate API
-│       ├── executor/       # Executor services
-│       └── transaction/    # Transaction support
-│   ├── tests/              # Integration tests
-│   ├── benches/            # Benchmarks
-│   └── examples/           # Example programs
+│   ├── src/
+│   │   ├── lib.rs            # Public API exports
+│   │   ├── client.rs         # Client entry point
+│   │   ├── config.rs         # Configuration builders
+│   │   ├── proxy/            # Data structure proxies (IMap, IQueue, etc.)
+│   │   ├── connection/       # Network layer (TCP, TLS, WebSocket)
+│   │   ├── listener/         # Event listener infrastructure
+│   │   ├── cache/            # Near cache implementation
+│   │   ├── sql/              # SQL service
+│   │   ├── query/            # Predicate API
+│   │   ├── executor/         # Executor services
+│   │   └── transaction/      # Transaction support
+│   ├── tests/                # Integration tests
+│   ├── benches/              # Benchmarks
+│   └── examples/             # Example programs
+├── hazelcast-client-derive/  # Derive macros for the serialization traits
+└── hazelcast-client-bench/   # Benchmark harness (see bench/README.md)
 ```
 
 ## License

@@ -84,7 +84,7 @@ def collect_provenance(args, hz_client_version):
         _, cs, _ = sh("sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' %s" % m)
         member_cpuset[m] = cs.strip()
     return {
-        "benchmark": "HazelRust vs official Hazelcast Java client",
+        "benchmark": "Hazelcast Rust client vs official Hazelcast Java client",
         "commit": args.commit,
         "cluster_name": args.cluster_name,
         "cluster": args.cluster,
