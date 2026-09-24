@@ -17,6 +17,10 @@ __pycache__/
 /benchmarks/out_*/
 /bench-java/build/
 /bench-java/.gradle/
+# Eclipse/JDT metadata that Java language servers generate for the Gradle project
+/bench-java/.project
+/bench-java/.classpath
+/bench-java/.settings/
 /bench/manifest.t2.json
 /benchmarks/headline/
 /benchmarks/t0/
