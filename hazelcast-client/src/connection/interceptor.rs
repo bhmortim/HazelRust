@@ -15,7 +15,7 @@
 //!
 //! #[async_trait]
 //! impl SocketInterceptor for MyInterceptor {
-//!     async fn on_connect(&self, stream: &mut TcpStream) -> hazelcast_core::Result<()> {
+//!     async fn on_connect(&self, stream: &mut TcpStream) -> hazelcast_client_core::Result<()> {
 //!         // Custom handshake or authentication
 //!         Ok(())
 //!     }
@@ -37,7 +37,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::net::TcpStream;
 
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 
 /// Socket-level options applied to TCP connections.
 ///

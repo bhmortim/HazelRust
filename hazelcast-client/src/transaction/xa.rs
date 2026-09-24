@@ -32,9 +32,9 @@ use std::time::Duration;
 use bytes::BytesMut;
 use uuid::Uuid;
 
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
 use crate::connection::ConnectionManager;
 

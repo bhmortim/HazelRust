@@ -9,7 +9,7 @@ use std::fmt;
 use std::net::SocketAddr;
 
 use async_trait::async_trait;
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 use tracing::{debug, info};
 
 use super::discovery::StaticAddressDiscovery;

@@ -4,9 +4,9 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
-use hazelcast_core::protocol::constants::{SQL_CLOSE, SQL_EXECUTE, SQL_FETCH};
-use hazelcast_core::protocol::{ClientMessage, Frame};
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::protocol::constants::{SQL_CLOSE, SQL_EXECUTE, SQL_FETCH};
+use hazelcast_client_core::protocol::{ClientMessage, Frame};
+use hazelcast_client_core::{HazelcastError, Result};
 
 use crate::connection::ConnectionManager;
 

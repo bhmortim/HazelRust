@@ -67,7 +67,7 @@ pub fn derive_identified_impl(input: TokenStream) -> TokenStream {
     let class_id_i32 = class_id as i32;
 
     let expanded = quote! {
-        impl #impl_generics hazelcast_core::serialization::IdentifiedDataSerializable
+        impl #impl_generics hazelcast_client_core::serialization::IdentifiedDataSerializable
             for #name #ty_generics #where_clause
         {
             fn factory_id(&self) -> i32 {
@@ -80,16 +80,16 @@ pub fn derive_identified_impl(input: TokenStream) -> TokenStream {
 
             fn write_data(
                 &self,
-                output: &mut dyn hazelcast_core::DataOutput,
-            ) -> hazelcast_core::Result<()> {
+                output: &mut dyn hazelcast_client_core::DataOutput,
+            ) -> hazelcast_client_core::Result<()> {
                 #(#write_stmts)*
                 Ok(())
             }
 
             fn read_data(
                 &mut self,
-                input: &mut dyn hazelcast_core::DataInput,
-            ) -> hazelcast_core::Result<()> {
+                input: &mut dyn hazelcast_client_core::DataInput,
+            ) -> hazelcast_client_core::Result<()> {
                 #(#read_stmts)*
                 Ok(())
             }

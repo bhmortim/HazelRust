@@ -15,12 +15,12 @@
 use bytes::BytesMut;
 use proptest::prelude::*;
 
-use hazelcast_core::protocol::{ClientMessageCodec, Frame};
-use hazelcast_core::serialization::compact::{
+use hazelcast_client_core::protocol::{ClientMessageCodec, Frame};
+use hazelcast_client_core::serialization::compact::{
     Compact, CompactReader, CompactSerializer, CompactWriter, DefaultCompactReader,
     DefaultCompactWriter,
 };
-use hazelcast_core::{GenericRecord, Result};
+use hazelcast_client_core::{GenericRecord, Result};
 use tokio_util::codec::Decoder;
 
 /// A representative Compact value covering string, signed-integer, boolean, and

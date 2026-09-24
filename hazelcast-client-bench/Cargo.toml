@@ -1,18 +1,18 @@
 [package]
-name = "hazelrust-bench"
+name = "hazelcast-client-bench"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 publish = false
-description = "End-to-end benchmark harness for the HazelRust client (vs the official Hazelcast Java client). Consumes the shared bench manifest; emits HdrHistogram-backed result records."
+description = "End-to-end benchmark harness for the Hazelcast Rust client (vs the official Hazelcast Java client). Consumes the shared bench manifest; emits HdrHistogram-backed result records."
 
 [[bin]]
-name = "hazelrust-bench"
+name = "hazelcast-client-bench"
 path = "src/main.rs"
 
 [dependencies]
 hazelcast-client = { path = "../hazelcast-client" }
-hazelcast-core = { path = "../hazelcast-core", features = ["serde"] }
+hazelcast-client-core = { path = "../hazelcast-client-core", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 hdrhistogram = "7"
 serde = { version = "1", features = ["derive"] }

@@ -5,13 +5,13 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     BEGIN_DATA_STRUCTURE_FLAG, END_DATA_STRUCTURE_FLAG, END_FLAG, IS_NULL_FLAG, MAP_FETCH_ENTRIES,
     MAP_FETCH_KEYS,
 };
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::ObjectDataInput;
-use hazelcast_core::{ClientMessage, Deserializable, Result};
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::serialization::ObjectDataInput;
+use hazelcast_client_core::{ClientMessage, Deserializable, Result};
 
 use crate::connection::ConnectionManager;
 

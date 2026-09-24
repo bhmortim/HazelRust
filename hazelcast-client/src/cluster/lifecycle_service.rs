@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 
 use crate::connection::ConnectionManager;
 use crate::listener::LifecycleEvent;

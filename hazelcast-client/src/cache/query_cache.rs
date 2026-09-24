@@ -7,8 +7,8 @@ use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{Deserializable, Result, Serializable};
+use hazelcast_client_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{Deserializable, Result, Serializable};
 
 use crate::listener::{EntryEvent, EntryEventType, ListenerRegistration};
 use crate::query::Predicate;

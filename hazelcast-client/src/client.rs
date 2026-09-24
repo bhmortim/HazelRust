@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use hazelcast_core::{Deserializable, Result, Serializable};
+use hazelcast_client_core::{Deserializable, Result, Serializable};
 use uuid::Uuid;
 
 use crate::cluster::{
@@ -1185,10 +1185,10 @@ impl HazelcastClient {
     /// }
     /// ```
     pub async fn get_distributed_objects(&self) -> Result<Vec<DistributedObjectInfo>> {
-        use hazelcast_core::protocol::constants::{
+        use hazelcast_client_core::protocol::constants::{
             CLIENT_GET_DISTRIBUTED_OBJECTS, PARTITION_ID_ANY,
         };
-        use hazelcast_core::protocol::ClientMessage;
+        use hazelcast_client_core::protocol::ClientMessage;
 
         let mut request = ClientMessage::new_request(CLIENT_GET_DISTRIBUTED_OBJECTS);
         request.set_partition_id(PARTITION_ID_ANY);
@@ -1239,8 +1239,8 @@ impl HazelcastClient {
     /// client.destroy_distributed_object("hz:impl:queueService", "my-queue").await?;
     /// ```
     pub async fn destroy_distributed_object(&self, service_name: &str, name: &str) -> Result<()> {
-        use hazelcast_core::protocol::constants::{CLIENT_DESTROY_PROXY, PARTITION_ID_ANY};
-        use hazelcast_core::protocol::{ClientMessage, Frame};
+        use hazelcast_client_core::protocol::constants::{CLIENT_DESTROY_PROXY, PARTITION_ID_ANY};
+        use hazelcast_client_core::protocol::{ClientMessage, Frame};
 
         let mut request = ClientMessage::new_request(CLIENT_DESTROY_PROXY);
         request.set_partition_id(PARTITION_ID_ANY);
@@ -1334,7 +1334,7 @@ impl HazelcastClient {
 
         {
             let mut state = self.distributed_object_listeners.write().map_err(|_| {
-                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+                hazelcast_client_core::HazelcastError::IllegalState("lock poisoned".into())
             })?;
             state
                 .listeners
@@ -1368,7 +1368,7 @@ impl HazelcastClient {
     ) -> Result<bool> {
         let removed = {
             let mut state = self.distributed_object_listeners.write().map_err(|_| {
-                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+                hazelcast_client_core::HazelcastError::IllegalState("lock poisoned".into())
             })?;
 
             if let Some((_, registration)) = state.listeners.remove(&listener_id) {
@@ -1473,7 +1473,7 @@ impl HazelcastClient {
 
         {
             let mut state = self.client_state_listeners.write().map_err(|_| {
-                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+                hazelcast_client_core::HazelcastError::IllegalState("lock poisoned".into())
             })?;
             state
                 .listeners
@@ -1504,7 +1504,7 @@ impl HazelcastClient {
     pub async fn remove_client_state_listener(&self, listener_id: ListenerId) -> Result<bool> {
         let removed = {
             let mut state = self.client_state_listeners.write().map_err(|_| {
-                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+                hazelcast_client_core::HazelcastError::IllegalState("lock poisoned".into())
             })?;
 
             if let Some((_, registration)) = state.listeners.remove(&listener_id) {
@@ -1583,7 +1583,7 @@ impl HazelcastClient {
 
         {
             let mut state = self.partition_lost_listeners.write().map_err(|_| {
-                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+                hazelcast_client_core::HazelcastError::IllegalState("lock poisoned".into())
             })?;
             state
                 .listeners
@@ -1606,7 +1606,7 @@ impl HazelcastClient {
     pub async fn remove_partition_lost_listener(&self, listener_id: ListenerId) -> Result<bool> {
         let removed = {
             let mut state = self.partition_lost_listeners.write().map_err(|_| {
-                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+                hazelcast_client_core::HazelcastError::IllegalState("lock poisoned".into())
             })?;
 
             if let Some((_, registration)) = state.listeners.remove(&listener_id) {
@@ -1703,7 +1703,7 @@ impl HazelcastClient {
 
         {
             let mut state = self.migration_listeners.write().map_err(|_| {
-                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+                hazelcast_client_core::HazelcastError::IllegalState("lock poisoned".into())
             })?;
             state
                 .listeners
@@ -1726,7 +1726,7 @@ impl HazelcastClient {
     pub async fn remove_migration_listener(&self, listener_id: ListenerId) -> Result<bool> {
         let removed = {
             let mut state = self.migration_listeners.write().map_err(|_| {
-                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+                hazelcast_client_core::HazelcastError::IllegalState("lock poisoned".into())
             })?;
 
             if let Some((_, registration)) = state.listeners.remove(&listener_id) {
@@ -1842,7 +1842,7 @@ impl HazelcastClient {
 
         {
             let mut state = self.connection_listeners.write().map_err(|_| {
-                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+                hazelcast_client_core::HazelcastError::IllegalState("lock poisoned".into())
             })?;
             state
                 .listeners
@@ -1865,7 +1865,7 @@ impl HazelcastClient {
     pub async fn remove_connection_listener(&self, listener_id: ListenerId) -> Result<bool> {
         let removed = {
             let mut state = self.connection_listeners.write().map_err(|_| {
-                hazelcast_core::HazelcastError::IllegalState("lock poisoned".into())
+                hazelcast_client_core::HazelcastError::IllegalState("lock poisoned".into())
             })?;
 
             if let Some((_, registration)) = state.listeners.remove(&listener_id) {

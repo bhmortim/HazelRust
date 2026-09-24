@@ -10,13 +10,15 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use hazelcast_core::protocol::{
+use hazelcast_client_core::protocol::{
     ClientMessage, Frame, DURABLE_EXECUTOR_DISPOSE_RESULT, DURABLE_EXECUTOR_IS_SHUTDOWN,
     DURABLE_EXECUTOR_RETRIEVE_AND_DISPOSE_RESULT, DURABLE_EXECUTOR_RETRIEVE_RESULT,
     DURABLE_EXECUTOR_SHUTDOWN, DURABLE_EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY,
     RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
+use hazelcast_client_core::{
+    Deserializable, HazelcastError, ObjectDataInput, Result, Serializable,
+};
 
 use super::{Callable, CallableTask};
 use crate::connection::ConnectionManager;
@@ -308,8 +310,8 @@ impl DurableExecutorService {
         if key_data.is_empty() {
             return PARTITION_ID_ANY;
         }
-        hazelcast_core::partition_id_for_hash(
-            hazelcast_core::compute_partition_hash(key_data),
+        hazelcast_client_core::partition_id_for_hash(
+            hazelcast_client_core::compute_partition_hash(key_data),
             partition_count,
         )
     }
@@ -458,8 +460,10 @@ mod tests {
     fn test_compute_partition_id_matches_canonical_routing() {
         // Same MurmurHash3 + hashToIndex as the IMap key path (not the old x31).
         let key = b"acct-1";
-        let expected =
-            hazelcast_core::partition_id_for_hash(hazelcast_core::compute_partition_hash(key), 271);
+        let expected = hazelcast_client_core::partition_id_for_hash(
+            hazelcast_client_core::compute_partition_hash(key),
+            271,
+        );
         assert_eq!(
             DurableExecutorService::compute_partition_id(key, 271),
             expected

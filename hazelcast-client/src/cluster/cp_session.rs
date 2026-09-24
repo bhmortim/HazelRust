@@ -13,12 +13,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     BEGIN_DATA_STRUCTURE_FLAG, CP_SESSION_CLOSE_SESSION, CP_SESSION_CREATE_SESSION,
     CP_SESSION_GENERATE_THREAD_ID, CP_SESSION_HEARTBEAT, END_DATA_STRUCTURE_FLAG, PARTITION_ID_ANY,
 };
-use hazelcast_core::protocol::{ClientMessage, Frame};
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::protocol::{ClientMessage, Frame};
+use hazelcast_client_core::{HazelcastError, Result};
 use tokio::sync::RwLock;
 
 use super::cp_management::CPGroupId;
@@ -326,7 +326,7 @@ impl CPSessionManager {
 
         let initial_frame = &frames[0];
         let content = initial_frame.content();
-        let header_size = hazelcast_core::protocol::constants::RESPONSE_HEADER_SIZE;
+        let header_size = hazelcast_client_core::protocol::constants::RESPONSE_HEADER_SIZE;
 
         if content.len() < header_size + 24 {
             return Err(HazelcastError::Protocol(
@@ -406,7 +406,7 @@ impl CPSessionManager {
 
         let initial_frame = &frames[0];
         let content = initial_frame.content();
-        let header_size = hazelcast_core::protocol::constants::RESPONSE_HEADER_SIZE;
+        let header_size = hazelcast_client_core::protocol::constants::RESPONSE_HEADER_SIZE;
 
         if content.len() < header_size + 8 {
             return Err(HazelcastError::Protocol(

@@ -3,7 +3,7 @@
 use std::net::SocketAddr;
 
 use async_trait::async_trait;
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 
 /// Trait for discovering Hazelcast cluster member addresses.
 #[async_trait]

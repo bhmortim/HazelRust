@@ -3,7 +3,7 @@
 use bytes::BytesMut;
 use libfuzzer_sys::fuzz_target;
 
-use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec};
+use hazelcast_client_core::protocol::{ClientMessage, ClientMessageCodec};
 use tokio_util::codec::Decoder;
 
 fuzz_target!(|data: &[u8]| {

@@ -4,9 +4,9 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, HazelcastError, Result};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::{ClientMessage, HazelcastError, Result};
 use uuid::Uuid;
 
 use crate::connection::ConnectionManager;

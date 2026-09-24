@@ -8,7 +8,7 @@
 //!
 //! ```rust,ignore
 //! use serde::{Serialize, Deserialize};
-//! use hazelcast_core::serialization::{Serde, Serializable, Deserializable};
+//! use hazelcast_client_core::serialization::{Serde, Serializable, Deserializable};
 //!
 //! #[derive(Serialize, Deserialize, Debug, PartialEq)]
 //! struct User {
@@ -27,7 +27,7 @@
 //!
 //! ```rust,ignore
 //! use serde::{Serialize, Deserialize};
-//! use hazelcast_core::Serde;
+//! use hazelcast_client_core::Serde;
 //!
 //! #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 //! struct Product {

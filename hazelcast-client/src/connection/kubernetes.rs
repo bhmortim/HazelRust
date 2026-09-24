@@ -9,7 +9,7 @@ use kube::api::ListParams;
 use kube::{Api, Client};
 use tracing::debug;
 
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::{HazelcastError, Result};
 
 use super::ClusterDiscovery;
 

@@ -59,7 +59,7 @@ impl ResourceEntry {
 /// serialization strategies:
 ///
 /// 1. **Portable Serialization**: Implement `Portable` in Java and use
-///    `hazelcast_core::serialization::Portable` in Rust
+///    `hazelcast_client_core::serialization::Portable` in Rust
 /// 2. **IdentifiedDataSerializable**: Implement the interface in Java with a
 ///    matching Rust serializer
 /// 3. **JSON**: Use a JSON format that both sides can parse

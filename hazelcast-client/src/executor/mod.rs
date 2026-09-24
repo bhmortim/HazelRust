@@ -21,7 +21,7 @@ use crate::listener::Member;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use hazelcast_core::{Deserializable, HazelcastError, Serializable};
+use hazelcast_client_core::{Deserializable, HazelcastError, Serializable};
 
 /// A task that computes a result and may throw an exception.
 ///
@@ -69,7 +69,7 @@ pub struct RunnableTask {
 
 impl RunnableTask {
     /// Creates a new runnable task wrapper from a runnable implementation.
-    pub fn new<R: Runnable>(task: &R) -> hazelcast_core::Result<Self> {
+    pub fn new<R: Runnable>(task: &R) -> hazelcast_client_core::Result<Self> {
         let data = task.to_bytes()?;
         Ok(Self {
             data,
@@ -105,7 +105,7 @@ pub struct CallableTask<T> {
 
 impl<T: Deserializable> CallableTask<T> {
     /// Creates a new callable task wrapper from a callable implementation.
-    pub fn new<C: Callable<T>>(task: &C) -> hazelcast_core::Result<Self> {
+    pub fn new<C: Callable<T>>(task: &C) -> hazelcast_client_core::Result<Self> {
         let data = task.to_bytes()?;
         Ok(Self {
             data,

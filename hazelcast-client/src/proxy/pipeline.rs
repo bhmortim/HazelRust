@@ -26,7 +26,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use hazelcast_core::{ClientMessage, Result};
+use hazelcast_client_core::{ClientMessage, Result};
 
 use crate::connection::ConnectionManager;
 
@@ -146,10 +146,9 @@ impl<V> Pipelining<V> {
         for handle in handles {
             let result = match handle.await {
                 Ok(inner_result) => inner_result,
-                Err(join_error) => Err(hazelcast_core::HazelcastError::IllegalState(format!(
-                    "pipeline task panicked: {}",
-                    join_error
-                ))),
+                Err(join_error) => Err(hazelcast_client_core::HazelcastError::IllegalState(
+                    format!("pipeline task panicked: {}", join_error),
+                )),
             };
             results.push(result);
         }

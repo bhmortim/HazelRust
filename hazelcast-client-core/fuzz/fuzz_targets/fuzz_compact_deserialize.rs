@@ -2,11 +2,11 @@
 
 use libfuzzer_sys::fuzz_target;
 
-use hazelcast_core::serialization::compact::{
+use hazelcast_client_core::serialization::compact::{
     Compact, CompactReader, CompactSerializer, CompactWriter, DefaultCompactReader,
     DefaultCompactWriter, FieldDescriptor, FieldKind, Schema,
 };
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 
 #[derive(Debug, Default)]
 struct FuzzCompact {

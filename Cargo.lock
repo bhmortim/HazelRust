@@ -1784,7 +1784,7 @@ dependencies = [
  "dashmap",
  "futures",
  "futures-util",
- "hazelcast-core",
+ "hazelcast-client-core",
  "k8s-openapi",
  "kube",
  "libc",
@@ -1819,13 +1819,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "hazelcast-core"
+name = "hazelcast-client-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "hazelcast-client",
+ "hazelcast-client-core",
+ "hdrhistogram",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "hazelcast-client-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "bincode",
  "bytes",
- "hazelcast-derive",
+ "hazelcast-client-derive",
  "proptest",
  "serde",
  "serde_json",
@@ -1836,27 +1851,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "hazelcast-derive"
+name = "hazelcast-client-derive"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
-]
-
-[[package]]
-name = "hazelrust-bench"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "clap",
- "hazelcast-client",
- "hazelcast-core",
- "hdrhistogram",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

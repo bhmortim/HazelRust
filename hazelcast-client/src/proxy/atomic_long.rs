@@ -8,15 +8,15 @@
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, HazelcastError, Result};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::{ClientMessage, HazelcastError, Result};
 use tokio::sync::OnceCell;
 
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 
-// Correct Hazelcast AtomicLong message types. The hazelcast_core CP_ATOMIC_LONG_*
+// Correct Hazelcast AtomicLong message types. The hazelcast_client_core CP_ATOMIC_LONG_*
 // constants are mislabeled (..._GET=0x090100 is actually Apply; ..._ADD_AND_GET=0x090500
 // is actually Get), which is why mutating ops silently no-op'd. Verified against the
 // Hazelcast client protocol (issue #12). AtomicLong has no plain Set; set() uses GetAndSet.

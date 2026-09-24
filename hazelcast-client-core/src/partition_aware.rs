@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use hazelcast_core::PartitionAware;
+//! use hazelcast_client_core::PartitionAware;
 //!
 //! struct OrderKey {
 //!     order_id: String,

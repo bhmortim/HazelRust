@@ -1,7 +1,7 @@
 //! IMap client-side serialization benchmarks.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use hazelcast_core::serialization::{
+use hazelcast_client_core::serialization::{
     Deserializable, ObjectDataInput, ObjectDataOutput, Serializable,
 };
 

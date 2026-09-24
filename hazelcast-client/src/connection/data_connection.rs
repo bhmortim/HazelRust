@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 
 use super::ConnectionManager;
 

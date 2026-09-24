@@ -330,7 +330,7 @@ def main():
     ap.add_argument("--cluster", default="127.0.0.1:5701,127.0.0.1:5702,127.0.0.1:5703")
     ap.add_argument("--cluster-name", default="dev")
     ap.add_argument("--commit", default="unknown")
-    ap.add_argument("--rust-bin", default="target/release/hazelrust-bench")
+    ap.add_argument("--rust-bin", default="target/release/hazelcast-client-bench")
     ap.add_argument("--java-jar", default="bench-java/build/libs/hazeljava-bench.jar")
     ap.add_argument("--hz-client-version", default="5.7.0")
     ap.add_argument("--forks", type=int)

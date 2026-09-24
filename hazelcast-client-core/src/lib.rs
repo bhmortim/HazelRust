@@ -35,7 +35,7 @@
 //! 2. **Compact** — the newer, schema-less serialization format. Implement the
 //!    [`Compact`] trait and provide a [`CompactSerializer`].
 //! 3. **serde** (feature `serde`) — use `#[derive(Serialize, Deserialize)]` on
-//!    your types. Enable with `hazelcast-core = { features = ["serde"] }`.
+//!    your types. Enable with `hazelcast-client-core = { features = ["serde"] }`.
 //!
 //! Low-level byte I/O is exposed through [`ObjectDataInput`] / [`ObjectDataOutput`]
 //! and the [`Serializable`] / [`Deserializable`] traits.
@@ -80,4 +80,6 @@ pub use serialization::{
 pub use serialization::Serde;
 
 #[cfg(feature = "derive")]
-pub use hazelcast_derive::{HazelcastCompact, HazelcastPortable, IdentifiedDataSerializable};
+pub use hazelcast_client_derive::{
+    HazelcastCompact, HazelcastPortable, IdentifiedDataSerializable,
+};

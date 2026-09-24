@@ -9,10 +9,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::local_stats::{LatencyStats, LatencyTracker};
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 use tokio::task::JoinHandle;
 
 use crate::config::PermissionAction;
@@ -483,8 +483,8 @@ where
         let pid = match Self::serialize_value(&self.name) {
             Ok(d) => {
                 let payload = if d.len() > 8 { &d[8..] } else { &d[..] };
-                hazelcast_core::partition_id_for_hash(
-                    hazelcast_core::compute_partition_hash(payload),
+                hazelcast_client_core::partition_id_for_hash(
+                    hazelcast_client_core::compute_partition_hash(payload),
                     count,
                 )
             }
@@ -497,7 +497,7 @@ where
     }
 
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
-        use hazelcast_core::serialization::DataOutput;
+        use hazelcast_client_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
         output.write_int(0)?;
         output.write_int(value.type_id())?;

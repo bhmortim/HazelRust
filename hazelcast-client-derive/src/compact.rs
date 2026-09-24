@@ -48,17 +48,17 @@ pub fn derive_compact_impl(input: TokenStream) -> TokenStream {
     }
 
     let expanded = quote! {
-        impl #impl_generics hazelcast_core::Compact for #name #ty_generics #where_clause {
+        impl #impl_generics hazelcast_client_core::Compact for #name #ty_generics #where_clause {
             fn get_type_name() -> &'static str {
                 #type_name
             }
 
-            fn write(&self, writer: &mut dyn hazelcast_core::CompactWriter) -> hazelcast_core::Result<()> {
+            fn write(&self, writer: &mut dyn hazelcast_client_core::CompactWriter) -> hazelcast_client_core::Result<()> {
                 #(#write_stmts)*
                 Ok(())
             }
 
-            fn read(reader: &mut dyn hazelcast_core::CompactReader) -> hazelcast_core::Result<Self> {
+            fn read(reader: &mut dyn hazelcast_client_core::CompactReader) -> hazelcast_client_core::Result<Self> {
                 Ok(Self {
                     #(#field_names,)*
                 })

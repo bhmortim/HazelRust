@@ -27,8 +27,8 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
-use hazelcast_core::serialization::ObjectDataOutput;
-use hazelcast_core::{Result, Serializable};
+use hazelcast_client_core::serialization::ObjectDataOutput;
+use hazelcast_client_core::{Result, Serializable};
 
 use super::{class_ids, write_data_bytes, write_i32, Predicate};
 

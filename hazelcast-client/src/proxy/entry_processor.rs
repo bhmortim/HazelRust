@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use hazelcast_core::serialization::{Deserializable, Serializable};
+use hazelcast_client_core::serialization::{Deserializable, Serializable};
 
 /// A processor that can be executed on map entries server-side.
 ///
@@ -19,8 +19,8 @@ use hazelcast_core::serialization::{Deserializable, Serializable};
 ///
 /// ```ignore
 /// use hazelcast_client::proxy::EntryProcessor;
-/// use hazelcast_core::serialization::{ObjectDataOutput, ObjectDataInput, Serializable, Deserializable};
-/// use hazelcast_core::Result;
+/// use hazelcast_client_core::serialization::{ObjectDataOutput, ObjectDataInput, Serializable, Deserializable};
+/// use hazelcast_client_core::Result;
 ///
 /// struct IncrementProcessor {
 ///     delta: i64,
@@ -181,8 +181,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hazelcast_core::serialization::{DataInput, DataOutput, ObjectDataInput, ObjectDataOutput};
-    use hazelcast_core::Result;
+    use hazelcast_client_core::serialization::{
+        DataInput, DataOutput, ObjectDataInput, ObjectDataOutput,
+    };
+    use hazelcast_client_core::Result;
 
     struct TestProcessor {
         value: i32,

@@ -7,10 +7,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
@@ -428,7 +428,7 @@ where
     }
 
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
-        use hazelcast_core::serialization::DataOutput;
+        use hazelcast_client_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
         output.write_int(0)?; // partition_hash placeholder
         output.write_int(value.type_id())?; // Hazelcast constant type id
@@ -507,8 +507,8 @@ where
                 } else {
                     &data[..]
                 };
-                hazelcast_core::partition_id_for_hash(
-                    hazelcast_core::compute_partition_hash(hash_input),
+                hazelcast_client_core::partition_id_for_hash(
+                    hazelcast_client_core::compute_partition_hash(hash_input),
                     count,
                 )
             }

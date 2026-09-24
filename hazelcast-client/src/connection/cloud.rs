@@ -6,7 +6,7 @@
 use std::net::SocketAddr;
 
 use async_trait::async_trait;
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 
 use super::ClusterDiscovery;
 
@@ -114,7 +114,7 @@ impl CloudDiscovery {
     }
 
     async fn fetch_addresses(&self) -> Result<Vec<SocketAddr>> {
-        use hazelcast_core::HazelcastError;
+        use hazelcast_client_core::HazelcastError;
 
         let url = self.build_discovery_url();
 
@@ -150,7 +150,7 @@ impl CloudDiscovery {
     }
 
     fn parse_response(&self, body: &str) -> Result<Vec<SocketAddr>> {
-        use hazelcast_core::HazelcastError;
+        use hazelcast_client_core::HazelcastError;
 
         let mut addresses = Vec::new();
 

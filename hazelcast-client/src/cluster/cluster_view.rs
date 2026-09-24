@@ -23,11 +23,11 @@ use std::net::SocketAddr;
 
 use uuid::Uuid;
 
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     BEGIN_DATA_STRUCTURE_FLAG, CLIENT_ADD_MEMBERSHIP_LISTENER, END_DATA_STRUCTURE_FLAG,
 };
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, HazelcastError, Result};
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::{ClientMessage, HazelcastError, Result};
 
 /// Event message type carried on the cluster-view listener correlation id: the
 /// member list (`EVENT_MEMBERS_VIEW_MESSAGE_TYPE` in the Java codec).

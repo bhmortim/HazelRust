@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     JET_GET_JOB_IDS, JET_GET_JOB_STATUS, JET_GET_JOB_SUMMARY_LIST, JET_SUBMIT_JOB,
     JET_TERMINATE_JOB, RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::{ClientMessage, Frame, HazelcastError, Result};
+use hazelcast_client_core::{ClientMessage, Frame, HazelcastError, Result};
 
 use crate::connection::ConnectionManager;
 use crate::jet::{Job, JobConfig, JobStatus, Pipeline};

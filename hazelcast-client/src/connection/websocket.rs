@@ -6,8 +6,8 @@ use std::time::Instant;
 
 use bytes::BytesMut;
 use futures_util::{SinkExt, StreamExt};
-use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
+use hazelcast_client_core::{HazelcastError, Result};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
     connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,

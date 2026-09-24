@@ -199,8 +199,8 @@ pub use executor::{
     Callable, CallableTask, ExecutionCallback, ExecutionTarget, ExecutorService,
     FnExecutionCallback, Runnable, RunnableTask,
 };
-pub use hazelcast_core as core;
-pub use hazelcast_core::PartitionAware;
+pub use hazelcast_client_core as core;
+pub use hazelcast_client_core::PartitionAware;
 #[cfg(feature = "kafka")]
 pub use jet::{
     kafka_sink, kafka_source, Acks, AutoOffsetReset, CompressionType, IsolationLevel, KafkaSink,

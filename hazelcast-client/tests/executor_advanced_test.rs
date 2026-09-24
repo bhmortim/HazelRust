@@ -11,8 +11,8 @@ use hazelcast_client::executor::{
 };
 use hazelcast_client::listener::Member;
 use hazelcast_client::{ClientConfig, HazelcastClient};
-use hazelcast_core::serialization::DataOutput;
-use hazelcast_core::{HazelcastError, Result, Serializable};
+use hazelcast_client_core::serialization::DataOutput;
+use hazelcast_client_core::{HazelcastError, Result, Serializable};
 use uuid::Uuid;
 
 async fn create_test_client() -> HazelcastClient {

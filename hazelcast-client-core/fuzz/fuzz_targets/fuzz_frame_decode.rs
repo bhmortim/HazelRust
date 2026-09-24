@@ -3,7 +3,7 @@
 use bytes::BytesMut;
 use libfuzzer_sys::fuzz_target;
 
-use hazelcast_core::protocol::Frame;
+use hazelcast_client_core::protocol::Frame;
 
 fuzz_target!(|data: &[u8]| {
     let mut buf = BytesMut::from(data);

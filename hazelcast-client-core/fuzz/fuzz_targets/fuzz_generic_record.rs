@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use hazelcast_core::GenericRecord;
+use hazelcast_client_core::GenericRecord;
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(record) = GenericRecord::from_compact_bytes(data) {

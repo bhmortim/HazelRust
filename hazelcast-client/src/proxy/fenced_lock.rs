@@ -8,8 +8,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::{ClientMessage, HazelcastError, Result};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::{ClientMessage, HazelcastError, Result};
 use tokio::sync::OnceCell;
 
 use crate::cluster::{CPGroupId, CPSessionManager, NO_SESSION_ID};

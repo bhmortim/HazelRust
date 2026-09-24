@@ -7,7 +7,7 @@ use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 
 use async_trait::async_trait;
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::{HazelcastError, Result};
 use reqwest::Client;
 use serde_json::Value;
 use tracing::debug;

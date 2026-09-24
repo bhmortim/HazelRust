@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 
-use hazelcast_core::{ClientMessage, HazelcastError};
+use hazelcast_client_core::{ClientMessage, HazelcastError};
 
 use crate::connection::ConnectionManager;
 

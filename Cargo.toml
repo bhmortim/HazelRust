@@ -1,9 +1,9 @@
 [workspace]
 members = [
-    "hazelcast-core",
+    "hazelcast-client-core",
     "hazelcast-client",
-    "hazelcast-derive",
-    "hazelrust-bench",
+    "hazelcast-client-derive",
+    "hazelcast-client-bench",
 ]
 resolver = "2"
 

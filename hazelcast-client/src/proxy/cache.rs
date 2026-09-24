@@ -17,7 +17,7 @@ use tokio::spawn;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     BEGIN_DATA_STRUCTURE_FLAG, CACHE_ADD_ENTRY_LISTENER, CACHE_CLEAR, CACHE_CONTAINS_KEY,
     CACHE_CREATE_CONFIG, CACHE_EVENT_JOURNAL_READ, CACHE_EVENT_JOURNAL_SUBSCRIBE, CACHE_GET,
     CACHE_GET_ALL, CACHE_GET_AND_PUT, CACHE_GET_AND_REMOVE, CACHE_GET_AND_REPLACE, CACHE_INVOKE,
@@ -26,9 +26,9 @@ use hazelcast_core::protocol::constants::{
     END_DATA_STRUCTURE_FLAG, END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG, PARTITION_ID_ANY,
     RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
 use crate::cache::NearCache;
 use crate::connection::ConnectionManager;
@@ -1172,7 +1172,7 @@ where
             }
         }
 
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1232,7 +1232,7 @@ where
     pub async fn put(&self, key: K, value: V) -> Result<()> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1299,7 +1299,7 @@ where
     pub async fn put_if_absent(&self, key: K, value: V) -> Result<bool> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1319,7 +1319,7 @@ where
     /// `false` otherwise.
     pub async fn remove(&self, key: &K) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1349,7 +1349,7 @@ where
     pub async fn replace(&self, key: K, value: V) -> Result<bool> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1372,7 +1372,7 @@ where
         let key_data = Self::serialize_value(key)?;
         let old_value_data = Self::serialize_value(old_value)?;
         let new_value_data = Self::serialize_value(&new_value)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1390,7 +1390,7 @@ where
     /// Returns `true` if this cache contains a mapping for the specified key.
     pub async fn contains_key(&self, key: &K) -> Result<bool> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1447,7 +1447,7 @@ where
     pub async fn get_and_put(&self, key: K, value: V) -> Result<Option<V>> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1467,7 +1467,7 @@ where
     /// Returns `None` if there was no mapping for the key.
     pub async fn get_and_remove(&self, key: &K) -> Result<Option<V>> {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1487,7 +1487,7 @@ where
     pub async fn get_and_replace(&self, key: K, value: V) -> Result<Option<V>> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1522,7 +1522,7 @@ where
     ) -> Result<()> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1566,7 +1566,7 @@ where
     ) -> Result<Option<V>> {
         let key_data = Self::serialize_value(&key)?;
         let value_data = Self::serialize_value(&value)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1619,7 +1619,7 @@ where
         P::Output: Deserializable,
     {
         let key_data = Self::serialize_value(key)?;
-        let partition_id = hazelcast_core::partition_id_for_key_data(
+        let partition_id = hazelcast_client_core::partition_id_for_key_data(
             &key_data,
             self.connection_manager.partition_count(),
         );
@@ -1947,7 +1947,7 @@ where
     }
 
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
-        use hazelcast_core::serialization::DataOutput;
+        use hazelcast_client_core::serialization::DataOutput;
         // Hazelcast `Data` is `[partition_hash:i32][type_id:i32][payload]`. ICache
         // previously wrote a bare payload (no header) and skipped none on decode —
         // self-consistent for a Rust↔Rust round-trip but not a valid server-side

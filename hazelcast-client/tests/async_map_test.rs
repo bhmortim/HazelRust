@@ -6,7 +6,7 @@
 use std::net::SocketAddr;
 
 use hazelcast_client::{ClientConfig, HazelcastClient};
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 
 async fn create_test_client() -> HazelcastClient {
     let config = ClientConfig::builder()

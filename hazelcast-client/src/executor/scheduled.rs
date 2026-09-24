@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
-use hazelcast_core::protocol::{
+use hazelcast_client_core::protocol::{
     ClientMessage, Frame, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
     SCHEDULED_EXECUTOR_CANCEL_FROM_MEMBER, SCHEDULED_EXECUTOR_CANCEL_FROM_PARTITION,
     SCHEDULED_EXECUTOR_DISPOSE, SCHEDULED_EXECUTOR_GET_DELAY_FROM_MEMBER,
@@ -16,7 +16,9 @@ use hazelcast_core::protocol::{
     SCHEDULED_EXECUTOR_IS_SHUTDOWN, SCHEDULED_EXECUTOR_SHUTDOWN,
     SCHEDULED_EXECUTOR_SUBMIT_TO_MEMBER, SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION,
 };
-use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
+use hazelcast_client_core::{
+    Deserializable, HazelcastError, ObjectDataInput, Result, Serializable,
+};
 
 use super::{Callable, CallableTask};
 use crate::connection::ConnectionManager;
@@ -661,8 +663,8 @@ impl ScheduledExecutorService {
         if key_data.is_empty() {
             return PARTITION_ID_ANY;
         }
-        hazelcast_core::partition_id_for_hash(
-            hazelcast_core::compute_partition_hash(key_data),
+        hazelcast_client_core::partition_id_for_hash(
+            hazelcast_client_core::compute_partition_hash(key_data),
             partition_count,
         )
     }

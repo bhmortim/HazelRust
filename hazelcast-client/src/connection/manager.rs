@@ -12,7 +12,7 @@ use tokio::time::{interval, timeout};
 use tracing::{instrument, Span};
 use uuid::Uuid;
 
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::{HazelcastError, Result};
 
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
@@ -450,10 +450,10 @@ impl ConnectionManager {
         // Build and send ClientAuthentication matching exact Java wire format
         {
             use bytes::{BufMut, BytesMut};
-            use hazelcast_core::protocol::constants::{
+            use hazelcast_client_core::protocol::constants::{
                 CLIENT_AUTHENTICATION, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
             };
-            use hazelcast_core::protocol::Frame;
+            use hazelcast_client_core::protocol::Frame;
 
             let cluster_name = self.config.cluster_name().to_string();
             let client_uuid = uuid::Uuid::new_v4();
@@ -462,7 +462,7 @@ impl ConnectionManager {
 
             // Build a ClientMessage from the pre-encoded buffer
             // We need to send via connection.send which uses the codec
-            let mut auth_msg = hazelcast_core::ClientMessage::new();
+            let mut auth_msg = hazelcast_client_core::ClientMessage::new();
             // Initial frame
             let mut initial_content = BytesMut::with_capacity(36);
             initial_content.put_i32_le(CLIENT_AUTHENTICATION);
@@ -708,13 +708,13 @@ impl ConnectionManager {
         address: SocketAddr,
     ) -> Result<()> {
         use bytes::{BufMut, BytesMut};
-        use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
-        use hazelcast_core::protocol::Frame;
+        use hazelcast_client_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
+        use hazelcast_client_core::protocol::Frame;
 
         let cluster_name = self.config.cluster_name().to_string();
         let client_uuid = uuid::Uuid::new_v4();
 
-        let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
+        let mut auth_msg = hazelcast_client_core::ClientMessage::create_for_encode(
             CLIENT_AUTHENTICATION,
             PARTITION_ID_ANY,
         );
@@ -1300,8 +1300,8 @@ impl ConnectionManager {
     /// Invoke an operation (alias for send).
     pub async fn invoke(
         &self,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         self.send(message).await
     }
 
@@ -1310,16 +1310,16 @@ impl ConnectionManager {
     pub async fn invoke_pinned(
         &self,
         address: std::net::SocketAddr,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         self.invocation.invoke_pinned(address, message).await
     }
 
     /// Sends a message and returns the response (backward-compatible wrapper).
     pub async fn send(
         &self,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         // Route through invocation service
         let address = match self.invocation.any_address() {
             Some(a) => a,
@@ -1338,9 +1338,9 @@ impl ConnectionManager {
     /// response. Subsequent server events are delivered to `handler`.
     pub async fn invoke_listener(
         &self,
-        message: hazelcast_core::ClientMessage,
-        handler: std::sync::Arc<dyn Fn(hazelcast_core::ClientMessage) + Send + Sync>,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+        handler: std::sync::Arc<dyn Fn(hazelcast_client_core::ClientMessage) + Send + Sync>,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let address = match self.invocation.any_address() {
             Some(a) => a,
             None => self
@@ -1429,8 +1429,8 @@ impl ConnectionManager {
 
             let msg = crate::cluster::cluster_view::encode_add_cluster_view_listener_request();
             let handler_manager = Arc::clone(&manager);
-            let handler: Arc<dyn Fn(hazelcast_core::ClientMessage) + Send + Sync> = Arc::new(
-                move |event: hazelcast_core::ClientMessage| {
+            let handler: Arc<dyn Fn(hazelcast_client_core::ClientMessage) + Send + Sync> = Arc::new(
+                move |event: hazelcast_client_core::ClientMessage| {
                     crate::cluster::cluster_view::debug_dump_event(&event);
                     match event.message_type() {
                         Some(t) if t == crate::cluster::cluster_view::EVENT_MEMBERS_VIEW => {
@@ -1653,7 +1653,7 @@ impl ConnectionManager {
     pub async fn send_to_partition(
         &self,
         partition_id: i32,
-        message: hazelcast_core::ClientMessage,
+        message: hazelcast_client_core::ClientMessage,
     ) -> Result<()> {
         let address = self.get_connection_for_partition(partition_id).await?;
         self.send_to(address, message).await
@@ -1672,7 +1672,7 @@ impl ConnectionManager {
     pub async fn receive_from_partition(
         &self,
         partition_id: i32,
-    ) -> Result<Option<hazelcast_core::ClientMessage>> {
+    ) -> Result<Option<hazelcast_client_core::ClientMessage>> {
         let address = self.get_connection_for_partition(partition_id).await?;
         self.receive_from(address).await
     }
@@ -1685,8 +1685,8 @@ impl ConnectionManager {
     pub async fn invoke_on_partition(
         &self,
         partition_id: i32,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(
                 sem.acquire()
@@ -1711,7 +1711,7 @@ impl ConnectionManager {
         &self,
         partition_id: i32,
         prepared: &crate::connection::invocation::PreparedMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(
                 sem.acquire()
@@ -1737,7 +1737,7 @@ impl ConnectionManager {
         &self,
         address: std::net::SocketAddr,
         opcode: i32,
-        frames: &[hazelcast_core::protocol::Frame],
+        frames: &[hazelcast_client_core::protocol::Frame],
     ) -> Result<()> {
         if frames.len() > 1 {
             let name_bytes = &frames[1].content;
@@ -1769,8 +1769,8 @@ impl ConnectionManager {
     // NOTE: #[instrument] removed for hot-path performance (Opt 4).
     pub async fn invoke_on_random(
         &self,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(
                 sem.acquire()
@@ -1802,7 +1802,7 @@ impl ConnectionManager {
     async fn invoke_on_random_prepared(
         &self,
         prepared: &crate::connection::invocation::PreparedMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(
                 sem.acquire()
@@ -1839,9 +1839,9 @@ impl ConnectionManager {
     pub async fn invoke_on_partition_with_retry(
         &self,
         partition_id: i32,
-        mut message: hazelcast_core::ClientMessage,
+        mut message: hazelcast_client_core::ClientMessage,
         idempotent: bool,
-    ) -> Result<hazelcast_core::ClientMessage> {
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         // Backup-ack-to-client: opt mutating (non-idempotent) partition ops in by
         // flagging the request BACKUP_AWARE. The owner then replies without
         // blocking on sync backups and the backup members ack the client directly;
@@ -1908,9 +1908,9 @@ impl ConnectionManager {
     /// Non-retryable errors are returned immediately without retry.
     pub async fn invoke_on_random_with_retry(
         &self,
-        message: hazelcast_core::ClientMessage,
+        message: hazelcast_client_core::ClientMessage,
         idempotent: bool,
-    ) -> Result<hazelcast_core::ClientMessage> {
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let retryable = idempotent || self.redo_operation;
         let max_attempts = if retryable {
             self.invocation_retry_count
@@ -1982,11 +1982,11 @@ impl ConnectionManager {
     fn auth_credential_frames(
         &self,
     ) -> (
-        hazelcast_core::protocol::Frame,
-        hazelcast_core::protocol::Frame,
+        hazelcast_client_core::protocol::Frame,
+        hazelcast_client_core::protocol::Frame,
     ) {
         use bytes::BytesMut;
-        use hazelcast_core::protocol::Frame;
+        use hazelcast_client_core::protocol::Frame;
         let sec = self.config.security();
         let user = match sec.username() {
             Some(u) => Frame::with_content(BytesMut::from(u.as_bytes())),
@@ -2002,7 +2002,7 @@ impl ConnectionManager {
     pub async fn send_to(
         &self,
         address: SocketAddr,
-        message: hazelcast_core::ClientMessage,
+        message: hazelcast_client_core::ClientMessage,
     ) -> Result<()> {
         let mut connections = self.connections.write().await;
         let connection = connections
@@ -2016,7 +2016,7 @@ impl ConnectionManager {
     pub async fn receive_from(
         &self,
         address: SocketAddr,
-    ) -> Result<Option<hazelcast_core::ClientMessage>> {
+    ) -> Result<Option<hazelcast_client_core::ClientMessage>> {
         let mut connections = self.connections.write().await;
         let connection = connections
             .get_mut(&address)
@@ -2041,15 +2041,15 @@ impl ConnectionManager {
         address: SocketAddr,
     ) -> Result<()> {
         use bytes::{BufMut, BytesMut};
-        use hazelcast_core::protocol::constants::{
+        use hazelcast_client_core::protocol::constants::{
             CLIENT_AUTHENTICATION, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
         };
-        use hazelcast_core::protocol::Frame;
+        use hazelcast_client_core::protocol::Frame;
 
         let cluster_name = self.config.cluster_name().to_string();
         let client_uuid = uuid::Uuid::new_v4();
 
-        let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
+        let mut auth_msg = hazelcast_client_core::ClientMessage::create_for_encode(
             CLIENT_AUTHENTICATION,
             PARTITION_ID_ANY,
         );
@@ -2269,7 +2269,7 @@ mod tests {
 
         // A Client.ping (0x000200) must arrive within a few 50ms ticks.
         let msg = tokio::time::timeout(Duration::from_secs(5), async {
-            let mut codec = hazelcast_core::protocol::ClientMessageCodec::new();
+            let mut codec = hazelcast_client_core::protocol::ClientMessageCodec::new();
             let mut buf = bytes::BytesMut::new();
             loop {
                 if let Some(msg) = codec.decode(&mut buf).expect("wire bytes must decode") {
@@ -2571,7 +2571,7 @@ mod tests {
         let manager = ConnectionManager::from_config(config);
 
         let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
-        let msg = hazelcast_core::ClientMessage::new();
+        let msg = hazelcast_client_core::ClientMessage::new();
 
         let result = manager.send_to(addr, msg).await;
         assert!(result.is_err());
@@ -3426,7 +3426,7 @@ mod tests {
         manager.set_partition_owner(0, member_uuid).await;
         manager.connect_to(addr).await.unwrap();
 
-        let msg = hazelcast_core::ClientMessage::create_for_encode(0x000100, 0);
+        let msg = hazelcast_client_core::ClientMessage::create_for_encode(0x000100, 0);
         let result = manager.send_to_partition(0, msg).await;
         assert!(
             result.is_ok(),

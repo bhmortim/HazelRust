@@ -19,9 +19,9 @@ use dashmap::DashMap;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
+use hazelcast_client_core::{HazelcastError, Result};
 use tokio_util::codec::Decoder;
 
 /// Boxed write half of a pooled connection. Boxed (rather than a concrete

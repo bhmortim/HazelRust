@@ -31,10 +31,10 @@ use std::time::Duration;
 use bytes::BytesMut;
 use uuid::Uuid;
 
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
 use crate::connection::ConnectionManager;
 
@@ -430,7 +430,7 @@ impl TransactionContext {
 
 /// Serializes a value into a byte vector using the Hazelcast data format.
 fn txn_serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
-    use hazelcast_core::serialization::DataOutput;
+    use hazelcast_client_core::serialization::DataOutput;
     let mut output = ObjectDataOutput::new();
     output.write_int(0)?;
     output.write_int(value.type_id())?;

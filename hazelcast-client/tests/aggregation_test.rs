@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 
 use hazelcast_client::query::{Aggregators, Predicates};
 use hazelcast_client::{ClientConfig, HazelcastClient};
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 
 async fn create_client() -> Result<HazelcastClient> {
     let addr: SocketAddr = "127.0.0.1:5701".parse().unwrap();
@@ -15,7 +15,7 @@ async fn create_client() -> Result<HazelcastClient> {
         .cluster_name("dev")
         .add_address(addr)
         .build()
-        .map_err(|e| hazelcast_core::HazelcastError::Configuration(e.to_string()))?;
+        .map_err(|e| hazelcast_client_core::HazelcastError::Configuration(e.to_string()))?;
 
     HazelcastClient::new(config).await
 }

@@ -9,7 +9,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::{HazelcastError, Result};
 use tokio::net::UdpSocket;
 use tracing::debug;
 

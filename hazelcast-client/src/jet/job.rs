@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use tokio::sync::RwLock;
 
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     JET_EXPORT_SNAPSHOT, JET_GET_JOB_METRICS, JET_GET_JOB_STATUS, JET_RESUME_JOB,
     JET_TERMINATE_JOB, RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::{ClientMessage, Frame, HazelcastError, Result};
+use hazelcast_client_core::{ClientMessage, Frame, HazelcastError, Result};
 
 use crate::connection::ConnectionManager;
 use crate::jet::{JobMetrics, JobStatus};

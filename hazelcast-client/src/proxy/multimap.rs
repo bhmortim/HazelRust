@@ -10,10 +10,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::local_stats::{LatencyStats, LatencyTracker};
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{
     compute_partition_hash, ClientMessage, Deserializable, HazelcastError, Result, Serializable,
 };
 use tokio::spawn;
@@ -569,7 +569,7 @@ where
     }
 
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
-        use hazelcast_core::serialization::DataOutput;
+        use hazelcast_client_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
         output.write_int(0)?;
         output.write_int(value.type_id())?;
@@ -588,7 +588,10 @@ where
     fn key_partition(&self, key_data: &[u8]) -> i32 {
         let count = self.connection_manager.partition_count();
         let count = if count > 0 { count } else { 271 };
-        hazelcast_core::partition_id_for_hash(compute_partition_hash(Self::skip8(key_data)), count)
+        hazelcast_client_core::partition_id_for_hash(
+            compute_partition_hash(Self::skip8(key_data)),
+            count,
+        )
     }
 
     fn string_frame(s: &str) -> Frame {

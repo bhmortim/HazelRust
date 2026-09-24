@@ -10,7 +10,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use azure_core::credentials::TokenCredential;
 use azure_identity::DefaultAzureCredential;
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::{HazelcastError, Result};
 use reqwest::Client;
 use serde_json::Value;
 use tracing::debug;

@@ -26,7 +26,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::{HazelcastError, Result};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 

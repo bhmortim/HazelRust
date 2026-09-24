@@ -1,6 +1,6 @@
 //! Map interceptor support for intercepting map operations on the server.
 
-use hazelcast_core::Serializable;
+use hazelcast_client_core::Serializable;
 
 /// A map interceptor that intercepts map operations on the server side.
 ///
@@ -17,7 +17,7 @@ use hazelcast_core::Serializable;
 ///
 /// ```ignore
 /// use hazelcast_client::proxy::MapInterceptor;
-/// use hazelcast_core::serialization::ObjectDataOutput;
+/// use hazelcast_client_core::serialization::ObjectDataOutput;
 ///
 /// struct UpperCaseInterceptor;
 ///
@@ -38,7 +38,7 @@ use hazelcast_core::Serializable;
 /// }
 ///
 /// impl Serializable for UpperCaseInterceptor {
-///     fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_core::Result<()> {
+///     fn serialize(&self, output: &mut ObjectDataOutput) -> hazelcast_client_core::Result<()> {
 ///         // Serialize interceptor state
 ///         Ok(())
 ///     }
@@ -91,7 +91,7 @@ pub trait MapInterceptor: Serializable + Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hazelcast_core::serialization::ObjectDataOutput;
+    use hazelcast_client_core::serialization::ObjectDataOutput;
 
     struct TestInterceptor {
         prefix: String,
@@ -116,10 +116,10 @@ mod tests {
     }
 
     impl Serializable for TestInterceptor {
-        fn serialize<W: hazelcast_core::serialization::DataOutput>(
+        fn serialize<W: hazelcast_client_core::serialization::DataOutput>(
             &self,
             output: &mut W,
-        ) -> hazelcast_core::Result<()> {
+        ) -> hazelcast_client_core::Result<()> {
             output.write_string(&self.prefix)?;
             Ok(())
         }

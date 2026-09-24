@@ -12,7 +12,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use hazelcast_derive::HazelcastCompact;
+//! use hazelcast_client_derive::HazelcastCompact;
 //!
 //! #[derive(HazelcastCompact)]
 //! #[hazelcast(type_name = "com.example.Person")]

@@ -2489,7 +2489,7 @@ pub struct ClientConfig {
     redo_operation: bool,
     invocation_retry_count: u32,
     invocation_retry_pause: Duration,
-    serialization: hazelcast_core::serialization::SerializationConfig,
+    serialization: hazelcast_client_core::serialization::SerializationConfig,
 }
 
 impl ClientConfig {
@@ -2611,7 +2611,7 @@ impl ClientConfig {
     }
 
     /// Returns the serialization configuration.
-    pub fn serialization(&self) -> &hazelcast_core::serialization::SerializationConfig {
+    pub fn serialization(&self) -> &hazelcast_client_core::serialization::SerializationConfig {
         &self.serialization
     }
 
@@ -2775,7 +2775,7 @@ pub struct ClientConfigBuilder {
     redo_operation: Option<bool>,
     invocation_retry_count: Option<u32>,
     invocation_retry_pause: Option<Duration>,
-    serialization: Option<hazelcast_core::serialization::SerializationConfig>,
+    serialization: Option<hazelcast_client_core::serialization::SerializationConfig>,
 }
 
 impl ClientConfigBuilder {
@@ -3073,7 +3073,7 @@ impl ClientConfigBuilder {
     /// # Example
     ///
     /// ```ignore
-    /// use hazelcast_core::serialization::SerializationConfig;
+    /// use hazelcast_client_core::serialization::SerializationConfig;
     ///
     /// let config = ClientConfigBuilder::new()
     ///     .serialization(SerializationConfig::new().portable_version(2))
@@ -3081,7 +3081,7 @@ impl ClientConfigBuilder {
     /// ```
     pub fn serialization(
         mut self,
-        config: hazelcast_core::serialization::SerializationConfig,
+        config: hazelcast_client_core::serialization::SerializationConfig,
     ) -> Self {
         self.serialization = Some(config);
         self

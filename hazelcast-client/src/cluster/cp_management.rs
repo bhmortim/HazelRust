@@ -6,13 +6,13 @@
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     CP_SUBSYSTEM_FORCE_DESTROY_GROUP, CP_SUBSYSTEM_GET_CP_MEMBERS, CP_SUBSYSTEM_GET_GROUP,
     CP_SUBSYSTEM_GET_GROUP_IDS, CP_SUBSYSTEM_PROMOTE_TO_CP_MEMBER, CP_SUBSYSTEM_REMOVE_CP_MEMBER,
     PARTITION_ID_ANY,
 };
-use hazelcast_core::protocol::{ClientMessage, Frame};
-use hazelcast_core::Result;
+use hazelcast_client_core::protocol::{ClientMessage, Frame};
+use hazelcast_client_core::Result;
 use uuid::Uuid;
 
 use crate::connection::ConnectionManager;

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use hazelcast_core::protocol::constants::CLIENT_STATISTICS;
+use hazelcast_client_core::protocol::constants::CLIENT_STATISTICS;
 
 use crate::config::{ManagementCenterConfig, ManagementCenterConfigBuilder};
 use crate::diagnostics::{ClientStatistics, StatisticsCollector};

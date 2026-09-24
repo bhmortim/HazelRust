@@ -8,10 +8,10 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::{ClientMessage, Frame};
-use hazelcast_core::serialization::{DataOutput, ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::{ClientMessage, Frame};
+use hazelcast_client_core::serialization::{DataOutput, ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{Deserializable, HazelcastError, Result, Serializable};
 
 use crate::connection::ConnectionManager;
 
@@ -99,8 +99,8 @@ where
         match Self::value_data(&self.name) {
             Ok(d) => {
                 let h = if d.len() > 8 { &d[8..] } else { &d[..] };
-                hazelcast_core::partition_id_for_hash(
-                    hazelcast_core::compute_partition_hash(h),
+                hazelcast_client_core::partition_id_for_hash(
+                    hazelcast_client_core::compute_partition_hash(h),
                     count,
                 )
             }

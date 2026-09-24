@@ -3,11 +3,11 @@
 use libfuzzer_sys::fuzz_target;
 use std::sync::Arc;
 
-use hazelcast_core::serialization::portable::{
+use hazelcast_client_core::serialization::portable::{
     ClassDefinition, DefaultPortableReader, DefaultPortableWriter, FieldDefinition, FieldType,
     Portable, PortableFactory, PortableReader, PortableSerializer, PortableWriter,
 };
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 
 #[derive(Debug, Default)]
 struct FuzzPortable {

@@ -6,7 +6,7 @@ use std::time::Duration;
 use hazelcast_client::config::{ClientConfigBuilder, ClientFailoverConfig};
 use hazelcast_client::connection::ConnectionManager;
 use hazelcast_client::listener::LifecycleEvent;
-use hazelcast_core::HazelcastError;
+use hazelcast_client_core::HazelcastError;
 use tokio::net::TcpListener;
 
 async fn create_mock_server() -> (TcpListener, SocketAddr) {

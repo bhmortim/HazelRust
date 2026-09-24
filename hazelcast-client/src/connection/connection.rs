@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec};
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::protocol::{ClientMessage, ClientMessageCodec};
+use hazelcast_client_core::{HazelcastError, Result};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Encoder};
@@ -573,7 +573,7 @@ impl Connection {
     }
 
     pub async fn send_heartbeat(&mut self) -> Result<()> {
-        use hazelcast_core::protocol::constants::PARTITION_ID_ANY;
+        use hazelcast_client_core::protocol::constants::PARTITION_ID_ANY;
 
         const HEARTBEAT_MESSAGE_TYPE: i32 = 0x000200;
 

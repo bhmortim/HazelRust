@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use hazelcast_core::{Deserializable, Result, Serializable};
+use hazelcast_client_core::{Deserializable, Result, Serializable};
 
 use super::{OverflowPolicy, Ringbuffer};
 use crate::connection::ConnectionManager;

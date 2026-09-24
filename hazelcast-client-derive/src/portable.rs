@@ -72,7 +72,7 @@ pub fn derive_portable_impl(input: TokenStream) -> TokenStream {
     let version_i32 = version as i32;
 
     let expanded = quote! {
-        impl #impl_generics hazelcast_core::Portable for #name #ty_generics #where_clause {
+        impl #impl_generics hazelcast_client_core::Portable for #name #ty_generics #where_clause {
             fn factory_id(&self) -> i32 {
                 #factory_id_i32
             }
@@ -85,12 +85,12 @@ pub fn derive_portable_impl(input: TokenStream) -> TokenStream {
                 #version_i32
             }
 
-            fn write_portable(&self, writer: &mut dyn hazelcast_core::PortableWriter) -> hazelcast_core::Result<()> {
+            fn write_portable(&self, writer: &mut dyn hazelcast_client_core::PortableWriter) -> hazelcast_client_core::Result<()> {
                 #(#write_stmts)*
                 Ok(())
             }
 
-            fn read_portable(&mut self, reader: &mut dyn hazelcast_core::PortableReader) -> hazelcast_core::Result<()> {
+            fn read_portable(&mut self, reader: &mut dyn hazelcast_client_core::PortableReader) -> hazelcast_client_core::Result<()> {
                 let _tmp = Self {
                     #(#read_stmts,)*
                 };

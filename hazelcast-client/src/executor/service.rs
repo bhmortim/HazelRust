@@ -7,11 +7,13 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use hazelcast_core::protocol::{
+use hazelcast_client_core::protocol::{
     ClientMessage, Frame, EXECUTOR_IS_SHUTDOWN, EXECUTOR_SHUTDOWN, EXECUTOR_SUBMIT_TO_MEMBER,
     EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
+use hazelcast_client_core::{
+    Deserializable, HazelcastError, ObjectDataInput, Result, Serializable,
+};
 
 use super::{
     Callable, CallableTask, ExecutionCallback, ExecutionTarget, MemberSelector, Runnable,
@@ -470,8 +472,8 @@ impl super::ExecutorService {
         if key_data.is_empty() {
             return PARTITION_ID_ANY;
         }
-        hazelcast_core::partition_id_for_hash(
-            hazelcast_core::compute_partition_hash(key_data),
+        hazelcast_client_core::partition_id_for_hash(
+            hazelcast_client_core::compute_partition_hash(key_data),
             partition_count,
         )
     }
@@ -545,8 +547,8 @@ mod tests {
         payload.extend_from_slice(b"acct-1");
 
         for count in [271, 128, 1009] {
-            let canonical = hazelcast_core::partition_id_for_hash(
-                hazelcast_core::compute_partition_hash(&payload),
+            let canonical = hazelcast_client_core::partition_id_for_hash(
+                hazelcast_client_core::compute_partition_hash(&payload),
                 count,
             );
             assert_eq!(
