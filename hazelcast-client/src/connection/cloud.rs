@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Hazelcast Cloud cluster discovery.
 //!
 //! This module provides automatic discovery of Hazelcast cluster members
@@ -6,7 +22,7 @@
 use std::net::SocketAddr;
 
 use async_trait::async_trait;
-use hazelcast_core::Result;
+use hazelcast_client_core::Result;
 
 use super::ClusterDiscovery;
 
@@ -114,7 +130,7 @@ impl CloudDiscovery {
     }
 
     async fn fetch_addresses(&self) -> Result<Vec<SocketAddr>> {
-        use hazelcast_core::HazelcastError;
+        use hazelcast_client_core::HazelcastError;
 
         let url = self.build_discovery_url();
 
@@ -150,7 +166,7 @@ impl CloudDiscovery {
     }
 
     fn parse_response(&self, body: &str) -> Result<Vec<SocketAddr>> {
-        use hazelcast_core::HazelcastError;
+        use hazelcast_client_core::HazelcastError;
 
         let mut addresses = Vec::new();
 

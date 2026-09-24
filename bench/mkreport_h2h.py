@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Head-to-head DOCX report generator (HazelRust vs official Hazelcast Java client).
+# Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Head-to-head DOCX report generator (Hazelcast Rust client vs official Java client).
 
 Consumes a run directory produced by bench/run.py (per-cell JSON records + .env.json
 sidecars + provenance.json), reuses bench/analyze.py for loading / bootstrap CIs /
@@ -386,7 +400,7 @@ def chart_improvements(charts_dir):
     ax.set_yticklabels(labels, fontsize=9)
     ax.invert_yaxis()
     ax.set_xlabel("throughput at C=64 (k ops/s)")
-    ax.set_title("HazelRust client optimizations — before vs after", fontsize=12, fontweight="bold")
+    ax.set_title("Rust client optimizations — before vs after", fontsize=12, fontweight="bold")
     ax.grid(True, axis="x", alpha=0.3)
     ax.legend(fontsize=9, loc="lower right")
     fig.tight_layout()
@@ -493,7 +507,7 @@ def build_docx(in_dir, out_path, charts_dir):
     # ---- title ----
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = title.add_run("HazelRust vs. Official Hazelcast Java Client")
+    r = title.add_run("Hazelcast Rust Client vs. Hazelcast Java Client")
     r.bold = True; r.font.size = Pt(20); r.font.color.rgb = RGBColor(0x1F, 0x4E, 0x79)
     sub = doc.add_paragraph(); sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
     rs = sub.add_run("Head-to-Head Client Performance & Resource Comparison")
@@ -581,7 +595,7 @@ def build_docx(in_dir, out_path, charts_dir):
         ("Cluster", prov.get("cluster_topology", "—")),
         ("Java client", "%s (%s)" % (prov.get("hz_java_client_version", "?"), prov.get("java_client_edition", ""))),
         ("Java runtime", prov.get("java", "—")),
-        ("Rust client", "HazelRust @ %s, %s" % (prov.get("commit", "?"), prov.get("cargo_profile", ""))),
+        ("Rust client", "hazelcast-rust-client @ %s, %s" % (prov.get("commit", "?"), prov.get("cargo_profile", ""))),
         ("rustc", prov.get("rustc", "—")),
         ("CPU", "%s (%s logical cores)" % (prov.get("cpu_model", "—"), prov.get("logical_cpus", "?"))),
         ("Core pinning", "members %s · client %s · OS %s" % (pin.get("members"), pin.get("client"), pin.get("os"))),
@@ -758,7 +772,7 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--charts", default=None)
     args = ap.parse_args()
-    out = args.out or os.path.join(args.in_dir, "HazelRust_vs_Java_H2H_Report.docx")
+    out = args.out or os.path.join(args.in_dir, "Rust_vs_Java_H2H_Report.docx")
     charts = args.charts or os.path.join(args.in_dir, "charts")
     build_docx(args.in_dir, out, charts)
 

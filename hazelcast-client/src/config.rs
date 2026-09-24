@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Client configuration types and builders.
 
 use std::net::SocketAddr;
@@ -2489,7 +2505,7 @@ pub struct ClientConfig {
     redo_operation: bool,
     invocation_retry_count: u32,
     invocation_retry_pause: Duration,
-    serialization: hazelcast_core::serialization::SerializationConfig,
+    serialization: hazelcast_client_core::serialization::SerializationConfig,
 }
 
 impl ClientConfig {
@@ -2611,7 +2627,7 @@ impl ClientConfig {
     }
 
     /// Returns the serialization configuration.
-    pub fn serialization(&self) -> &hazelcast_core::serialization::SerializationConfig {
+    pub fn serialization(&self) -> &hazelcast_client_core::serialization::SerializationConfig {
         &self.serialization
     }
 
@@ -2775,7 +2791,7 @@ pub struct ClientConfigBuilder {
     redo_operation: Option<bool>,
     invocation_retry_count: Option<u32>,
     invocation_retry_pause: Option<Duration>,
-    serialization: Option<hazelcast_core::serialization::SerializationConfig>,
+    serialization: Option<hazelcast_client_core::serialization::SerializationConfig>,
 }
 
 impl ClientConfigBuilder {
@@ -3073,7 +3089,7 @@ impl ClientConfigBuilder {
     /// # Example
     ///
     /// ```ignore
-    /// use hazelcast_core::serialization::SerializationConfig;
+    /// use hazelcast_client_core::serialization::SerializationConfig;
     ///
     /// let config = ClientConfigBuilder::new()
     ///     .serialization(SerializationConfig::new().portable_version(2))
@@ -3081,7 +3097,7 @@ impl ClientConfigBuilder {
     /// ```
     pub fn serialization(
         mut self,
-        config: hazelcast_core::serialization::SerializationConfig,
+        config: hazelcast_client_core::serialization::SerializationConfig,
     ) -> Self {
         self.serialization = Some(config);
         self

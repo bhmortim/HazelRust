@@ -107,57 +107,57 @@ Most decisive throughput cells: Java — imap.set.default C256 v100 uniform (×1
 
 **Latency CDF — imap.mixed.ycsb_a C256 v100 uniform**
 
-![Latency CDF — imap.mixed.ycsb_a C256 v100 uniform](plots/cdf_J_imap_mixed_ycsb_a_ki64_v100_ws100000_C256_uniform_closed.svg)
+![Latency CDF — imap.mixed.ycsb_a C256 v100 uniform](bench_plots/cdf_J_imap_mixed_ycsb_a_ki64_v100_ws100000_C256_uniform_closed.svg)
 
 
 **Latency CDF — atomiclong.compare_and_set.success C64 v8 uniform**
 
-![Latency CDF — atomiclong.compare_and_set.success C64 v8 uniform](plots/cdf_B_atomiclong_compare_and_set_success_ki64_v8_ws100000_C64_uniform_closed.svg)
+![Latency CDF — atomiclong.compare_and_set.success C64 v8 uniform](bench_plots/cdf_B_atomiclong_compare_and_set_success_ki64_v8_ws100000_C64_uniform_closed.svg)
 
 
 **Latency CDF — imap.get.hit C256 v100 uniform**
 
-![Latency CDF — imap.get.hit C256 v100 uniform](plots/cdf_A_imap_get_hit_ki64_v100_ws100000_C256_uniform_closed.svg)
+![Latency CDF — imap.get.hit C256 v100 uniform](bench_plots/cdf_A_imap_get_hit_ki64_v100_ws100000_C256_uniform_closed.svg)
 
 
 **Throughput vs C — imap.get v100 uniform**
 
-![Throughput vs C — imap.get v100 uniform](plots/thrC_imap_get_100_uniform.svg)
+![Throughput vs C — imap.get v100 uniform](bench_plots/thrC_imap_get_100_uniform.svg)
 
 
 **Throughput vs C — imap.put v100 uniform**
 
-![Throughput vs C — imap.put v100 uniform](plots/thrC_imap_put_100_uniform.svg)
+![Throughput vs C — imap.put v100 uniform](bench_plots/thrC_imap_put_100_uniform.svg)
 
 
 **Throughput vs C — imap.set v100 uniform**
 
-![Throughput vs C — imap.set v100 uniform](plots/thrC_imap_set_100_uniform.svg)
+![Throughput vs C — imap.set v100 uniform](bench_plots/thrC_imap_set_100_uniform.svg)
 
 
 **Throughput vs C — imap.mixed v100 uniform**
 
-![Throughput vs C — imap.mixed v100 uniform](plots/thrC_imap_mixed_100_uniform.svg)
+![Throughput vs C — imap.mixed v100 uniform](bench_plots/thrC_imap_mixed_100_uniform.svg)
 
 
 **Latency vs throughput (open-loop) — imap.get.hit**
 
-![Latency vs throughput (open-loop) — imap.get.hit](plots/lat_thr_imap_get_hit.svg)
+![Latency vs throughput (open-loop) — imap.get.hit](bench_plots/lat_thr_imap_get_hit.svg)
 
 
 **Latency vs throughput (open-loop) — imap.put.update**
 
-![Latency vs throughput (open-loop) — imap.put.update](plots/lat_thr_imap_put_update.svg)
+![Latency vs throughput (open-loop) — imap.put.update](bench_plots/lat_thr_imap_put_update.svg)
 
 
 **Latency vs throughput (open-loop) — atomiclong.increment_and_get.default**
 
-![Latency vs throughput (open-loop) — atomiclong.increment_and_get.default](plots/lat_thr_atomiclong_increment_and_get_default.svg)
+![Latency vs throughput (open-loop) — atomiclong.increment_and_get.default](bench_plots/lat_thr_atomiclong_increment_and_get_default.svg)
 
 
 **Latency vs throughput (open-loop) — imap.mixed.ycsb_a**
 
-![Latency vs throughput (open-loop) — imap.mixed.ycsb_a](plots/lat_thr_imap_mixed_ycsb_a.svg)
+![Latency vs throughput (open-loop) — imap.mixed.ycsb_a](bench_plots/lat_thr_imap_mixed_ycsb_a.svg)
 
 
 ## Resource efficiency & server-side impact

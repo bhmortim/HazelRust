@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Scheduled executor service for delayed and periodic task execution.
 
 use std::marker::PhantomData;
@@ -7,7 +23,7 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
-use hazelcast_core::protocol::{
+use hazelcast_client_core::protocol::{
     ClientMessage, Frame, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
     SCHEDULED_EXECUTOR_CANCEL_FROM_MEMBER, SCHEDULED_EXECUTOR_CANCEL_FROM_PARTITION,
     SCHEDULED_EXECUTOR_DISPOSE, SCHEDULED_EXECUTOR_GET_DELAY_FROM_MEMBER,
@@ -16,7 +32,9 @@ use hazelcast_core::protocol::{
     SCHEDULED_EXECUTOR_IS_SHUTDOWN, SCHEDULED_EXECUTOR_SHUTDOWN,
     SCHEDULED_EXECUTOR_SUBMIT_TO_MEMBER, SCHEDULED_EXECUTOR_SUBMIT_TO_PARTITION,
 };
-use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
+use hazelcast_client_core::{
+    Deserializable, HazelcastError, ObjectDataInput, Result, Serializable,
+};
 
 use super::{Callable, CallableTask};
 use crate::connection::ConnectionManager;
@@ -661,8 +679,8 @@ impl ScheduledExecutorService {
         if key_data.is_empty() {
             return PARTITION_ID_ANY;
         }
-        hazelcast_core::partition_id_for_hash(
-            hazelcast_core::compute_partition_hash(key_data),
+        hazelcast_client_core::partition_id_for_hash(
+            hazelcast_client_core::compute_partition_hash(key_data),
             partition_count,
         )
     }

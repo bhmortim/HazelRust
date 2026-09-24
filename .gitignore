@@ -1,18 +1,17 @@
-
-### BROKK'S CONFIGURATION ###
-.brokk/**
-/.brokk/workspace.properties
-/.brokk/sessions/
-/.brokk/dependencies/
-/.brokk/history.zip
-!AGENTS.md
-!.brokk/style.md
-!.brokk/review.md
-!.brokk/project.properties
-
 # Rust build artifacts
 /target/
 .claude/worktrees/
+
+# cargo-fuzz outputs
+/hazelcast-client-core/fuzz/target/
+/hazelcast-client-core/fuzz/corpus/
+/hazelcast-client-core/fuzz/artifacts/
+
+# Python bytecode (bench scripts)
+__pycache__/
+
+# Local benchmark scratch space
+/.benchwork/
 
 # Benchmark run outputs + Java build dirs (regenerable; not source)
 /benchmarks/out_*/
@@ -22,3 +21,6 @@
 /benchmarks/headline/
 /benchmarks/t0/
 /benchmarks/out_t0smoke/
+# Raw per-run records from the head-to-head runs; only provenance.json is kept
+/benchmarks/h2h*/*
+!/benchmarks/h2h*/provenance.json

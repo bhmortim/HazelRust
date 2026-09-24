@@ -1,9 +1,9 @@
 [workspace]
 members = [
-    "hazelcast-core",
+    "hazelcast-client-core",
     "hazelcast-client",
-    "hazelcast-derive",
-    "hazelrust-bench",
+    "hazelcast-client-derive",
+    "hazelcast-client-bench",
 ]
 resolver = "2"
 
@@ -11,8 +11,8 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/bhmortim/HazelRust"
-homepage = "https://github.com/bhmortim/HazelRust"
+repository = "https://github.com/hazelcast/hazelcast-rust-client"
+homepage = "https://github.com/hazelcast/hazelcast-rust-client"
 rust-version = "1.85"
 
 [workspace.dependencies]

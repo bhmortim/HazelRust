@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Distributed set proxy implementation.
 
 use std::marker::PhantomData;
@@ -5,10 +21,10 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::ObjectDataOutput;
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::serialization::ObjectDataOutput;
+use hazelcast_client_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
@@ -239,7 +255,7 @@ where
     }
 
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
-        use hazelcast_core::serialization::DataOutput;
+        use hazelcast_client_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
         output.write_int(0)?; // partition_hash placeholder
         output.write_int(value.type_id())?; // Hazelcast constant type id
@@ -268,7 +284,7 @@ where
     }
 
     fn decode_data_list_response(response: &ClientMessage) -> Result<Vec<T>> {
-        use hazelcast_core::serialization::ObjectDataInput;
+        use hazelcast_client_core::serialization::ObjectDataInput;
         let mut items = Vec::with_capacity(response.frames().len().saturating_sub(1));
         for frame in response.frames().iter().skip(1) {
             if frame.flags & (BEGIN_DATA_STRUCTURE_FLAG | END_DATA_STRUCTURE_FLAG) != 0 {
@@ -315,8 +331,8 @@ where
                 } else {
                     &data[..]
                 };
-                hazelcast_core::partition_id_for_hash(
-                    hazelcast_core::compute_partition_hash(hash_input),
+                hazelcast_client_core::partition_id_for_hash(
+                    hazelcast_client_core::compute_partition_hash(hash_input),
                     count,
                 )
             }

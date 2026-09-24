@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Paging predicate for paginated query results.
 //!
 //! `PagingPredicate` allows fetching query results in pages, which is useful
@@ -27,8 +43,8 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
-use hazelcast_core::serialization::ObjectDataOutput;
-use hazelcast_core::{Result, Serializable};
+use hazelcast_client_core::serialization::ObjectDataOutput;
+use hazelcast_client_core::{Result, Serializable};
 
 use super::{class_ids, write_data_bytes, write_i32, Predicate};
 

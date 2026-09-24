@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Shared CP (Raft) subsystem helpers used by the CP proxies (CountDownLatch,
 //! FencedLock, Semaphore, AtomicLong/Reference).
 //!
@@ -6,11 +22,11 @@
 //! UUIDs) live in the request's initial frame after the header. See issue #12.
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     BEGIN_DATA_STRUCTURE_FLAG, CP_GROUP_CREATE_CP_GROUP, END_DATA_STRUCTURE_FLAG,
 };
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, HazelcastError, Result};
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::{ClientMessage, HazelcastError, Result};
 
 use crate::connection::ConnectionManager;
 
@@ -122,7 +138,7 @@ pub fn random_uuid() -> (i64, i64) {
 
 /// Reads an `i64` response from the initial frame at `RESPONSE_HEADER_SIZE`.
 pub fn decode_long(response: &ClientMessage) -> Result<i64> {
-    use hazelcast_core::protocol::constants::RESPONSE_HEADER_SIZE;
+    use hazelcast_client_core::protocol::constants::RESPONSE_HEADER_SIZE;
     let f = response
         .frames()
         .first()
@@ -141,7 +157,7 @@ pub fn decode_long(response: &ClientMessage) -> Result<i64> {
 
 /// Reads an `i32` response from the initial frame at `RESPONSE_HEADER_SIZE`.
 pub fn decode_int(response: &ClientMessage) -> Result<i32> {
-    use hazelcast_core::protocol::constants::RESPONSE_HEADER_SIZE;
+    use hazelcast_client_core::protocol::constants::RESPONSE_HEADER_SIZE;
     let f = response
         .frames()
         .first()
@@ -160,7 +176,7 @@ pub fn decode_int(response: &ClientMessage) -> Result<i32> {
 
 /// Reads a `bool` response from the initial frame at `RESPONSE_HEADER_SIZE`.
 pub fn decode_bool(response: &ClientMessage) -> Result<bool> {
-    use hazelcast_core::protocol::constants::RESPONSE_HEADER_SIZE;
+    use hazelcast_client_core::protocol::constants::RESPONSE_HEADER_SIZE;
     let f = response
         .frames()
         .first()

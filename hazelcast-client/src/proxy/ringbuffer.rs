@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Distributed ringbuffer implementation.
 //!
 //! Ringbuffer is partition-routed by name. Fixed params (overflow policy,
@@ -8,10 +24,10 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::{ClientMessage, Frame};
-use hazelcast_core::serialization::{DataOutput, ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::{ClientMessage, Frame};
+use hazelcast_client_core::serialization::{DataOutput, ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{Deserializable, HazelcastError, Result, Serializable};
 
 use crate::connection::ConnectionManager;
 
@@ -99,8 +115,8 @@ where
         match Self::value_data(&self.name) {
             Ok(d) => {
                 let h = if d.len() > 8 { &d[8..] } else { &d[..] };
-                hazelcast_core::partition_id_for_hash(
-                    hazelcast_core::compute_partition_hash(h),
+                hazelcast_client_core::partition_id_for_hash(
+                    hazelcast_client_core::compute_partition_hash(h),
                     count,
                 )
             }

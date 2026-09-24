@@ -1,4 +1,4 @@
-# cargo-deny configuration — supply-chain gate for HazelRust.
+# cargo-deny configuration — supply-chain gate for the Hazelcast Rust client.
 # Run locally with: cargo deny check
 # Wired into CI (.github/workflows/ci.yml, `deny` job). Starts in observe mode;
 # ratchet to blocking once the dependency tree is clean (see EXECUTION_PLAN.md).

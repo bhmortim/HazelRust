@@ -1,8 +1,24 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Connection pool management and lifecycle handling.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicI32, AtomicUsize};
+use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +28,7 @@ use tokio::time::{interval, timeout};
 use tracing::{instrument, Span};
 use uuid::Uuid;
 
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::{HazelcastError, Result};
 
 use super::connection::{Connection, ConnectionId};
 use super::discovery::ClusterDiscovery;
@@ -35,6 +51,23 @@ fn trace_routing(partition_id: i32, address: SocketAddr, is_owner: bool) {
                 "FALLBACK addresses[0]"
             }
         );
+    }
+}
+
+/// Counter behind default client names (`hz.client_1`, `hz.client_2`, …), the
+/// naming scheme the other Hazelcast clients use when no instance name is set.
+static CLIENT_NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// The client name sent in `ClientAuthentication`: the configured instance name,
+/// or the next `hz.client_<n>`. Members log it and Management Center lists
+/// clients by it, so it is resolved once and reused for every connection.
+fn resolve_client_name(config: &ClientConfig) -> String {
+    match config.instance_name() {
+        Some(name) => name.to_owned(),
+        None => format!(
+            "hz.client_{}",
+            CLIENT_NAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+        ),
     }
 }
 
@@ -124,6 +157,8 @@ pub struct ConnectionManager {
     backup_ack_to_client: bool,
     invocation_retry_count: u32,
     invocation_retry_pause: std::time::Duration,
+    /// Sent as `clientName` in every `ClientAuthentication` request.
+    client_name: String,
 }
 
 /// Calculates the next backoff duration with jitter applied.
@@ -169,6 +204,7 @@ impl ConnectionManager {
         let invocation_retry_count = config.invocation_retry_count();
         let invocation_retry_pause = config.invocation_retry_pause();
         let backup_ack_to_client = config.network().backup_ack_to_client_enabled();
+        let client_name = resolve_client_name(&config);
 
         Self {
             config: Arc::new(config),
@@ -199,6 +235,7 @@ impl ConnectionManager {
             invocation_retry_count,
             invocation_retry_pause,
             backup_ack_to_client,
+            client_name,
         }
     }
 
@@ -242,6 +279,7 @@ impl ConnectionManager {
         let invocation_retry_count = primary_config.invocation_retry_count();
         let invocation_retry_pause = primary_config.invocation_retry_pause();
         let backup_ack_to_client = primary_config.network().backup_ack_to_client_enabled();
+        let client_name = resolve_client_name(&primary_config);
 
         Self {
             config: Arc::new(primary_config),
@@ -272,6 +310,7 @@ impl ConnectionManager {
             invocation_retry_count,
             invocation_retry_pause,
             backup_ack_to_client,
+            client_name,
         }
     }
 
@@ -450,10 +489,10 @@ impl ConnectionManager {
         // Build and send ClientAuthentication matching exact Java wire format
         {
             use bytes::{BufMut, BytesMut};
-            use hazelcast_core::protocol::constants::{
+            use hazelcast_client_core::protocol::constants::{
                 CLIENT_AUTHENTICATION, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
             };
-            use hazelcast_core::protocol::Frame;
+            use hazelcast_client_core::protocol::Frame;
 
             let cluster_name = self.config.cluster_name().to_string();
             let client_uuid = uuid::Uuid::new_v4();
@@ -462,7 +501,7 @@ impl ConnectionManager {
 
             // Build a ClientMessage from the pre-encoded buffer
             // We need to send via connection.send which uses the codec
-            let mut auth_msg = hazelcast_core::ClientMessage::new();
+            let mut auth_msg = hazelcast_client_core::ClientMessage::new();
             // Initial frame
             let mut initial_content = BytesMut::with_capacity(36);
             initial_content.put_i32_le(CLIENT_AUTHENTICATION);
@@ -481,7 +520,9 @@ impl ConnectionManager {
             auth_msg.add_frame(pass_frame);
             auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
             auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
-            auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+            auth_msg.add_frame(Frame::with_content(BytesMut::from(
+                self.client_name.as_bytes(),
+            )));
             auth_msg.add_frame(Frame::with_flags(0x1000));
             auth_msg.add_frame(Frame::with_flags(0x2800));
 
@@ -708,13 +749,13 @@ impl ConnectionManager {
         address: SocketAddr,
     ) -> Result<()> {
         use bytes::{BufMut, BytesMut};
-        use hazelcast_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
-        use hazelcast_core::protocol::Frame;
+        use hazelcast_client_core::protocol::constants::{CLIENT_AUTHENTICATION, PARTITION_ID_ANY};
+        use hazelcast_client_core::protocol::Frame;
 
         let cluster_name = self.config.cluster_name().to_string();
         let client_uuid = uuid::Uuid::new_v4();
 
-        let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
+        let mut auth_msg = hazelcast_client_core::ClientMessage::create_for_encode(
             CLIENT_AUTHENTICATION,
             PARTITION_ID_ANY,
         );
@@ -737,7 +778,9 @@ impl ConnectionManager {
         auth_msg.add_frame(pass_frame);
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(
+            self.client_name.as_bytes(),
+        )));
         auth_msg.add_frame(Frame::with_flags(0x1000));
         auth_msg.add_frame(Frame::with_flags(0x2800));
 
@@ -1300,8 +1343,8 @@ impl ConnectionManager {
     /// Invoke an operation (alias for send).
     pub async fn invoke(
         &self,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         self.send(message).await
     }
 
@@ -1310,16 +1353,16 @@ impl ConnectionManager {
     pub async fn invoke_pinned(
         &self,
         address: std::net::SocketAddr,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         self.invocation.invoke_pinned(address, message).await
     }
 
     /// Sends a message and returns the response (backward-compatible wrapper).
     pub async fn send(
         &self,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         // Route through invocation service
         let address = match self.invocation.any_address() {
             Some(a) => a,
@@ -1338,9 +1381,9 @@ impl ConnectionManager {
     /// response. Subsequent server events are delivered to `handler`.
     pub async fn invoke_listener(
         &self,
-        message: hazelcast_core::ClientMessage,
-        handler: std::sync::Arc<dyn Fn(hazelcast_core::ClientMessage) + Send + Sync>,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+        handler: std::sync::Arc<dyn Fn(hazelcast_client_core::ClientMessage) + Send + Sync>,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let address = match self.invocation.any_address() {
             Some(a) => a,
             None => self
@@ -1429,8 +1472,8 @@ impl ConnectionManager {
 
             let msg = crate::cluster::cluster_view::encode_add_cluster_view_listener_request();
             let handler_manager = Arc::clone(&manager);
-            let handler: Arc<dyn Fn(hazelcast_core::ClientMessage) + Send + Sync> = Arc::new(
-                move |event: hazelcast_core::ClientMessage| {
+            let handler: Arc<dyn Fn(hazelcast_client_core::ClientMessage) + Send + Sync> = Arc::new(
+                move |event: hazelcast_client_core::ClientMessage| {
                     crate::cluster::cluster_view::debug_dump_event(&event);
                     match event.message_type() {
                         Some(t) if t == crate::cluster::cluster_view::EVENT_MEMBERS_VIEW => {
@@ -1653,7 +1696,7 @@ impl ConnectionManager {
     pub async fn send_to_partition(
         &self,
         partition_id: i32,
-        message: hazelcast_core::ClientMessage,
+        message: hazelcast_client_core::ClientMessage,
     ) -> Result<()> {
         let address = self.get_connection_for_partition(partition_id).await?;
         self.send_to(address, message).await
@@ -1672,7 +1715,7 @@ impl ConnectionManager {
     pub async fn receive_from_partition(
         &self,
         partition_id: i32,
-    ) -> Result<Option<hazelcast_core::ClientMessage>> {
+    ) -> Result<Option<hazelcast_client_core::ClientMessage>> {
         let address = self.get_connection_for_partition(partition_id).await?;
         self.receive_from(address).await
     }
@@ -1685,8 +1728,8 @@ impl ConnectionManager {
     pub async fn invoke_on_partition(
         &self,
         partition_id: i32,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(
                 sem.acquire()
@@ -1711,7 +1754,7 @@ impl ConnectionManager {
         &self,
         partition_id: i32,
         prepared: &crate::connection::invocation::PreparedMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(
                 sem.acquire()
@@ -1737,7 +1780,7 @@ impl ConnectionManager {
         &self,
         address: std::net::SocketAddr,
         opcode: i32,
-        frames: &[hazelcast_core::protocol::Frame],
+        frames: &[hazelcast_client_core::protocol::Frame],
     ) -> Result<()> {
         if frames.len() > 1 {
             let name_bytes = &frames[1].content;
@@ -1769,8 +1812,8 @@ impl ConnectionManager {
     // NOTE: #[instrument] removed for hot-path performance (Opt 4).
     pub async fn invoke_on_random(
         &self,
-        message: hazelcast_core::ClientMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+        message: hazelcast_client_core::ClientMessage,
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(
                 sem.acquire()
@@ -1802,7 +1845,7 @@ impl ConnectionManager {
     async fn invoke_on_random_prepared(
         &self,
         prepared: &crate::connection::invocation::PreparedMessage,
-    ) -> Result<hazelcast_core::ClientMessage> {
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let _permit = match &self.invocation_semaphore {
             Some(sem) => Some(
                 sem.acquire()
@@ -1839,9 +1882,9 @@ impl ConnectionManager {
     pub async fn invoke_on_partition_with_retry(
         &self,
         partition_id: i32,
-        mut message: hazelcast_core::ClientMessage,
+        mut message: hazelcast_client_core::ClientMessage,
         idempotent: bool,
-    ) -> Result<hazelcast_core::ClientMessage> {
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         // Backup-ack-to-client: opt mutating (non-idempotent) partition ops in by
         // flagging the request BACKUP_AWARE. The owner then replies without
         // blocking on sync backups and the backup members ack the client directly;
@@ -1908,9 +1951,9 @@ impl ConnectionManager {
     /// Non-retryable errors are returned immediately without retry.
     pub async fn invoke_on_random_with_retry(
         &self,
-        message: hazelcast_core::ClientMessage,
+        message: hazelcast_client_core::ClientMessage,
         idempotent: bool,
-    ) -> Result<hazelcast_core::ClientMessage> {
+    ) -> Result<hazelcast_client_core::ClientMessage> {
         let retryable = idempotent || self.redo_operation;
         let max_attempts = if retryable {
             self.invocation_retry_count
@@ -1982,11 +2025,11 @@ impl ConnectionManager {
     fn auth_credential_frames(
         &self,
     ) -> (
-        hazelcast_core::protocol::Frame,
-        hazelcast_core::protocol::Frame,
+        hazelcast_client_core::protocol::Frame,
+        hazelcast_client_core::protocol::Frame,
     ) {
         use bytes::BytesMut;
-        use hazelcast_core::protocol::Frame;
+        use hazelcast_client_core::protocol::Frame;
         let sec = self.config.security();
         let user = match sec.username() {
             Some(u) => Frame::with_content(BytesMut::from(u.as_bytes())),
@@ -2002,7 +2045,7 @@ impl ConnectionManager {
     pub async fn send_to(
         &self,
         address: SocketAddr,
-        message: hazelcast_core::ClientMessage,
+        message: hazelcast_client_core::ClientMessage,
     ) -> Result<()> {
         let mut connections = self.connections.write().await;
         let connection = connections
@@ -2016,7 +2059,7 @@ impl ConnectionManager {
     pub async fn receive_from(
         &self,
         address: SocketAddr,
-    ) -> Result<Option<hazelcast_core::ClientMessage>> {
+    ) -> Result<Option<hazelcast_client_core::ClientMessage>> {
         let mut connections = self.connections.write().await;
         let connection = connections
             .get_mut(&address)
@@ -2041,15 +2084,15 @@ impl ConnectionManager {
         address: SocketAddr,
     ) -> Result<()> {
         use bytes::{BufMut, BytesMut};
-        use hazelcast_core::protocol::constants::{
+        use hazelcast_client_core::protocol::constants::{
             CLIENT_AUTHENTICATION, PARTITION_ID_ANY, RESPONSE_HEADER_SIZE,
         };
-        use hazelcast_core::protocol::Frame;
+        use hazelcast_client_core::protocol::Frame;
 
         let cluster_name = self.config.cluster_name().to_string();
         let client_uuid = uuid::Uuid::new_v4();
 
-        let mut auth_msg = hazelcast_core::ClientMessage::create_for_encode(
+        let mut auth_msg = hazelcast_client_core::ClientMessage::create_for_encode(
             CLIENT_AUTHENTICATION,
             PARTITION_ID_ANY,
         );
@@ -2071,7 +2114,9 @@ impl ConnectionManager {
         auth_msg.add_frame(pass_frame);
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(
+            self.client_name.as_bytes(),
+        )));
         auth_msg.add_frame(Frame::with_flags(0x1000));
         auth_msg.add_frame(Frame::with_flags(0x2800));
 
@@ -2269,7 +2314,7 @@ mod tests {
 
         // A Client.ping (0x000200) must arrive within a few 50ms ticks.
         let msg = tokio::time::timeout(Duration::from_secs(5), async {
-            let mut codec = hazelcast_core::protocol::ClientMessageCodec::new();
+            let mut codec = hazelcast_client_core::protocol::ClientMessageCodec::new();
             let mut buf = bytes::BytesMut::new();
             loop {
                 if let Some(msg) = codec.decode(&mut buf).expect("wire bytes must decode") {
@@ -2315,6 +2360,36 @@ mod tests {
         let cm2 = ConnectionManager::from_config(config2);
         let (user2, pass2) = cm2.auth_credential_frames();
         assert!(user2.is_null_frame() && pass2.is_null_frame());
+    }
+
+    #[test]
+    fn client_name_is_instance_name_or_hz_client_default() {
+        // A configured instance name is sent as the ClientAuthentication client
+        // name (previously every client announced itself as "hazelrust").
+        let config = ClientConfigBuilder::new()
+            .instance_name("orders-service")
+            .build()
+            .unwrap();
+        assert_eq!(
+            ConnectionManager::from_config(config).client_name,
+            "orders-service"
+        );
+
+        // Without one, each client gets its own `hz.client_<n>` name.
+        let first = ConnectionManager::from_config(ClientConfigBuilder::new().build().unwrap());
+        let second = ConnectionManager::from_config(ClientConfigBuilder::new().build().unwrap());
+        for cm in [&first, &second] {
+            let n = cm
+                .client_name
+                .strip_prefix("hz.client_")
+                .expect("default name must use the hz.client_ prefix");
+            assert!(
+                n.parse::<u64>().is_ok(),
+                "bad default name {}",
+                cm.client_name
+            );
+        }
+        assert_ne!(first.client_name, second.client_name);
     }
 
     async fn create_mock_server() -> (TcpListener, SocketAddr) {
@@ -2571,7 +2646,7 @@ mod tests {
         let manager = ConnectionManager::from_config(config);
 
         let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
-        let msg = hazelcast_core::ClientMessage::new();
+        let msg = hazelcast_client_core::ClientMessage::new();
 
         let result = manager.send_to(addr, msg).await;
         assert!(result.is_err());
@@ -3426,7 +3501,7 @@ mod tests {
         manager.set_partition_owner(0, member_uuid).await;
         manager.connect_to(addr).await.unwrap();
 
-        let msg = hazelcast_core::ClientMessage::create_for_encode(0x000100, 0);
+        let msg = hazelcast_client_core::ClientMessage::create_for_encode(0x000100, 0);
         let result = manager.send_to_partition(0, msg).await;
         assert!(
             result.is_ok(),

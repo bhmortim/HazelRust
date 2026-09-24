@@ -1,12 +1,28 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Jet service for submitting and managing streaming jobs.
 
 use std::sync::Arc;
 
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     JET_GET_JOB_IDS, JET_GET_JOB_STATUS, JET_GET_JOB_SUMMARY_LIST, JET_SUBMIT_JOB,
     JET_TERMINATE_JOB, RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::{ClientMessage, Frame, HazelcastError, Result};
+use hazelcast_client_core::{ClientMessage, Frame, HazelcastError, Result};
 
 use crate::connection::ConnectionManager;
 use crate::jet::{Job, JobConfig, JobStatus, Pipeline};

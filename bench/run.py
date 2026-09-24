@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Benchmark orchestrator (runs ON the AWS instance).
 
 Drives cell x client x fork x trial with A/B/B/A interleaving + randomized cell
@@ -84,7 +98,7 @@ def collect_provenance(args, hz_client_version):
         _, cs, _ = sh("sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' %s" % m)
         member_cpuset[m] = cs.strip()
     return {
-        "benchmark": "HazelRust vs official Hazelcast Java client",
+        "benchmark": "Hazelcast Rust client vs official Hazelcast Java client",
         "commit": args.commit,
         "cluster_name": args.cluster_name,
         "cluster": args.cluster,
@@ -330,7 +344,7 @@ def main():
     ap.add_argument("--cluster", default="127.0.0.1:5701,127.0.0.1:5702,127.0.0.1:5703")
     ap.add_argument("--cluster-name", default="dev")
     ap.add_argument("--commit", default="unknown")
-    ap.add_argument("--rust-bin", default="target/release/hazelrust-bench")
+    ap.add_argument("--rust-bin", default="target/release/hazelcast-client-bench")
     ap.add_argument("--java-jar", default="bench-java/build/libs/hazeljava-bench.jar")
     ap.add_argument("--hz-client-version", default="5.7.0")
     ap.add_argument("--forks", type=int)

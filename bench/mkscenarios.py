@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Scenario-framed head-to-head report — HazelRust vs the official Hazelcast
+# Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Scenario-framed head-to-head report — Hazelcast Rust client vs the official Hazelcast
 Java (Enterprise 5.7) client.
 
 Consumes a run directory produced by `bench/run.py --tier scenarios` (per-cell
@@ -176,7 +190,7 @@ def chart_memory(A, cells, scen, path):
     h = 0.38
     fig, ax = plt.subplots(figsize=(9.2, 0.7 * len(names) + 1.6))
     bj = ax.barh(y + h / 2, java, h, color=JAVA, label="Java (EE 5.7)", edgecolor="white")
-    br = ax.barh(y - h / 2, rust, h, color=RUST, label="HazelRust", edgecolor="white")
+    br = ax.barh(y - h / 2, rust, h, color=RUST, label="Rust client", edgecolor="white")
     ax.set_yticks(y)
     ax.set_yticklabels(names)
     ax.invert_yaxis()
@@ -210,7 +224,7 @@ def chart_throughput(A, scen, path):
     x = np.arange(len(names))
     w = 0.38
     fig, ax = plt.subplots(figsize=(10.5, 5.2))
-    br = ax.bar(x - w / 2, rust, w, color=RUST, label="HazelRust", edgecolor="white",
+    br = ax.bar(x - w / 2, rust, w, color=RUST, label="Rust client", edgecolor="white",
                yerr=np.array(rerr).T if rerr else None, capsize=3, ecolor=MUTE)
     bj = ax.bar(x + w / 2, java, w, color=JAVA, label="Java (EE 5.7)", edgecolor="white",
                yerr=np.array(jerr).T if jerr else None, capsize=3, ecolor=MUTE)
@@ -275,7 +289,7 @@ def chart_cpu(A, scen, path):
     x = np.arange(len(names))
     w = 0.38
     fig, ax = plt.subplots(figsize=(10.5, 5.0))
-    br = ax.bar(x - w / 2, rust, w, color=RUST, label="HazelRust", edgecolor="white")
+    br = ax.bar(x - w / 2, rust, w, color=RUST, label="Rust client", edgecolor="white")
     bj = ax.bar(x + w / 2, java, w, color=JAVA, label="Java (EE 5.7)", edgecolor="white")
     ax.set_xticks(x)
     ax.set_xticklabels(names, rotation=18, ha="right")
@@ -313,7 +327,7 @@ def chart_openloop(A, path):
         t = [a / 1000 for a, _, _ in xs]
         p99 = [b / 1000 for _, b, _ in xs]
         p999 = [c / 1000 for _, _, c in xs]
-        label = "HazelRust" if client == "rust" else "Java (EE 5.7)"
+        label = "Rust client" if client == "rust" else "Java (EE 5.7)"
         ax.plot([a for a, _, _ in xs], p99, "-o", color=color, label="%s p99" % label, linewidth=2)
         ax.plot([a for a, _, _ in xs], p999, "--o", color=color, alpha=0.6, label="%s p99.9" % label, linewidth=1.6)
     ax.set_xlabel("achieved throughput (operations / second)")
@@ -432,7 +446,7 @@ def build_report(in_dir, out_path, charts_dir):
     doc.styles["Normal"].font.size = Pt(10.5)
 
     t = doc.add_paragraph()
-    tr = t.add_run("HazelRust vs. the Official Hazelcast Java Client")
+    tr = t.add_run("Hazelcast Rust Client vs. the Hazelcast Java Client")
     tr.bold = True
     tr.font.size = Pt(22)
     tr.font.color.rgb = _rgb(RUST)
@@ -442,7 +456,7 @@ def build_report(in_dir, out_path, charts_dir):
     sr.font.size = Pt(13)
     sr.font.color.rgb = _rgb(MUTE)
     commit = prov.get("commit", "?")
-    para(doc, "Build: HazelRust @ %s (release)  ·  Java client: Hazelcast Enterprise %s  ·  "
+    para(doc, "Build: hazelcast-rust-client @ %s (release)  ·  Java client: Hazelcast Enterprise %s  ·  "
               "Cluster: 3-node Hazelcast Enterprise 5.7.0  ·  n = 3 forks × 3 trials per cell"
               % (commit, prov.get("hz_java_client_version", "5.7.0")), size=9.5, color=MUTE)
 
@@ -450,7 +464,7 @@ def build_report(in_dir, out_path, charts_dir):
     H(doc, "Executive summary")
     summary = []
     if not math.isnan(rss_x):
-        summary.append("Across the seven scenarios HazelRust used a median of "
+        summary.append("Across the seven scenarios the Rust client used a median of "
                        "%.0f× less client memory than the Java client" % rss_x)
     if not math.isnan(cpu_x):
         summary.append("spent a median of %.1f× less client CPU per operation" % cpu_x)
@@ -466,7 +480,7 @@ def build_report(in_dir, out_path, charts_dir):
 
     # Scorecard
     H(doc, "Scorecard", size=13)
-    cols = ["Scenario", "HazelRust thr", "Java thr", "Throughput", "Rust p99", "Java p99",
+    cols = ["Scenario", "Rust thr", "Java thr", "Throughput", "Rust p99", "Java p99",
             "Rust RAM", "Java RAM"]
     tbl = doc.add_table(rows=1, cols=len(cols))
     tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -507,7 +521,7 @@ def build_report(in_dir, out_path, charts_dir):
     # Hero: memory
     H(doc, "Client memory footprint")
     para(doc, "Peak resident memory of the client process while driving each workload. This is the "
-              "single most decisive result: a HazelRust service replica carries a fraction of the "
+              "single most decisive result: a Rust-client service replica carries a fraction of the "
               "Java client's heap, which translates directly into density and per-node cost.", size=10.5)
     add_image(doc, p_mem)
 
@@ -521,7 +535,7 @@ def build_report(in_dir, out_path, charts_dir):
     # Latency
     H(doc, "Tail latency")
     para(doc, "p99 and p99.9 operation latency per scenario (lower is better). Tail latency is where "
-              "garbage-collection pauses typically surface; HazelRust has no managed runtime and no "
+              "garbage-collection pauses typically surface; the Rust client has no managed runtime and no "
               "GC.", size=10.5)
     add_image(doc, p_lat)
 

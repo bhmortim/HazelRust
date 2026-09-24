@@ -1,4 +1,4 @@
-# Hazelcast Rust Client (HazelRust)
+# Hazelcast Rust Client
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
@@ -9,17 +9,16 @@
 -->
 
 An asynchronous Rust client for [Hazelcast](https://hazelcast.com/) 5.x, built on
-[Tokio](https://tokio.rs/). HazelRust connects to a Hazelcast cluster over the
+[Tokio](https://tokio.rs/). The client connects to a Hazelcast cluster over the
 [Hazelcast Open Binary Client Protocol](https://github.com/hazelcast/hazelcast-client-protocol)
 and exposes the cluster's distributed data structures, CP (Raft) primitives, SQL service,
 transactions, and serialization formats through an idiomatic `async`/`await` API.
 
-> **Project status & affiliation.** HazelRust is an independent, community-developed
-> client. It is **not** an official Hazelcast product and is **not** affiliated with or
-> endorsed by Hazelcast, Inc. The vendor-supported clients are Java, Python, Node.js, Go,
-> .NET, and C++. This crate is at version `0.1`, has not yet been published to crates.io,
-> and targets Hazelcast server 5.x. See [Maturity & status](#maturity--status) for an
-> honest breakdown of what is fully implemented versus partial.
+> **Status: experimental.** This client is under active development and is not yet
+> recommended for production use. APIs may change between releases, and the crates are at
+> version `0.1` and have not been published to crates.io. It targets Hazelcast server 5.x.
+> See [Maturity & status](#maturity--status) for an honest breakdown of what is fully
+> implemented versus partial.
 
 ## Contents
 
@@ -38,17 +37,19 @@ transactions, and serialization formats through an idiomatic `async`/`await` API
 - [Examples](#examples)
 - [Building, testing, and docs](#building-testing-and-docs)
 - [Compatibility](#compatibility)
+- [Migrating from HazelRust](#migrating-from-hazelrust)
 - [Maturity & status](#maturity--status)
 - [Performance](#performance)
 - [Contributing](#contributing)
 - [License](#license)
+- [Copyright](#copyright)
 
 ## Overview
 
 Hazelcast is a distributed in-memory data store and compute platform. A Hazelcast cluster
 partitions and replicates data across its members; clients connect to the cluster and read
-and write that data over the network. HazelRust is the client half of that picture for
-Rust services: it manages connections to cluster members, routes each operation to the
+and write that data over the network. The Hazelcast Rust client is the client half of that
+picture for Rust services: it manages connections to cluster members, routes each operation to the
 member that owns the relevant partition, serializes keys and values to the wire format the
 cluster understands, and resolves the asynchronous responses back into Rust values.
 
@@ -56,11 +57,11 @@ The workspace is split into two published crates:
 
 | Crate | Responsibility |
 |-------|----------------|
-| [`hazelcast-core`](hazelcast-core/) | Wire protocol (`ClientMessage`/`Frame` encoding), serialization (Compact, Portable, IdentifiedDataSerializable, JSON, serde), and shared error types. |
+| [`hazelcast-client-core`](hazelcast-client-core/) | Wire protocol (`ClientMessage`/`Frame` encoding), serialization (Compact, Portable, IdentifiedDataSerializable, JSON, serde), and shared error types. |
 | [`hazelcast-client`](hazelcast-client/) | Connection and cluster management, the data-structure proxies, CP subsystem, SQL, transactions, Jet job control, near cache, and configuration. |
 
-Two internal crates support development: `hazelcast-derive` (derive macros for the
-serialization traits) and `hazelrust-bench` (the benchmarking harness).
+Two internal crates support development: `hazelcast-client-derive` (derive macros for
+the serialization traits) and `hazelcast-client-bench` (the benchmarking harness).
 
 ## Requirements
 
@@ -446,8 +447,8 @@ cargo run --example transactions
 ## Building, testing, and docs
 
 ```sh
-git clone https://github.com/bhmortim/HazelRust.git
-cd HazelRust
+git clone https://github.com/hazelcast/hazelcast-rust-client.git
+cd hazelcast-rust-client
 
 cargo build                       # default features
 cargo test                        # unit + non-ignored integration tests
@@ -467,6 +468,26 @@ suite, `rustfmt`, and a `cargo-deny` supply-chain check on every push and pull r
 
 The client speaks the Hazelcast Open Binary Client Protocol and is intended to work with
 any Hazelcast 5.x cluster, including Hazelcast Cloud managed clusters.
+
+## Migrating from HazelRust
+
+This project was previously developed as HazelRust at `github.com/bhmortim/HazelRust`.
+Existing git dependencies on that URL keep resolving, and builds pinned to an earlier `rev`
+are unaffected. Switch `git = "..."` to `https://github.com/hazelcast/hazelcast-rust-client`
+at your convenience.
+
+Two crates were renamed so that every crate in the workspace shares the `hazelcast-client`
+prefix:
+
+| Before | After |
+|--------|-------|
+| `hazelcast-core` (`use hazelcast_core::…`) | `hazelcast-client-core` (`use hazelcast_client_core::…`) |
+| `hazelcast-derive` (`use hazelcast_derive::…`) | `hazelcast-client-derive` (`use hazelcast_client_derive::…`) |
+
+`hazelcast-client` keeps its name and still re-exports the core crate as
+`hazelcast_client::core`, so code that depends only on `hazelcast-client` needs no
+changes. If you depend on the core or derive crate directly, update the dependency name in
+`Cargo.toml` and the crate paths in your code.
 
 ## Maturity & status
 
@@ -495,7 +516,7 @@ For a feature-by-feature comparison against the Java client, see
 
 ## Performance
 
-HazelRust is designed for low client-side overhead: a fixed, small set of connections, a
+The client is designed for low client-side overhead: a fixed, small set of connections, a
 per-connection coalescing writer that batches queued frames into a single vectored write,
 partition-aware routing, and an optional near cache for read-heavy workloads. A
 reproducible head-to-head benchmark against the Hazelcast Java client — covering throughput
@@ -511,3 +532,9 @@ request guidelines, and the [Code of Conduct](CODE_OF_CONDUCT.md) before partici
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
+
+## Copyright
+
+Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+
+Visit [hazelcast.com](https://hazelcast.com) for more information.

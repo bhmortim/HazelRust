@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Distributed map proxy implementation.
 
 use std::collections::HashMap;
@@ -26,7 +42,7 @@ fn partition_index_with_count(key_data: &[u8], partition_count: i32) -> i32 {
     };
     // Java uses HashUtil.hashToIndex: abs(hash) % count, with Integer.MIN_VALUE
     // mapped to 0 (a plain `i32::abs` would panic in debug on MIN_VALUE).
-    hazelcast_core::partition_id_for_hash(compute_partition_hash(key_data), count)
+    hazelcast_client_core::partition_id_for_hash(compute_partition_hash(key_data), count)
 }
 
 /// Compute partition index using default partition count (fallback).
@@ -35,7 +51,7 @@ fn partition_index(key_data: &[u8]) -> i32 {
     partition_index_with_count(key_data, DEFAULT_PARTITION_COUNT)
 }
 
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     BEGIN_DATA_STRUCTURE_FLAG, END_DATA_STRUCTURE_FLAG, END_FLAG, IS_EVENT_FLAG, IS_NULL_FLAG,
     MAP_ADD_ENTRY_LISTENER, MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, MAP_ADD_INDEX,
     MAP_ADD_INTERCEPTOR, MAP_ADD_PARTITION_LOST_LISTENER, MAP_AGGREGATE,
@@ -54,9 +70,9 @@ use hazelcast_core::protocol::constants::{
     MAP_VALUES_WITH_PAGING_PREDICATE, MAP_VALUES_WITH_PREDICATE, PARTITION_ID_ANY,
     RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{DataInput, ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::serialization::{DataInput, ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{
     compute_partition_hash, ClientMessage, Deserializable, HazelcastError, Result, Serializable,
 };
 
@@ -641,7 +657,7 @@ impl<K, V> IMap<K, V> {
         self.near_cache.is_some()
     }
 
-    fn check_permission(&self, action: PermissionAction) -> hazelcast_core::Result<()> {
+    fn check_permission(&self, action: PermissionAction) -> hazelcast_client_core::Result<()> {
         if !self.connection_manager.is_permitted(action) {
             return Err(HazelcastError::Authorization(format!(
                 "map '{}' operation denied: requires {:?} permission",
@@ -2775,7 +2791,7 @@ where
         // Hazelcast Data format: [partition_hash: i32 BE] [type_id: i32 BE] [payload]
         // The partition_hash is computed from the serialized data by MurmurHash3
         // For simplicity, write 0 as partition hash (computed later by the server)
-        use hazelcast_core::serialization::DataOutput;
+        use hazelcast_client_core::serialization::DataOutput;
         output.write_int(0)?; // partition_hash placeholder
         output.write_int(value.type_id())?; // Hazelcast constant type id
         value.serialize(&mut output)?;
@@ -2821,7 +2837,7 @@ where
     /// borrowed (`&buf`) for partition routing before the move.
     fn serialize_buf<T: Serializable>(value: &T) -> Result<BytesMut> {
         let mut output = ObjectDataOutput::new();
-        use hazelcast_core::serialization::DataOutput;
+        use hazelcast_client_core::serialization::DataOutput;
         output.write_int(0)?; // partition_hash placeholder
         output.write_int(value.type_id())?; // Hazelcast constant type id
         value.serialize(&mut output)?;
@@ -2836,7 +2852,7 @@ where
     /// big-endian (`write_int` uses `put_i32`), matching the Hazelcast Data
     /// header and the projection codec.
     fn serialize_processor<E: EntryProcessor>(processor: &E) -> Result<Vec<u8>> {
-        use hazelcast_core::serialization::DataOutput;
+        use hazelcast_client_core::serialization::DataOutput;
         match (processor.factory_id(), processor.class_id()) {
             (Some(factory_id), Some(class_id)) => {
                 let mut output = ObjectDataOutput::new();
@@ -6109,7 +6125,7 @@ impl<K, V> Clone for IMap<K, V> {
 mod tests {
     use super::*;
     use crate::cache::EvictionPolicy;
-    use hazelcast_core::serialization::{DataInput, DataOutput};
+    use hazelcast_client_core::serialization::{DataInput, DataOutput};
     use std::time::Duration;
 
     /// Helper to create a ConnectionManager from a socket address for tests.
@@ -6652,7 +6668,10 @@ mod tests {
         }
 
         impl Serializable for TestProcessor {
-            fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(
+                &self,
+                output: &mut W,
+            ) -> hazelcast_client_core::Result<()> {
                 output.write_int(self.increment)?;
                 Ok(())
             }
@@ -7202,7 +7221,10 @@ mod tests {
             type Output = i32;
         }
         impl Serializable for TestProcessor {
-            fn serialize<W: DataOutput>(&self, _output: &mut W) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(
+                &self,
+                _output: &mut W,
+            ) -> hazelcast_client_core::Result<()> {
                 Ok(())
             }
         }
@@ -7238,7 +7260,10 @@ mod tests {
             type Output = i32;
         }
         impl Serializable for TestProcessor {
-            fn serialize<W: DataOutput>(&self, _output: &mut W) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(
+                &self,
+                _output: &mut W,
+            ) -> hazelcast_client_core::Result<()> {
                 Ok(())
             }
         }
@@ -7265,7 +7290,10 @@ mod tests {
         }
 
         impl Serializable for IncrementProcessor {
-            fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(
+                &self,
+                output: &mut W,
+            ) -> hazelcast_client_core::Result<()> {
                 output.write_int(self.delta)?;
                 Ok(())
             }
@@ -7940,7 +7968,10 @@ mod tests {
         }
 
         impl Serializable for TestInterceptor {
-            fn serialize<W: DataOutput>(&self, _output: &mut W) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(
+                &self,
+                _output: &mut W,
+            ) -> hazelcast_client_core::Result<()> {
                 Ok(())
             }
         }
@@ -8003,7 +8034,10 @@ mod tests {
         }
 
         impl Serializable for PrefixInterceptor {
-            fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(
+                &self,
+                output: &mut W,
+            ) -> hazelcast_client_core::Result<()> {
                 output.write_string(&self.prefix)?;
                 Ok(())
             }
@@ -8855,7 +8889,7 @@ mod tests {
         }
 
         impl Deserializable for ProcessorResult {
-            fn deserialize<R: DataInput>(input: &mut R) -> hazelcast_core::Result<Self> {
+            fn deserialize<R: DataInput>(input: &mut R) -> hazelcast_client_core::Result<Self> {
                 Ok(Self {
                     old_value: input.read_int()?,
                     new_value: input.read_int()?,
@@ -8872,7 +8906,10 @@ mod tests {
         }
 
         impl Serializable for UpdateProcessor {
-            fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(
+                &self,
+                output: &mut W,
+            ) -> hazelcast_client_core::Result<()> {
                 output.write_int(self.delta)?;
                 Ok(())
             }
@@ -8907,7 +8944,10 @@ mod tests {
             type Output = i32;
         }
         impl Serializable for TestProcessor {
-            fn serialize<W: DataOutput>(&self, _output: &mut W) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(
+                &self,
+                _output: &mut W,
+            ) -> hazelcast_client_core::Result<()> {
                 Ok(())
             }
         }
@@ -9032,7 +9072,10 @@ mod tests {
             type Output = i32;
         }
         impl Serializable for TestProcessor {
-            fn serialize<W: DataOutput>(&self, _output: &mut W) -> hazelcast_core::Result<()> {
+            fn serialize<W: DataOutput>(
+                &self,
+                _output: &mut W,
+            ) -> hazelcast_client_core::Result<()> {
                 Ok(())
             }
         }

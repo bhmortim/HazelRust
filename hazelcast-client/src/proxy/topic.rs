@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Distributed topic proxy implementation for pub/sub messaging.
 
 use std::marker::PhantomData;
@@ -9,10 +25,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::local_stats::{LatencyStats, LatencyTracker};
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 use tokio::task::JoinHandle;
 
 use crate::config::PermissionAction;
@@ -483,8 +499,8 @@ where
         let pid = match Self::serialize_value(&self.name) {
             Ok(d) => {
                 let payload = if d.len() > 8 { &d[8..] } else { &d[..] };
-                hazelcast_core::partition_id_for_hash(
-                    hazelcast_core::compute_partition_hash(payload),
+                hazelcast_client_core::partition_id_for_hash(
+                    hazelcast_client_core::compute_partition_hash(payload),
                     count,
                 )
             }
@@ -497,7 +513,7 @@ where
     }
 
     fn serialize_value<V: Serializable>(value: &V) -> Result<Vec<u8>> {
-        use hazelcast_core::serialization::DataOutput;
+        use hazelcast_client_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
         output.write_int(0)?;
         output.write_int(value.type_id())?;

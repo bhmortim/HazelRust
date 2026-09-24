@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Distributed CP Map proxy implementation.
 
 use std::marker::PhantomData;
@@ -6,9 +22,9 @@ use std::sync::Arc;
 use bytes::BytesMut;
 use tokio::sync::OnceCell;
 
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
@@ -324,7 +340,7 @@ where
         // Emit a proper Hazelcast Data: [partition_hash: i32 BE][type_id: i32 BE][payload],
         // matching the IMap path. Previously this wrote a bare payload with no type-id
         // header, making CP-map entries non-standard Data (unreadable by other clients).
-        use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
+        use hazelcast_client_core::serialization::{DataOutput, ObjectDataOutput};
         let mut output = ObjectDataOutput::new();
         output.write_int(0)?; // partition_hash placeholder (CP maps are Raft-replicated, not partitioned)
         output.write_int(value.type_id())?;

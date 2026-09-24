@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Durable executor service for fault-tolerant distributed task execution.
 //!
 //! Unlike the standard executor, durable executor persists task results on the
@@ -10,13 +26,15 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use hazelcast_core::protocol::{
+use hazelcast_client_core::protocol::{
     ClientMessage, Frame, DURABLE_EXECUTOR_DISPOSE_RESULT, DURABLE_EXECUTOR_IS_SHUTDOWN,
     DURABLE_EXECUTOR_RETRIEVE_AND_DISPOSE_RESULT, DURABLE_EXECUTOR_RETRIEVE_RESULT,
     DURABLE_EXECUTOR_SHUTDOWN, DURABLE_EXECUTOR_SUBMIT_TO_PARTITION, PARTITION_ID_ANY,
     RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::{Deserializable, HazelcastError, ObjectDataInput, Result, Serializable};
+use hazelcast_client_core::{
+    Deserializable, HazelcastError, ObjectDataInput, Result, Serializable,
+};
 
 use super::{Callable, CallableTask};
 use crate::connection::ConnectionManager;
@@ -308,8 +326,8 @@ impl DurableExecutorService {
         if key_data.is_empty() {
             return PARTITION_ID_ANY;
         }
-        hazelcast_core::partition_id_for_hash(
-            hazelcast_core::compute_partition_hash(key_data),
+        hazelcast_client_core::partition_id_for_hash(
+            hazelcast_client_core::compute_partition_hash(key_data),
             partition_count,
         )
     }
@@ -458,8 +476,10 @@ mod tests {
     fn test_compute_partition_id_matches_canonical_routing() {
         // Same MurmurHash3 + hashToIndex as the IMap key path (not the old x31).
         let key = b"acct-1";
-        let expected =
-            hazelcast_core::partition_id_for_hash(hazelcast_core::compute_partition_hash(key), 271);
+        let expected = hazelcast_client_core::partition_id_for_hash(
+            hazelcast_client_core::compute_partition_hash(key),
+            271,
+        );
         assert_eq!(
             DurableExecutorService::compute_partition_id(key, 271),
             expected

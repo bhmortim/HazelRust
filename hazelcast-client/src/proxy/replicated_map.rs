@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Distributed ReplicatedMap implementation.
 
 use std::collections::HashMap;
@@ -9,7 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::local_stats::{LatencyStats, LatencyTracker};
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::{
+use hazelcast_client_core::protocol::constants::{
     IS_EVENT_FLAG, IS_NULL_FLAG, PARTITION_ID_ANY, REPLICATED_MAP_ADD_ENTRY_LISTENER,
     REPLICATED_MAP_ADD_ENTRY_LISTENER_WITH_PREDICATE, REPLICATED_MAP_CLEAR,
     REPLICATED_MAP_CONTAINS_KEY, REPLICATED_MAP_CONTAINS_VALUE, REPLICATED_MAP_ENTRY_SET,
@@ -17,9 +33,9 @@ use hazelcast_core::protocol::constants::{
     REPLICATED_MAP_PUT_ALL, REPLICATED_MAP_REMOVE, REPLICATED_MAP_REMOVE_ENTRY_LISTENER,
     REPLICATED_MAP_SIZE, REPLICATED_MAP_VALUES, RESPONSE_HEADER_SIZE,
 };
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::serialization::{ObjectDataInput, ObjectDataOutput};
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::serialization::{ObjectDataInput, ObjectDataOutput};
+use hazelcast_client_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 use tokio::spawn;
 use uuid::Uuid;
 
@@ -688,7 +704,7 @@ where
     }
 
     fn serialize_value<T: Serializable>(value: &T) -> Result<Vec<u8>> {
-        use hazelcast_core::serialization::DataOutput;
+        use hazelcast_client_core::serialization::DataOutput;
         let mut output = ObjectDataOutput::new();
         // Hazelcast Data format: [partition_hash i32][type_id i32][payload].
         // Use the value's real Hazelcast type id (e.g. INTEGER=-7), not a hardcoded
@@ -718,7 +734,10 @@ where
         let count = self.connection_manager.partition_count();
         let count = if count > 0 { count } else { 271 };
         let h = Self::skip8(key_data);
-        hazelcast_core::partition_id_for_hash(hazelcast_core::compute_partition_hash(h), count)
+        hazelcast_client_core::partition_id_for_hash(
+            hazelcast_client_core::compute_partition_hash(h),
+            count,
+        )
     }
 
     async fn invoke_on_part(&self, pid: i32, mut message: ClientMessage) -> Result<ClientMessage> {
@@ -763,8 +782,8 @@ where
         let count = self.connection_manager.partition_count();
         let count = if count > 0 { count } else { 271 };
         let pid = match Self::serialize_value(&self.name) {
-            Ok(data) => hazelcast_core::partition_id_for_hash(
-                hazelcast_core::compute_partition_hash(Self::skip8(&data)),
+            Ok(data) => hazelcast_client_core::partition_id_for_hash(
+                hazelcast_client_core::compute_partition_hash(Self::skip8(&data)),
                 count,
             ),
             Err(_) => 0,

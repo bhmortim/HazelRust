@@ -36,9 +36,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-cov-
 
-      - name: Generate coverage report (hazelcast-core)
+      - name: Generate coverage report (hazelcast-client-core)
         run: |
-          cargo llvm-cov --package hazelcast-core --all-features \
+          cargo llvm-cov --package hazelcast-client-core --all-features \
             --ignore-run-fail \
             --lcov --output-path lcov.info
 
@@ -52,7 +52,7 @@ jobs:
       - name: Generate HTML report
         if: always()
         run: |
-          cargo llvm-cov --package hazelcast-core --all-features \
+          cargo llvm-cov --package hazelcast-client-core --all-features \
             --ignore-run-fail \
             --html --output-dir coverage-html
 

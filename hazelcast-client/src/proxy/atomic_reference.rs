@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Distributed atomic reference proxy implementation.
 //!
 //! Like every CP data structure, each request must carry the Raft `groupId`,
@@ -12,15 +28,15 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::{ClientMessage, Deserializable, HazelcastError, Result, Serializable};
 use tokio::sync::OnceCell;
 
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 
-// Correct Hazelcast AtomicRef message types. The hazelcast_core CP_ATOMIC_REFERENCE_*
+// Correct Hazelcast AtomicRef message types. The hazelcast_client_core CP_ATOMIC_REFERENCE_*
 // constants are mislabeled the same way the CP_ATOMIC_LONG_* ones are (declaration
 // order vs. the real protocol order Apply/CompareAndSet/Contains/Get/Set), which is why
 // every AtomicReference op silently no-op'd against a real CP subsystem. Verified
@@ -237,7 +253,7 @@ where
 
     /// Serializes a value into a (non-null) `Data` frame.
     fn serialize_value(&self, value: &T) -> Result<Frame> {
-        use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
+        use hazelcast_client_core::serialization::{DataOutput, ObjectDataOutput};
         // Hazelcast `Data` is `[partition_hash:i32][type_id:i32][payload]`. The
         // previous code wrote a bare payload (no header), which is not a valid
         // server-side Data: a value written by this client could not be read by a

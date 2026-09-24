@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Invocation service for concurrent Hazelcast operations.
 //!
 //! Manages pending operations with correlation-based response routing.
@@ -19,9 +35,9 @@ use dashmap::DashMap;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
-use hazelcast_core::{HazelcastError, Result};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::{ClientMessage, ClientMessageCodec, Frame};
+use hazelcast_client_core::{HazelcastError, Result};
 use tokio_util::codec::Decoder;
 
 /// Boxed write half of a pooled connection. Boxed (rather than a concrete

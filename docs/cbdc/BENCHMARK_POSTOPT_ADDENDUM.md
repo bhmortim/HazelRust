@@ -1,7 +1,6 @@
 # Benchmark addendum — backup-ack-to-client optimization (post-optimization results)
 
-_Companion to `BENCHMARK_REPORT.md` (the initial run) and the full Word report
-`HazelRust_vs_Java_Benchmark_Report.docx`. Charts: `bench_charts/`._
+_Companion to `BENCHMARK_REPORT.md` (the initial run)._
 
 ## What changed
 

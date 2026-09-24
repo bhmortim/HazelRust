@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Distributed atomic long counter proxy implementation.
 //!
 //! CP data structures require the Raft `groupId` to be sent with every request,
@@ -8,15 +24,15 @@
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use hazelcast_core::protocol::constants::*;
-use hazelcast_core::protocol::Frame;
-use hazelcast_core::{ClientMessage, HazelcastError, Result};
+use hazelcast_client_core::protocol::constants::*;
+use hazelcast_client_core::protocol::Frame;
+use hazelcast_client_core::{ClientMessage, HazelcastError, Result};
 use tokio::sync::OnceCell;
 
 use crate::config::PermissionAction;
 use crate::connection::ConnectionManager;
 
-// Correct Hazelcast AtomicLong message types. The hazelcast_core CP_ATOMIC_LONG_*
+// Correct Hazelcast AtomicLong message types. The hazelcast_client_core CP_ATOMIC_LONG_*
 // constants are mislabeled (..._GET=0x090100 is actually Apply; ..._ADD_AND_GET=0x090500
 // is actually Get), which is why mutating ops silently no-op'd. Verified against the
 // Hazelcast client protocol (issue #12). AtomicLong has no plain Set; set() uses GetAndSet.

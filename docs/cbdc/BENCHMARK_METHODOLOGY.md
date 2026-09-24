@@ -1,6 +1,6 @@
 # HazelRust vs. Hazelcast Java Client — Comparative Benchmarking Methodology
 
-Status: methodology spec (v1). Companion kickoff brief: `BENCHMARK_KICKOFF_PROMPT.md`.
+Status: methodology spec (v1).
 
 ### Locked decisions (v1)
 - **Java client = latest `5.7.x`** (matching the EE 5.7 cluster, for exact protocol

@@ -3,9 +3,9 @@ name: Fuzz Testing
 on:
   pull_request:
     paths:
-      - 'hazelcast-core/src/protocol/**'
-      - 'hazelcast-core/src/serialization/**'
-      - 'hazelcast-core/fuzz/**'
+      - 'hazelcast-client-core/src/protocol/**'
+      - 'hazelcast-client-core/src/serialization/**'
+      - 'hazelcast-client-core/fuzz/**'
   # Nightly extended fuzzing run. PR-triggered runs are a smoke test only;
   # meaningful fuzzing is continuous and measured in CPU-hours, so the
   # scheduled run uses a much longer per-target budget.
@@ -40,35 +40,35 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            hazelcast-core/fuzz/corpus
-            hazelcast-core/fuzz/artifacts
+            hazelcast-client-core/fuzz/corpus
+            hazelcast-client-core/fuzz/artifacts
           key: fuzz-corpus-${{ github.sha }}
           restore-keys: |
             fuzz-corpus-
 
       - name: Run fuzz_frame_decode
-        working-directory: hazelcast-core
+        working-directory: hazelcast-client-core
         run: |
           cargo +nightly fuzz run fuzz_frame_decode -- \
             -max_total_time=${{ inputs.fuzz_seconds || '300' }} \
             -max_len=4096
 
       - name: Run fuzz_portable_deserialize
-        working-directory: hazelcast-core
+        working-directory: hazelcast-client-core
         run: |
           cargo +nightly fuzz run fuzz_portable_deserialize -- \
             -max_total_time=${{ inputs.fuzz_seconds || '300' }} \
             -max_len=8192
 
       - name: Run fuzz_compact_deserialize
-        working-directory: hazelcast-core
+        working-directory: hazelcast-client-core
         run: |
           cargo +nightly fuzz run fuzz_compact_deserialize -- \
             -max_total_time=${{ inputs.fuzz_seconds || '300' }} \
             -max_len=8192
 
       - name: Run fuzz_client_message_decode
-        working-directory: hazelcast-core
+        working-directory: hazelcast-client-core
         run: |
           cargo +nightly fuzz run fuzz_client_message_decode -- \
             -max_total_time=${{ inputs.fuzz_seconds || '300' }} \
@@ -79,5 +79,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashes
-          path: hazelcast-core/fuzz/artifacts/
+          path: hazelcast-client-core/fuzz/artifacts/
           retention-days: 30

@@ -1,4 +1,20 @@
-//! Comprehensive functional tests for the HazelRust Hazelcast client.
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Comprehensive functional tests for the Hazelcast Rust client.
 //!
 //! Covers IMap, ISet, IList, IQueue, AtomicLong, MultiMap, ReplicatedMap,
 //! Ringbuffer, ITopic, CountDownLatch, Semaphore, FencedLock, and client
@@ -1304,7 +1320,7 @@ async fn test_set_add_returns_true() {
     let set_name = unique_name("cft-set-art");
     let set = client.get_set::<String>(&set_name);
 
-    // NOTE: may fail due to HazelRust protocol issues
+    // NOTE: may fail due to client protocol issues
     let added = set.add("item1".to_string()).await.unwrap();
     assert!(added);
 
@@ -1324,7 +1340,7 @@ async fn test_set_add_duplicate_returns_false() {
     let set_name = unique_name("cft-set-adrf");
     let set = client.get_set::<String>(&set_name);
 
-    // NOTE: may fail due to HazelRust protocol issues
+    // NOTE: may fail due to client protocol issues
     set.add("item1".to_string()).await.unwrap();
     let dup = set.add("item1".to_string()).await.unwrap();
     assert!(!dup);
@@ -1469,7 +1485,7 @@ async fn test_set_add_all() {
     let set_name = unique_name("cft-set-aall");
     let set = client.get_set::<String>(&set_name);
 
-    // NOTE: may fail due to HazelRust protocol issues
+    // NOTE: may fail due to client protocol issues
     let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     let result = set.add_all(items).await.unwrap();
     assert!(result);
@@ -1521,7 +1537,7 @@ async fn test_list_add_get() {
     let list_name = unique_name("cft-list-ag");
     let list = client.get_list::<String>(&list_name);
 
-    // NOTE: may fail due to HazelRust protocol issues
+    // NOTE: may fail due to client protocol issues
     list.add("item0".to_string()).await.unwrap();
     let item = list.get(0).await.unwrap();
     assert_eq!(item, Some("item0".to_string()));
@@ -1542,7 +1558,7 @@ async fn test_list_add_at_0() {
     let list_name = unique_name("cft-list-aa0");
     let list = client.get_list::<String>(&list_name);
 
-    // NOTE: may fail due to HazelRust protocol issues
+    // NOTE: may fail due to client protocol issues
     list.add("second".to_string()).await.unwrap();
     list.add_at(0, "first".to_string()).await.unwrap();
 
@@ -1697,7 +1713,7 @@ async fn test_list_add_all() {
     let list_name = unique_name("cft-list-aall");
     let list = client.get_list::<String>(&list_name);
 
-    // NOTE: may fail due to HazelRust protocol issues
+    // NOTE: may fail due to client protocol issues
     let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     let result = list.add_all(items).await.unwrap();
     assert!(result);
@@ -1749,7 +1765,7 @@ async fn test_queue_offer_poll() {
     let queue_name = unique_name("cft-q-op");
     let queue = client.get_queue::<String>(&queue_name);
 
-    // NOTE: may fail due to HazelRust protocol issues
+    // NOTE: may fail due to client protocol issues
     queue.offer("item1".to_string()).await.unwrap();
     let polled = queue.poll().await.unwrap();
     assert_eq!(polled, Some("item1".to_string()));
@@ -1921,7 +1937,7 @@ async fn test_queue_add_all() {
     let queue_name = unique_name("cft-q-aall");
     let queue = client.get_queue::<String>(&queue_name);
 
-    // NOTE: may fail due to HazelRust protocol issues
+    // NOTE: may fail due to client protocol issues
     let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     let result = queue.add_all(items).await.unwrap();
     assert!(result);

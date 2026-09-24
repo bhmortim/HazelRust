@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Integration tests validating IMap method parity with the Java Hazelcast driver.
 //!
 //! These tests cover:
@@ -894,12 +910,12 @@ async fn test_project() {
     // Store values as HazelcastJsonValue (type id -130) so the member treats them
     // as queryable JSON and can project the `name` attribute. Plain String values
     // are opaque to the projection engine (no top-level `name` attribute).
-    let map: IMap<String, hazelcast_core::serialization::HazelcastJsonValue> =
+    let map: IMap<String, hazelcast_client_core::serialization::HazelcastJsonValue> =
         client.get_map("java_parity_test_project");
 
     map.put(
         "user_1".to_string(),
-        hazelcast_core::serialization::HazelcastJsonValue::from_string(
+        hazelcast_client_core::serialization::HazelcastJsonValue::from_string(
             r#"{"name":"Alice","age":30}"#,
         ),
     )
@@ -907,7 +923,7 @@ async fn test_project() {
     .unwrap();
     map.put(
         "user_2".to_string(),
-        hazelcast_core::serialization::HazelcastJsonValue::from_string(
+        hazelcast_client_core::serialization::HazelcastJsonValue::from_string(
             r#"{"name":"Bob","age":25}"#,
         ),
     )
@@ -960,7 +976,7 @@ async fn test_get_entry_view() {
 // ============================================================================
 
 use hazelcast_client::proxy::EntryProcessor;
-use hazelcast_core::serialization::{DataOutput, Serializable};
+use hazelcast_client_core::serialization::{DataOutput, Serializable};
 
 struct IncrementProcessor {
     increment: i64,
@@ -987,7 +1003,7 @@ impl EntryProcessor for IncrementProcessor {
 }
 
 impl Serializable for IncrementProcessor {
-    fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_client_core::Result<()> {
         output.write_long(self.increment)?;
         Ok(())
     }
@@ -1018,7 +1034,7 @@ impl EntryProcessor for LongIncrementProcessor {
 }
 
 impl Serializable for LongIncrementProcessor {
-    fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_core::Result<()> {
+    fn serialize<W: DataOutput>(&self, output: &mut W) -> hazelcast_client_core::Result<()> {
         output.write_long(self.increment)?;
         Ok(())
     }

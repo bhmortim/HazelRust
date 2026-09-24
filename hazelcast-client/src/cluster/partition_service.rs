@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2008-2026, Hazelcast, Inc. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Partition service for querying cluster partition information.
 
 use std::hash::Hash;
@@ -6,7 +22,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use hazelcast_core::Serializable;
+use hazelcast_client_core::Serializable;
 
 use crate::connection::ConnectionManager;
 use crate::listener::{ListenerId, ListenerRegistration, Member};
@@ -340,8 +356,8 @@ impl PartitionService {
     /// (`[partition_hash:i32][type_id:i32][payload]`), byte-identical to the IMap
     /// put/get key path (`serialize_value`), so partition computation hashes the
     /// same payload bytes the cluster used to place the entry.
-    fn key_to_data<K: Serializable>(key: &K) -> hazelcast_core::Result<Vec<u8>> {
-        use hazelcast_core::serialization::{DataOutput, ObjectDataOutput};
+    fn key_to_data<K: Serializable>(key: &K) -> hazelcast_client_core::Result<Vec<u8>> {
+        use hazelcast_client_core::serialization::{DataOutput, ObjectDataOutput};
         let mut output = ObjectDataOutput::new();
         output.write_int(0)?; // partition_hash placeholder (cluster recomputes)
         output.write_int(key.type_id())?; // Hazelcast constant type id
@@ -371,7 +387,7 @@ impl PartitionService {
         // disagreed with where the entry actually lives (verified live: an entry
         // put under "acct-1" lands on partition 198 while this returned 123).
         let partition_id = match Self::key_to_data(key) {
-            Ok(bytes) => hazelcast_core::partition_id_for_key_data(&bytes, partition_count),
+            Ok(bytes) => hazelcast_client_core::partition_id_for_key_data(&bytes, partition_count),
             Err(_) => 0,
         };
 
