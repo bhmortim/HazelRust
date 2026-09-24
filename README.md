@@ -472,9 +472,9 @@ any Hazelcast 5.x cluster, including Hazelcast Cloud managed clusters.
 ## Migrating from HazelRust
 
 This project was previously developed as HazelRust at `github.com/bhmortim/HazelRust`.
-That URL redirects here, so existing git dependencies keep resolving, and builds pinned to
-an earlier `rev` are unaffected. You can switch `git = "..."` to
-`https://github.com/hazelcast/hazelcast-rust-client` at your convenience.
+Existing git dependencies on that URL keep resolving, and builds pinned to an earlier `rev`
+are unaffected. Switch `git = "..."` to `https://github.com/hazelcast/hazelcast-rust-client`
+at your convenience.
 
 Two crates were renamed so that every crate in the workspace shares the `hazelcast-client`
 prefix:

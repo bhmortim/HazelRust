@@ -67,7 +67,7 @@ run against it. Results so far:
 - [x] **IMap / Hash / Set / String / key-mgmt paths:** exercised against the live
   cluster; behavior matches expectations.
 - [x] **CP `AtomicLong`: bug found, root-caused, fixed, and VERIFIED on a real cluster
-  → [issue #12](https://github.com/hazelcast/hazelcast-rust-client/issues/12).**
+  → [issue #12](https://github.com/bhmortim/HazelRust/issues/12).**
   Against a real CP subsystem, every op returned `0` / silently no-op'd. **Three**
   defects, all in `proxy/atomic_long.rs`, fixed in commit `41316dd`: (1) CP requests
   omitted the Raft `groupId`; (2) the `RaftGroupId` was mis-framed as plain frames
