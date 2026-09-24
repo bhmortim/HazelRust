@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicI32, AtomicUsize};
+use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,6 +35,23 @@ fn trace_routing(partition_id: i32, address: SocketAddr, is_owner: bool) {
                 "FALLBACK addresses[0]"
             }
         );
+    }
+}
+
+/// Counter behind default client names (`hz.client_1`, `hz.client_2`, …), the
+/// naming scheme the other Hazelcast clients use when no instance name is set.
+static CLIENT_NAME_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// The client name sent in `ClientAuthentication`: the configured instance name,
+/// or the next `hz.client_<n>`. Members log it and Management Center lists
+/// clients by it, so it is resolved once and reused for every connection.
+fn resolve_client_name(config: &ClientConfig) -> String {
+    match config.instance_name() {
+        Some(name) => name.to_owned(),
+        None => format!(
+            "hz.client_{}",
+            CLIENT_NAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+        ),
     }
 }
 
@@ -124,6 +141,8 @@ pub struct ConnectionManager {
     backup_ack_to_client: bool,
     invocation_retry_count: u32,
     invocation_retry_pause: std::time::Duration,
+    /// Sent as `clientName` in every `ClientAuthentication` request.
+    client_name: String,
 }
 
 /// Calculates the next backoff duration with jitter applied.
@@ -169,6 +188,7 @@ impl ConnectionManager {
         let invocation_retry_count = config.invocation_retry_count();
         let invocation_retry_pause = config.invocation_retry_pause();
         let backup_ack_to_client = config.network().backup_ack_to_client_enabled();
+        let client_name = resolve_client_name(&config);
 
         Self {
             config: Arc::new(config),
@@ -199,6 +219,7 @@ impl ConnectionManager {
             invocation_retry_count,
             invocation_retry_pause,
             backup_ack_to_client,
+            client_name,
         }
     }
 
@@ -242,6 +263,7 @@ impl ConnectionManager {
         let invocation_retry_count = primary_config.invocation_retry_count();
         let invocation_retry_pause = primary_config.invocation_retry_pause();
         let backup_ack_to_client = primary_config.network().backup_ack_to_client_enabled();
+        let client_name = resolve_client_name(&primary_config);
 
         Self {
             config: Arc::new(primary_config),
@@ -272,6 +294,7 @@ impl ConnectionManager {
             invocation_retry_count,
             invocation_retry_pause,
             backup_ack_to_client,
+            client_name,
         }
     }
 
@@ -481,7 +504,9 @@ impl ConnectionManager {
             auth_msg.add_frame(pass_frame);
             auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
             auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
-            auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+            auth_msg.add_frame(Frame::with_content(BytesMut::from(
+                self.client_name.as_bytes(),
+            )));
             auth_msg.add_frame(Frame::with_flags(0x1000));
             auth_msg.add_frame(Frame::with_flags(0x2800));
 
@@ -737,7 +762,9 @@ impl ConnectionManager {
         auth_msg.add_frame(pass_frame);
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(
+            self.client_name.as_bytes(),
+        )));
         auth_msg.add_frame(Frame::with_flags(0x1000));
         auth_msg.add_frame(Frame::with_flags(0x2800));
 
@@ -2071,7 +2098,9 @@ impl ConnectionManager {
         auth_msg.add_frame(pass_frame);
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"RST"[..])));
         auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"5.6.0"[..])));
-        auth_msg.add_frame(Frame::with_content(BytesMut::from(&b"hazelrust"[..])));
+        auth_msg.add_frame(Frame::with_content(BytesMut::from(
+            self.client_name.as_bytes(),
+        )));
         auth_msg.add_frame(Frame::with_flags(0x1000));
         auth_msg.add_frame(Frame::with_flags(0x2800));
 
@@ -2315,6 +2344,36 @@ mod tests {
         let cm2 = ConnectionManager::from_config(config2);
         let (user2, pass2) = cm2.auth_credential_frames();
         assert!(user2.is_null_frame() && pass2.is_null_frame());
+    }
+
+    #[test]
+    fn client_name_is_instance_name_or_hz_client_default() {
+        // A configured instance name is sent as the ClientAuthentication client
+        // name (previously every client announced itself as "hazelrust").
+        let config = ClientConfigBuilder::new()
+            .instance_name("orders-service")
+            .build()
+            .unwrap();
+        assert_eq!(
+            ConnectionManager::from_config(config).client_name,
+            "orders-service"
+        );
+
+        // Without one, each client gets its own `hz.client_<n>` name.
+        let first = ConnectionManager::from_config(ClientConfigBuilder::new().build().unwrap());
+        let second = ConnectionManager::from_config(ClientConfigBuilder::new().build().unwrap());
+        for cm in [&first, &second] {
+            let n = cm
+                .client_name
+                .strip_prefix("hz.client_")
+                .expect("default name must use the hz.client_ prefix");
+            assert!(
+                n.parse::<u64>().is_ok(),
+                "bad default name {}",
+                cm.client_name
+            );
+        }
+        assert_ne!(first.client_name, second.client_name);
     }
 
     async fn create_mock_server() -> (TcpListener, SocketAddr) {
