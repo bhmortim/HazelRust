@@ -56,7 +56,7 @@ The project's own `EXECUTION_PLAN.md` concludes "**do not deploy**" for a centra
 - **Independent confirmation.** The decisive Criticals were re-read by hand against the actual source (not taken on the workflow's word), and the most impactful behaviors were tested **live** against the Enterprise cluster with assertion-bearing tests the existing suite lacks.
 - **Secret hygiene.** The EE license and GitHub token were never printed, logged, or committed. (Separately, a client **defect** that leaks *cluster* credentials via `Debug` was found — §6, RR-12.)
 
-**Evidence trail:** `EVIDENCE_LOG.md` (chronology), `AUDIT_DIGEST.md` (all 63 audit findings), this report's §7 (commands + outputs).
+**Evidence trail:** `AUDIT_DIGEST.md` (all 63 audit findings), this report's §7 (commands + outputs).
 
 ---
 
@@ -215,7 +215,7 @@ The prior run reported ~10 tests "blocked by test infrastructure." Investigated 
 
 ## 9. Evidence appendix (reproducible; secrets masked)
 
-Environment: `ssh ec2-user@18.225.173.180` (key `~/.ssh/hzcp.pem`, CRLF-fixed); cluster `dev` on `127.0.0.1:5701/2/3`. All `cargo` on the instance.
+Environment: an AWS EC2 test instance reached over SSH; cluster `dev` on `127.0.0.1:5701/2/3`. All `cargo` on the instance.
 
 ```
 # Provenance
@@ -269,4 +269,4 @@ transaction/xa.rs:654-657            let _response = self.invoke(..)?; self.stat
 config.rs:1717-1719                  .field("password",&self.password).field("token",&self.token)    # secret leak
 ```
 
-**Companion artifacts:** `EVIDENCE_LOG.md` (full chronology), `AUDIT_DIGEST.md` (all 63 adversarially-verified findings with verdicts).
+**Companion artifacts:** `AUDIT_DIGEST.md` (all 63 adversarially-verified findings with verdicts).

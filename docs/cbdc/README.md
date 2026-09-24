@@ -15,10 +15,16 @@ CBDC money path (behind the Patina proxy), and the remediation that followed.
 | [CBDC_REMEDIATION_PLAN.md](CBDC_REMEDIATION_PLAN.md) | The remediation plan with per-item (R1–R10) status. |
 | [REMEDIATION_RESULTS.md](REMEDIATION_RESULTS.md) | What was fixed and live-verified; before/after test evidence; honest course-corrections. |
 | [PRODUCTION_READINESS_ROADMAP.md](PRODUCTION_READINESS_ROADMAP.md) | **The forward work list** to reach GO, prioritized P0→P3 with exit criteria. |
-| [EVIDENCE_LOG.md](EVIDENCE_LOG.md) | Chronological evidence (commands, environment, raw outputs). |
 
 > Note: `../CBDC_READINESS_ASSESSMENT.md` is the project's own pre-existing
 > assessment; the documents here are the **independent** validation and are kept separate.
+
+> **Repository move.** When the project moved to `hazelcast/hazelcast-rust-client`, the raw
+> benchmark archives, generated Word reports and charts, the evidence log, and working-session
+> notes were removed from this directory; they remain in the git history. These records use
+> the pre-rename crate names: `hazelcast-core` is now `hazelcast-client-core`,
+> `hazelcast-derive` is now `hazelcast-client-derive`, and `hazelrust-bench` is now
+> `hazelcast-client-bench`.
 
 ## Reproduce (live EE cluster required)
 ```
